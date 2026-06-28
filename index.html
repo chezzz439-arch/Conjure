@@ -122,6 +122,29 @@
 </head>
 <body>
 
+<!-- Persistent LIBRARY button — fixed top-right on every screen -->
+<div id="lib-btn" onclick="openLibrary()" style="
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  background: rgba(10,14,10,0.85);
+  border: 1px solid #1a3a1a;
+  color: #00aa2a;
+  font-family: monospace;
+  font-size: 13px;
+  letter-spacing: 2px;
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+">
+  ⊟ LIBRARY
+</div>
+
 <!-- ════════ SCREEN 1 — IDLE ════════ -->
 <div id="s-idle" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:32px;cursor:pointer" onclick="goToSpeak()">
   <div style="font-size:56px;font-weight:bold;letter-spacing:12px;color:var(--green)">CONJURE</div>
@@ -263,7 +286,20 @@
     background:linear-gradient(to bottom, rgba(10,14,10,0.8), transparent);
     pointer-events:none;
   ">
-    <div style="font-size:13px;letter-spacing:3px;color:var(--dim)">CONJURE</div>
+    <div style="display:flex;align-items:center;gap:12px;pointer-events:all">
+      <span style="font-size:13px;letter-spacing:3px;color:var(--dim)">CONJURE</span>
+      <button onclick="openLibrary()" style="
+        background: transparent;
+        border: 1px solid #1a3a1a;
+        color: #00aa2a;
+        font-family: monospace;
+        font-size: 12px;
+        letter-spacing: 2px;
+        padding: 6px 12px;
+        cursor: pointer;
+        pointer-events: all;
+      ">⊟ LIBRARY</button>
+    </div>
     <div id="view-prompt" style="font-size:13px;color:var(--dim);font-style:italic"></div>
   </div>
 
@@ -395,6 +431,59 @@
   ">START OVER</button>
 </div>
 
+<!-- ════════ SCREEN 7 — LIBRARY ════════ -->
+<div id="s-library" class="screen" style="
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+">
+  <div style="
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid #1a3a1a;
+    flex-shrink: 0;
+  ">
+    <div style="font-size: 18px; letter-spacing: 4px; color: #00ff41">LIBRARY</div>
+    <button onclick="closeLibrary()" style="
+      background: transparent;
+      border: 1px solid #555;
+      color: #555;
+      font-family: monospace;
+      font-size: 14px;
+      letter-spacing: 2px;
+      padding: 8px 16px;
+      cursor: pointer;
+    ">← BACK</button>
+  </div>
+
+  <div id="library-grid" style="
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    align-content: start;
+  "></div>
+
+  <div id="library-empty" style="
+    display: none;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    color: #555;
+  ">
+    <div style="font-size: 48px">◻</div>
+    <div style="font-size: 16px; letter-spacing: 2px">NO MODELS YET</div>
+    <div style="font-size: 14px; color: #333">Generate something first</div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -407,6 +496,13 @@ function showScreen(id) {
   }
   currentScreen = document.getElementById(id);
   currentScreen.style.display = 'flex';
+
+  // Hide the persistent library button on the view + library screens
+  // (view has its own library button; library is already open).
+  const libBtn = document.getElementById('lib-btn');
+  if (libBtn) {
+    libBtn.style.display = (id === 's-view' || id === 's-library') ? 'none' : 'flex';
+  }
 }
 
 /* ════════ GLOBALS ════════ */
@@ -698,6 +794,133 @@ function resetAll() {
   resetIdle();
 }
 
+/* ════════ LIBRARY ════════ */
+let libraryReturnScreen = 's-idle';
+
+function openLibrary() {
+  libraryReturnScreen = currentScreen ? currentScreen.id : 's-idle';
+  document.getElementById('lib-btn').style.display = 'none';
+  loadLibrary();
+  showScreen('s-library');
+  resetIdle();
+}
+
+function closeLibrary() {
+  document.getElementById('lib-btn').style.display = 'flex';
+  showScreen(libraryReturnScreen);
+  resetIdle();
+}
+
+async function loadLibrary() {
+  const grid = document.getElementById('library-grid');
+  const empty = document.getElementById('library-empty');
+  grid.innerHTML = '<div style="color:#555;font-size:14px;padding:20px">Loading...</div>';
+
+  try {
+    const r = await fetch('/api/models');
+    const data = await r.json();
+    // /api/models returns a bare JSON array; tolerate {models:[...]} too.
+    const models = Array.isArray(data) ? data : (data.models || []);
+
+    grid.innerHTML = '';
+
+    if (models.length === 0) {
+      grid.style.display = 'none';
+      empty.style.display = 'flex';
+      return;
+    }
+
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+
+    models.forEach((m) => {
+      const card = document.createElement('div');
+      card.style.cssText = `
+        background: #0f140f;
+        border: 1px solid #1a3a1a;
+        padding: 16px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      `;
+
+      card.innerHTML = `
+        <div style="
+          height: 120px;
+          background: #0a0e0a;
+          border: 1px solid #1a3a1a;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 32px;
+          color: #1a3a1a;
+        ">◻</div>
+        <div style="font-size:14px;color:#00ff41;line-height:1.4;word-break:break-word">${escapeHtml(m.prompt || 'Untitled')}</div>
+        <div style="font-size:11px;color:#555;letter-spacing:1px">${escapeHtml(m.created_at || '')}</div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button onclick="selectModel(${m.id})" style="
+            flex:1;height:40px;
+            background:transparent;
+            border:1px solid #00ff41;
+            color:#00ff41;
+            font-family:monospace;
+            font-size:12px;
+            letter-spacing:2px;
+            cursor:pointer;
+          ">VIEW</button>
+          <button onclick="printModel(${m.id})" style="
+            flex:1;height:40px;
+            background:transparent;
+            border:1px solid #555;
+            color:#555;
+            font-family:monospace;
+            font-size:12px;
+            letter-spacing:2px;
+            cursor:pointer;
+          ">PRINT</button>
+        </div>
+      `;
+
+      grid.appendChild(card);
+    });
+  } catch (e) {
+    grid.innerHTML = '<div style="color:#ff4444;font-size:14px;padding:20px">Failed to load library</div>';
+  }
+}
+
+async function selectModel(id) {
+  try {
+    await fetch('/api/models/' + id + '/select', { method: 'POST' });
+    closeLibrary();
+    showScreen('s-view');
+    initViewer();
+    loadModel('/api/model/glb');
+    resetIdle();
+    speak('Model loaded. Rotate to inspect it. Tap print when ready.');
+  } catch (e) {
+    showError('Could not load model');
+  }
+}
+
+async function printModel(id) {
+  try {
+    await fetch('/api/models/' + id + '/select', { method: 'POST' });
+    document.getElementById('lib-btn').style.display = 'flex';
+    handlePrint();
+  } catch (e) {
+    showError('Could not load model for printing');
+  }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /* ════════ THREE.JS VIEWER ════════ */
 let scene, camera, renderer, model3d, rafId;
 let autoRot = true;
@@ -934,27 +1157,62 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // Clean wireframe render: an opaque BLACK body that writes depth and is
-      // pushed slightly back via polygon offset, so the green mesh lines sit on
-      // the surface and back-facing edges are hidden (not see-through).
-      node.material = new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        side: THREE.FrontSide,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
+      // Even procedural grid (graph-paper style) projected onto the surface.
+      // Meshy GLBs have no UVs, so use a triplanar object-space grid: green
+      // lines on a solid black body, back faces occluded (like a cube grid).
+      if (node.geometry && !node.geometry.attributes.normal) {
+        node.geometry.computeVertexNormals();
+      }
+      node.geometry.computeBoundingBox();
+      const bb = node.geometry.boundingBox;
+      const dim = Math.max(
+        bb.max.x - bb.min.x,
+        bb.max.y - bb.min.y,
+        bb.max.z - bb.min.z
+      ) || 1;
+      const cells = 22;
+      node.material = new THREE.ShaderMaterial({
+        uniforms: {
+          uScale: { value: cells / dim },
+          uThickness: { value: 0.04 },
+          uColor: { value: new THREE.Color(0x00ff41) },
+          uBg: { value: new THREE.Color(0x000000) },
+        },
+        side: THREE.DoubleSide,
+        vertexShader: `
+          varying vec3 vPos;
+          varying vec3 vNrm;
+          void main() {
+            vPos = position;
+            vNrm = normal;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          precision highp float;
+          varying vec3 vPos;
+          varying vec3 vNrm;
+          uniform float uScale;
+          uniform float uThickness;
+          uniform vec3 uColor;
+          uniform vec3 uBg;
+          float lineMask(vec2 c) {
+            vec2 f = fract(c);
+            vec2 d = min(f, 1.0 - f);
+            float m = min(d.x, d.y);
+            return 1.0 - smoothstep(uThickness, uThickness + 0.012, m);
+          }
+          void main() {
+            vec3 c = vPos * uScale;
+            vec3 w = abs(normalize(vNrm));
+            w = w / (w.x + w.y + w.z + 1e-5);
+            float g = lineMask(c.yz) * w.x + lineMask(c.xz) * w.y + lineMask(c.xy) * w.z;
+            g = clamp(g, 0.0, 1.0);
+            gl_FragColor = vec4(mix(uBg, uColor, g), 1.0);
+          }
+        `,
       });
       node.material.needsUpdate = true;
-
-      // ...with a bright green wireframe overlay on top.
-      const wireMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff41,
-        wireframe: true,
-      });
-      const wireClone = node.clone();
-      wireClone.material = wireMat;
-      wireClone.name = 'wire-overlay';
-      if (node.parent) node.parent.add(wireClone);
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
