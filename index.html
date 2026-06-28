@@ -280,7 +280,7 @@
       ● SOLID
     </button>
     <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">
-      ⊞ EDGES
+      ⊞ GRID
     </button>
     <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">
       ≡ WIRE
@@ -934,36 +934,27 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // Remove any existing wire overlays first
-      const toRemove = [];
-      model3d.traverse(c => { if (c.name === 'wire-overlay') toRemove.push(c); });
-      toRemove.forEach(c => c.parent && c.parent.remove(c));
-
-      // Make the base mesh dark and semi transparent
+      // Original grid: dark solid base...
       node.material = new THREE.MeshPhongMaterial({
-        color: 0x001a00,
-        transparent: true,
-        opacity: 0.15,
+        color: 0x003310,
+        emissive: 0x001100,
+        emissiveIntensity: 0.3,
         side: THREE.DoubleSide,
-        depthWrite: false,
+        wireframe: false,
       });
       node.material.needsUpdate = true;
 
-      // Create a grid overlay mesh using EdgesGeometry
-      // This draws lines only along the actual polygon edges — real grid not wireframe
-      const edges = new THREE.EdgesGeometry(node.geometry, 15);
-      const edgeMat = new THREE.LineBasicMaterial({
+      // ...with a bright wireframe overlay clone on top.
+      const wireMat = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
+        wireframe: true,
         transparent: true,
-        opacity: 0.85,
-        linewidth: 1,
+        opacity: 0.8,
       });
-      const edgeMesh = new THREE.LineSegments(edges, edgeMat);
-      edgeMesh.name = 'wire-overlay';
-      edgeMesh.position.copy(node.position);
-      edgeMesh.rotation.copy(node.rotation);
-      edgeMesh.scale.copy(node.scale);
-      node.parent && node.parent.add(edgeMesh);
+      const wireClone = node.clone();
+      wireClone.material = wireMat;
+      wireClone.name = 'wire-overlay';
+      if (node.parent) node.parent.add(wireClone);
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
