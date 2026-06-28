@@ -1,1002 +1,380 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>CONJURE</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <style>
+  :root {
+    --green: #00ff41;
+    --dim: #00aa2a;
+    --dark: #0a0e0a;
+    --panel: #0f140f;
+    --border: #1a3a1a;
+    --amber: #ffaa00;
+    --red: #ff4444;
+    --white: #ffffff;
+    --gray: #555555;
+  }
 
-/* ════════════════════════════════════════
-   VARIABLES
-   ════════════════════════════════════════ */
-:root {
-  --bg:         #0a0e0a;
-  --panel:      #0f140f;
-  --green:      #00ff41;
-  --green-dim:  #00aa2a;
-  --green-dark: #003310;
-  --amber:      #ffaa00;
-  --red:        #ff3333;
-  --white:      #ffffff;
-  --gray:       #444444;
-  --border:     #1a2b1a;
-}
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 
-/* ════════════════════════════════════════
-   RESET
-   ════════════════════════════════════════ */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-user-select: none;
-  user-select: none;
-}
+  html, body {
+    background: #0a0e0a;
+    color: #00ff41;
+    font-family: monospace;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
 
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg);
-  color: var(--green);
-  font-family: monospace;
-  font-size: 18px;
-}
+  body {
+    display: flex;
+    flex-direction: column;
+  }
 
-/* ════════════════════════════════════════
-   SCREEN BASE
-   ════════════════════════════════════════ */
-.screen {
-  position: fixed;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  overflow: hidden;
-}
+  .screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+  }
 
-/* ════════════════════════════════════════
-   ANIMATIONS
-   ════════════════════════════════════════ */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+  button:active {
+    opacity: 0.6;
+  }
 
-@keyframes pulse-opacity {
-  0%, 100% { opacity: 0.3; }
-  50%       { opacity: 1.0; }
-}
+  /* Idle ring pulse */
+  @keyframes pulse-ring {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,255,65,0.4); }
+    50% { box-shadow: 0 0 0 16px rgba(0,255,65,0); }
+  }
+  #idle-ring { animation: pulse-ring 2s ease-in-out infinite; }
 
-@keyframes pulse-amber {
-  0%, 100% { box-shadow: 0 0 0 0   rgba(255, 170, 0, 0.5); }
-  50%       { box-shadow: 0 0 0 24px rgba(255, 170, 0, 0); }
-}
+  /* Step rows (shared by generating + slicing) */
+  .step-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step-icon {
+    font-size: 20px;
+    color: var(--gray);
+    width: 24px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-body { flex: 1; }
+  .step-title { font-size: 16px; color: var(--white); }
+  .step-msg { font-size: 13px; color: var(--dim); margin-top: 4px; min-height: 18px; }
 
-@keyframes border-flash {
-  0%, 100% { box-shadow: inset 0 0 0 4px var(--green); }
-  50%       { box-shadow: inset 0 0 0 4px var(--green-dim); }
-}
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-@keyframes usb-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
-}
-
-/* ════════════════════════════════════════
-   SPINNER
-   ════════════════════════════════════════ */
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top: 2px solid var(--green);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  flex-shrink: 0;
-}
-
-/* ════════════════════════════════════════
-   STEP ROWS (shared by screens 3 & 5)
-   ════════════════════════════════════════ */
-.steps-list {
-  width: 100%;
-  max-width: 600px;
-}
-
-.step-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.step-row:last-child {
-  border-bottom: none;
-}
-
-.step-icon {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 20px;
-}
-
-.step-text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.step-name {
-  font-size: 18px;
-  color: var(--white);
-}
-
-.step-msg {
-  font-size: 14px;
-  color: var(--green-dim);
-  min-height: 17px;
-}
-
-.step-row.pending  .step-name { color: var(--gray); }
-.step-row.active   .step-name { color: var(--green); }
-.step-row.complete .step-name { color: var(--green-dim); }
-.step-row.error    .step-name { color: var(--red); }
-.step-row.error    .step-msg  { color: var(--red); }
-
-/* ════════════════════════════════════════
-   PROGRESS BAR (shared)
-   ════════════════════════════════════════ */
-.progress-wrap {
-  width: 100%;
-  max-width: 600px;
-  height: 4px;
-  background: var(--border);
-  margin-top: 28px;
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--green);
-  width: 0%;
-  transition: width 0.4s ease;
-  border-radius: 2px;
-}
-
-/* ════════════════════════════════════════
-   BUTTONS (shared)
-   ════════════════════════════════════════ */
-.btn {
-  font-family: monospace;
-  font-size: 20px;
-  letter-spacing: 3px;
-  padding: 0 32px;
-  height: 72px;
-  min-height: 72px;
-  background: transparent;
-  cursor: pointer;
-  touch-action: manipulation;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0;
-  white-space: nowrap;
-  transition: opacity 0.1s;
-}
-
-.btn:active { opacity: 0.55; }
-
-.btn-green { border: 2px solid var(--green); color: var(--green); }
-.btn-gray  { border: 2px solid var(--gray);  color: var(--gray);  }
-.btn-red   { border: 2px solid var(--red);   color: var(--red);   }
-
-/* ════════════════════════════════════════
-   SCREEN 1 — IDLE
-   ════════════════════════════════════════ */
-#screen-idle {
-  cursor: pointer;
-  gap: 0;
-}
-
-.idle-logo {
-  font-size: 64px;
-  font-weight: bold;
-  color: var(--green);
-  letter-spacing: 12px;
-  margin-bottom: 12px;
-}
-
-.idle-tagline {
-  font-size: 18px;
-  color: var(--green-dim);
-  letter-spacing: 4px;
-  margin-bottom: 64px;
-}
-
-.pulse-ring {
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  border: 2px solid var(--green);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: pulse-opacity 2s ease-in-out infinite;
-  margin-bottom: 28px;
-  flex-shrink: 0;
-}
-
-.pulse-ring-icon {
-  font-size: 48px;
-  line-height: 1;
-}
-
-.idle-tap {
-  font-size: 14px;
-  color: var(--green-dim);
-  letter-spacing: 4px;
-}
-
-/* ════════════════════════════════════════
-   SCREEN 2 — SPEAK
-   ════════════════════════════════════════ */
-#screen-speak {
-  gap: 0;
-  padding: 0 40px;
-}
-
-.speak-header {
-  position: absolute;
-  top: 24px;
-  left: 28px;
-  font-size: 20px;
-  color: var(--green-dim);
-  letter-spacing: 4px;
-  pointer-events: none;
-}
-
-.mic-button {
-  width: 220px;
-  height: 220px;
-  border-radius: 50%;
-  border: 3px solid var(--green);
-  background: transparent;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  touch-action: none;
-  flex-shrink: 0;
-  transition: border-color 0.2s, background 0.2s;
-}
-
-.mic-button.recording {
-  border-color: var(--amber);
-  background: rgba(255, 170, 0, 0.08);
-  animation: pulse-amber 1s ease-in-out infinite;
-}
-
-.mic-icon-inner {
-  font-size: 56px;
-  line-height: 1;
-  pointer-events: none;
-}
-
-.mic-label {
-  font-size: 14px;
-  color: var(--green-dim);
-  letter-spacing: 3px;
-  margin-top: 16px;
-  text-align: center;
-}
-
-.transcript-box {
-  width: 80%;
-  max-width: 600px;
-  min-height: 80px;
-  max-height: 160px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  padding: 16px;
-  margin-top: 28px;
-  margin-bottom: 20px;
-  overflow-y: auto;
-}
-
-.transcript-content {
-  font-size: 20px;
-  font-family: monospace;
-  line-height: 1.5;
-  word-break: break-word;
-  color: var(--gray);
-}
-
-.action-buttons {
-  display: none;
-  gap: 12px;
-  width: 80%;
-  max-width: 600px;
-}
-
-.action-buttons .btn {
-  flex: 1;
-  height: 64px;
-  min-height: 64px;
-}
-
-/* ════════════════════════════════════════
-   SCREEN 3 — GENERATING
-   ════════════════════════════════════════ */
-#screen-generating {
-  padding: 40px;
-  justify-content: center;
-  gap: 0;
-}
-
-.generating-title {
-  font-size: 28px;
-  color: var(--green);
-  letter-spacing: 6px;
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.generating-prompt {
-  font-size: 18px;
-  color: var(--white);
-  font-style: italic;
-  text-align: center;
-  max-width: 600px;
-  width: 100%;
-  line-height: 1.5;
-  margin-bottom: 40px;
-}
-
-/* ════════════════════════════════════════
-   SCREEN 4 — VIEW MODEL
-   ════════════════════════════════════════ */
-#screen-view {
-  padding: 0;
-  justify-content: flex-start;
-  align-items: flex-start;
-}
-
-#three-container {
-  position: absolute;
-  inset: 0;
-}
-
-#three-container canvas {
-  display: block;
-}
-
-#view-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  pointer-events: none;
-}
-
-.view-top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  background: linear-gradient(to bottom, rgba(10,14,10,0.85) 0%, transparent 100%);
-}
-
-.view-top-logo {
-  font-size: 14px;
-  color: var(--green-dim);
-  letter-spacing: 4px;
-}
-
-.view-top-prompt {
-  font-size: 14px;
-  color: var(--green-dim);
-  letter-spacing: 1px;
-  max-width: 50%;
-  text-align: center;
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.view-top-spacer {
-  width: 80px;
-}
-
-.view-bottom-bar {
-  display: flex;
-  gap: 12px;
-  padding: 16px;
-  background: linear-gradient(to top, rgba(10,14,10,0.9) 0%, transparent 100%);
-  pointer-events: auto;
-}
-
-.view-bottom-bar .btn {
-  flex: 1;
-}
-
-/* ════════════════════════════════════════
-   SCREEN 5 — SLICING
-   ════════════════════════════════════════ */
-#screen-slicing {
-  padding: 40px;
-  gap: 0;
-}
-
-.slicing-title {
-  font-size: 28px;
-  color: var(--green);
-  letter-spacing: 6px;
-  margin-bottom: 40px;
-  text-align: center;
-}
-
-#slice-steps-wrap {
-  width: 100%;
-  max-width: 600px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-#usb-ready-msg {
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  gap: 32px;
-  text-align: center;
-  padding: 48px 40px;
-  border: 4px solid var(--green);
-  width: 100%;
-  max-width: 600px;
-  animation: border-flash 1.5s ease-in-out infinite;
-}
-
-.usb-ready-text {
-  font-size: 28px;
-  font-weight: bold;
-  color: var(--green);
-  letter-spacing: 4px;
-  line-height: 1.5;
-  animation: usb-pulse 1.5s ease-in-out infinite;
-}
-
-/* ════════════════════════════════════════
-   SCREEN 6 — ERROR
-   ════════════════════════════════════════ */
-#screen-error {
-  gap: 24px;
-  padding: 40px;
-  text-align: center;
-}
-
-.error-icon {
-  font-size: 64px;
-  color: var(--red);
-  line-height: 1;
-}
-
-.error-title {
-  font-size: 24px;
-  color: var(--red);
-  letter-spacing: 4px;
-}
-
-.error-message {
-  font-size: 16px;
-  color: var(--gray);
-  max-width: 500px;
-  line-height: 1.6;
-  font-family: monospace;
-}
-
-.error-restart-btn {
-  width: 280px;
-  height: 64px;
-  min-height: 64px;
-}
-
+  /* USB-ready flash */
+  @keyframes usb-flash {
+    0%, 100% { border-color: var(--green); color: var(--green); }
+    50% { border-color: var(--dim); color: var(--dim); }
+  }
 </style>
 </head>
 <body>
 
-<!-- ════════════════════════════════════════
-     SCREEN 1 — IDLE
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-idle">
-  <div class="idle-logo">CONJURE</div>
-  <div class="idle-tagline">speak to fabricate reality</div>
-  <div class="pulse-ring">
-    <div class="pulse-ring-icon">&#x1F3A4;</div>
+<!-- ════════ SCREEN 1 — IDLE ════════ -->
+<div id="s-idle" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:32px;cursor:pointer" onclick="goToSpeak()">
+  <div style="font-size:56px;font-weight:bold;letter-spacing:12px;color:var(--green)">CONJURE</div>
+  <div style="font-size:16px;letter-spacing:4px;color:var(--dim)">speak to fabricate reality</div>
+  <div id="idle-ring" style="
+    width:180px;height:180px;border-radius:50%;
+    border:2px solid var(--green);
+    display:flex;align-items:center;justify-content:center;
+    margin:16px 0;
+  ">
+    <div style="font-size:64px">🎙</div>
   </div>
-  <div class="idle-tap">TAP TO BEGIN</div>
+  <div style="font-size:13px;letter-spacing:4px;color:var(--dim)">TAP TO BEGIN</div>
 </div>
 
-<!-- ════════════════════════════════════════
-     SCREEN 2 — SPEAK
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-speak">
-  <div class="speak-header">CONJURE</div>
+<!-- ════════ SCREEN 2 — SPEAK ════════ -->
+<div id="s-speak" class="screen" style="flex-direction:column;align-items:center;justify-content:flex-start;padding-top:60px;gap:24px">
 
-  <button class="mic-button" id="mic-button" type="button">
-    <div class="mic-icon-inner">&#x1F3A4;</div>
-  </button>
-  <div class="mic-label" id="mic-label">HOLD TO SPEAK</div>
+  <div style="font-size:13px;letter-spacing:4px;color:var(--dim)">CONJURE</div>
 
-  <div class="transcript-box">
-    <div class="transcript-content" id="transcript-text">your words will appear here...</div>
+  <div id="mic-btn" style="
+    width:200px;height:200px;border-radius:50%;
+    border:3px solid var(--green);
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    cursor:pointer;gap:8px;
+    flex-shrink:0;
+  ">
+    <div style="font-size:64px">🎙</div>
+    <div id="mic-label" style="font-size:12px;letter-spacing:3px;color:var(--dim)">HOLD TO SPEAK</div>
   </div>
 
-  <div class="action-buttons" id="action-buttons">
-    <button class="btn btn-green" type="button" id="btn-confirm" onclick="handleConfirm()">CONFIRM</button>
-    <button class="btn btn-gray"  type="button" onclick="redoTranscript()">REDO</button>
+  <div id="transcript-box" style="
+    width:80%;max-width:600px;
+    min-height:80px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    padding:16px;
+    font-size:18px;
+    color:var(--white);
+    line-height:1.5;
+  ">
+    <span id="transcript-placeholder" style="color:var(--gray);font-size:16px">your words will appear here...</span>
+    <span id="transcript-text" style="display:none"></span>
   </div>
+
+  <div id="action-btns" style="display:none;width:80%;max-width:600px;gap:12px;flex-direction:row">
+    <button onclick="handleConfirm()" style="
+      flex:1;height:64px;
+      background:transparent;
+      border:2px solid var(--green);
+      color:var(--green);
+      font-family:monospace;font-size:18px;
+      letter-spacing:2px;cursor:pointer;
+    ">CONFIRM</button>
+    <button onclick="handleRedo()" style="
+      flex:1;height:64px;
+      background:transparent;
+      border:2px solid var(--gray);
+      color:var(--gray);
+      font-family:monospace;font-size:18px;
+      letter-spacing:2px;cursor:pointer;
+    ">REDO</button>
+  </div>
+
+  <button onclick="goToIdle()" style="
+    margin-top:auto;margin-bottom:24px;
+    background:transparent;border:none;
+    color:var(--gray);font-family:monospace;
+    font-size:14px;letter-spacing:2px;cursor:pointer;
+  ">← BACK</button>
+
 </div>
 
-<!-- ════════════════════════════════════════
-     SCREEN 3 — GENERATING
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-generating">
-  <div class="generating-title">CONJURING</div>
-  <div class="generating-prompt" id="generating-prompt"></div>
+<!-- ════════ SCREEN 3 — GENERATING ════════ -->
+<div id="s-generating" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px">
 
-  <div class="steps-list">
-    <div class="step-row pending" id="step-meshy-create">
-      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-      <div class="step-text">
-        <div class="step-name">Generating 3D model</div>
+  <div style="font-size:24px;letter-spacing:4px;color:var(--green)">CONJURING</div>
+
+  <div id="gen-prompt" style="
+    font-size:16px;color:var(--dim);
+    font-style:italic;text-align:center;
+    max-width:500px;line-height:1.6;
+  "></div>
+
+  <div style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0">
+    <div class="step-row" id="g-step-1">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Generating 3D model</div>
         <div class="step-msg"></div>
       </div>
     </div>
-    <div class="step-row pending" id="step-meshy-poll">
-      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-      <div class="step-text">
-        <div class="step-name">Processing geometry</div>
+    <div class="step-row" id="g-step-2">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Processing geometry</div>
         <div class="step-msg"></div>
       </div>
     </div>
-    <div class="step-row pending" id="step-meshy-download">
-      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-      <div class="step-text">
-        <div class="step-name">Downloading model</div>
+    <div class="step-row" id="g-step-3">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Downloading model</div>
         <div class="step-msg"></div>
       </div>
     </div>
-    <div class="step-row pending" id="step-insforge-upload">
-      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-      <div class="step-text">
-        <div class="step-name">Saving to cloud</div>
+    <div class="step-row" id="g-step-4">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Saving to cloud</div>
         <div class="step-msg"></div>
       </div>
     </div>
-    <div class="step-row pending" id="step-complete">
-      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-      <div class="step-text">
-        <div class="step-name">Model ready</div>
+    <div class="step-row" id="g-step-5">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Complete</div>
         <div class="step-msg"></div>
       </div>
     </div>
   </div>
 
-  <div class="progress-wrap">
-    <div class="progress-fill" id="gen-progress-fill"></div>
+  <div style="width:100%;max-width:500px;height:4px;background:var(--panel);border-radius:2px">
+    <div id="gen-progress-bar" style="height:4px;background:var(--green);border-radius:2px;width:0%;transition:width 0.3s"></div>
   </div>
+
 </div>
 
-<!-- ════════════════════════════════════════
-     SCREEN 4 — VIEW MODEL
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-view">
-  <div id="three-container"></div>
-  <div id="view-overlay">
-    <div class="view-top-bar">
-      <span class="view-top-logo">CONJURE</span>
-      <span class="view-top-prompt" id="view-prompt-label"></span>
-      <span class="view-top-spacer"></span>
-    </div>
-    <div class="view-bottom-bar">
-      <button class="btn btn-green" type="button" onclick="handlePrint()">PRINT THIS</button>
-      <button class="btn btn-gray"  type="button" onclick="handleRedo()">REDO</button>
-    </div>
+<!-- ════════ SCREEN 4 — VIEW MODEL ════════ -->
+<div id="s-view" class="screen" style="position:absolute;overflow:hidden">
+
+  <div id="three-container" style="position:absolute;top:0;left:0;width:100%;height:100%"></div>
+
+  <div style="
+    position:absolute;top:0;left:0;right:0;
+    display:flex;justify-content:space-between;align-items:center;
+    padding:16px 24px;
+    background:linear-gradient(to bottom, rgba(10,14,10,0.8), transparent);
+    pointer-events:none;
+  ">
+    <div style="font-size:13px;letter-spacing:3px;color:var(--dim)">CONJURE</div>
+    <div id="view-prompt" style="font-size:13px;color:var(--dim);font-style:italic"></div>
   </div>
+
+  <div style="
+    position:absolute;bottom:0;left:0;right:0;
+    display:flex;gap:0;
+    background:linear-gradient(to top, rgba(10,14,10,0.95), transparent);
+    padding:24px;
+  ">
+    <button id="btn-print" onclick="handlePrint()" style="
+      flex:1;height:72px;
+      background:transparent;
+      border:2px solid var(--green);border-right:1px solid var(--green);
+      color:var(--green);font-family:monospace;
+      font-size:20px;letter-spacing:3px;cursor:pointer;
+    ">PRINT THIS</button>
+    <button onclick="goToSpeak()" style="
+      flex:1;height:72px;
+      background:transparent;
+      border:2px solid var(--gray);border-left:1px solid var(--gray);
+      color:var(--gray);font-family:monospace;
+      font-size:20px;letter-spacing:3px;cursor:pointer;
+    ">REDO</button>
+  </div>
+
 </div>
 
-<!-- ════════════════════════════════════════
-     SCREEN 5 — SLICING
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-slicing">
-  <div class="slicing-title">PREPARING PRINT</div>
+<!-- ════════ SCREEN 5 — SLICING ════════ -->
+<div id="s-slicing" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px">
 
-  <div id="slice-steps-wrap">
-    <div class="steps-list">
-      <div class="step-row pending" id="slice-step-load">
-        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-        <div class="step-text">
-          <div class="step-name">Loading model</div>
-          <div class="step-msg"></div>
-        </div>
-      </div>
-      <div class="step-row pending" id="slice-step-slice">
-        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-        <div class="step-text">
-          <div class="step-name">Slicing for Neptune 4 Pro</div>
-          <div class="step-msg"></div>
-        </div>
-      </div>
-      <div class="step-row pending" id="slice-step-usb">
-        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-        <div class="step-text">
-          <div class="step-name">Checking USB drive</div>
-          <div class="step-msg"></div>
-        </div>
-      </div>
-      <div class="step-row pending" id="slice-step-copy">
-        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-        <div class="step-text">
-          <div class="step-name">Copying to USB</div>
-          <div class="step-msg"></div>
-        </div>
-      </div>
-      <div class="step-row pending" id="slice-step-done">
-        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
-        <div class="step-text">
-          <div class="step-name">Ready to print</div>
-          <div class="step-msg"></div>
-        </div>
+  <div style="font-size:24px;letter-spacing:4px;color:var(--green)">PREPARING PRINT</div>
+
+  <div id="slice-steps" style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0">
+    <div class="step-row" id="s-step-1">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Loading model</div>
+        <div class="step-msg"></div>
       </div>
     </div>
-
-    <div class="progress-wrap">
-      <div class="progress-fill" id="slice-progress-fill"></div>
+    <div class="step-row" id="s-step-2">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Slicing for Neptune 4 Pro</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+    <div class="step-row" id="s-step-3">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Checking USB drive</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+    <div class="step-row" id="s-step-4">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Copying to USB</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+    <div class="step-row" id="s-step-5">
+      <div class="step-icon">○</div>
+      <div class="step-body">
+        <div class="step-title">Ready to print</div>
+        <div class="step-msg"></div>
+      </div>
     </div>
   </div>
 
-  <div id="usb-ready-msg">
-    <div class="usb-ready-text">REMOVE USB<br>INSERT INTO PRINTER</div>
-    <button class="btn btn-gray" type="button" onclick="resetAll()" style="width:240px;height:64px;min-height:64px;">
-      START OVER
-    </button>
+  <div id="slice-progress-wrap" style="width:100%;max-width:500px;height:4px;background:var(--panel);border-radius:2px">
+    <div id="slice-progress-bar" style="height:4px;background:var(--green);border-radius:2px;width:0%;transition:width 0.3s"></div>
   </div>
+
+  <div id="usb-ready" style="
+    display:none;
+    flex-direction:column;align-items:center;gap:28px;
+    text-align:center;
+    border:4px solid var(--green);
+    padding:48px 40px;
+    width:100%;max-width:500px;
+    animation:usb-flash 1.4s ease-in-out infinite;
+  ">
+    <div style="font-size:26px;font-weight:bold;letter-spacing:3px;line-height:1.5">
+      REMOVE USB<br>INSERT INTO PRINTER
+    </div>
+    <button onclick="resetAll()" style="
+      width:240px;height:64px;
+      background:transparent;
+      border:2px solid var(--gray);
+      color:var(--gray);font-family:monospace;
+      font-size:18px;letter-spacing:2px;cursor:pointer;
+    ">START OVER</button>
+  </div>
+
 </div>
 
-<!-- ════════════════════════════════════════
-     SCREEN 6 — ERROR
-     ════════════════════════════════════════ -->
-<div class="screen" id="screen-error">
-  <div class="error-icon">✗</div>
-  <div class="error-title">SOMETHING WENT WRONG</div>
-  <div class="error-message" id="error-message">An unexpected error occurred.</div>
-  <button class="btn btn-red error-restart-btn" type="button" onclick="resetAll()">START OVER</button>
+<!-- ════════ SCREEN 6 — ERROR ════════ -->
+<div id="s-error" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px;text-align:center">
+  <div style="font-size:64px;color:var(--red)">✗</div>
+  <div style="font-size:22px;letter-spacing:3px;color:var(--red)">SOMETHING WENT WRONG</div>
+  <div id="error-msg" style="font-size:15px;color:var(--gray);max-width:480px;line-height:1.6"></div>
+  <button onclick="resetAll()" style="
+    width:280px;height:64px;
+    background:transparent;
+    border:2px solid var(--red);
+    color:var(--red);font-family:monospace;
+    font-size:18px;letter-spacing:2px;cursor:pointer;
+  ">START OVER</button>
 </div>
 
 <script>
 'use strict';
 
-/* ════════════════════════════════════════
-   GLOBAL STATE
-   ════════════════════════════════════════ */
-var currentPrompt      = '';
-var currentTranscript  = '';
-var isListening        = false;
-var idleTimer          = null;
-var activeEvtSource    = null;
+/* ════════ SCREEN SYSTEM ════════ */
+let currentScreen = null;
 
-// Three.js globals
-var scene, camera, renderer, model, animationId;
-var threeInitialized  = false;
-var autoRotate        = true;
-var touchStartX       = 0;
-var touchStartY       = 0;
-var isDragging        = false;
-var mouseDown         = false;
-
-/* ════════════════════════════════════════
-   SCREEN MANAGEMENT
-   ════════════════════════════════════════ */
 function showScreen(id) {
-  // Fade out all screens
-  document.querySelectorAll('.screen').forEach(function(s) {
-    s.style.opacity = '0';
-    setTimeout(function() { s.style.display = 'none'; }, 300);
-  });
-
-  // Fade in target after transition completes
-  setTimeout(function() {
-    var el = document.getElementById(id);
-    el.style.display = 'flex';
-    setTimeout(function() { el.style.opacity = '1'; }, 10);
-  }, 300);
-}
-
-/* ════════════════════════════════════════
-   IDLE TIMEOUT — 90 seconds
-   ════════════════════════════════════════ */
-function resetIdleTimer() {
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(function() {
-    stopListening();
-    closeEvtSource();
-    showScreen('screen-idle');
-    speak('What would you like to conjure today?');
-  }, 90000);
-}
-
-document.addEventListener('touchstart', resetIdleTimer, { passive: true });
-document.addEventListener('mousedown',  resetIdleTimer);
-
-/* ════════════════════════════════════════
-   SPEECH RECOGNITION
-   ════════════════════════════════════════ */
-var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-var recognition = null;
-
-function initRecognition() {
-  if (!SpeechRecognitionAPI) return;
-  recognition = new SpeechRecognitionAPI();
-  recognition.continuous     = true;
-  recognition.interimResults = true;
-  recognition.lang           = 'en-US';
-
-  recognition.onresult = function(event) {
-    var interim = '';
-    var final   = '';
-    for (var i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        final += event.results[i][0].transcript;
-      } else {
-        interim += event.results[i][0].transcript;
-      }
-    }
-    if (final) currentTranscript += final;
-    var display = currentTranscript + interim;
-    var el = document.getElementById('transcript-text');
-    if (display.trim().length > 0) {
-      el.textContent = display;
-      el.style.color = 'var(--white)';
-    } else {
-      el.textContent = 'your words will appear here...';
-      el.style.color = 'var(--gray)';
-    }
-    updateActionButtons();
-  };
-
-  recognition.onerror = function(e) {
-    if (e.error !== 'aborted' && e.error !== 'no-speech') {
-      console.log('[Speech] error:', e.error);
-    }
-    stopListening();
-  };
-
-  // Auto-restart when it stops unexpectedly while we're still listening
-  recognition.onend = function() {
-    if (isListening) {
-      try { recognition.start(); } catch(ex) {}
-    }
-  };
-}
-
-function startListening() {
-  if (isListening) return;
-  if (!SpeechRecognitionAPI) {
-    showError('Speech recognition not supported.\nPlease use Chromium.');
-    return;
+  if (currentScreen) {
+    currentScreen.style.display = 'none';
   }
-  if (!recognition) initRecognition();
-
-  isListening = true;
-  currentTranscript = '';
-
-  var el = document.getElementById('transcript-text');
-  el.textContent = 'your words will appear here...';
-  el.style.color = 'var(--gray)';
-
-  updateActionButtons();
-
-  try { recognition.start(); } catch(ex) {}
-
-  var btn   = document.getElementById('mic-button');
-  var label = document.getElementById('mic-label');
-  btn.classList.add('recording');
-  label.textContent  = 'LISTENING...';
-  label.style.color  = 'var(--amber)';
-
-  resetIdleTimer();
+  currentScreen = document.getElementById(id);
+  currentScreen.style.display = 'flex';
 }
 
-function stopListening() {
-  if (!isListening) return;
-  isListening = false;
-  try { recognition.stop(); } catch(ex) {}
+/* ════════ GLOBALS ════════ */
+let currentPrompt = '';
+let evtSource = null;
+let idleTimer = null;
 
-  var btn   = document.getElementById('mic-button');
-  var label = document.getElementById('mic-label');
-  if (btn)   btn.classList.remove('recording');
-  if (label) {
-    label.textContent = 'HOLD TO SPEAK';
-    label.style.color = 'var(--green-dim)';
-  }
-}
-
-function updateActionButtons() {
-  var hasText = currentTranscript.trim().length > 0;
-  document.getElementById('action-buttons').style.display = hasText ? 'flex' : 'none';
-}
-
-function redoTranscript() {
-  currentTranscript = '';
-  var el = document.getElementById('transcript-text');
-  el.textContent = 'your words will appear here...';
-  el.style.color = 'var(--gray)';
-  updateActionButtons();
-  resetIdleTimer();
-}
-
-/* ════════════════════════════════════════
-   MIC BUTTON — mouse & touch
-   ════════════════════════════════════════ */
-function wireMicButton() {
-  var btn = document.getElementById('mic-button');
-
-  btn.addEventListener('mousedown', function(e) {
-    e.preventDefault();
-    startListening();
-  });
-  btn.addEventListener('touchstart', function(e) {
-    e.preventDefault();
-    startListening();
-  }, { passive: false });
-
-  btn.addEventListener('mouseup', function(e) {
-    e.preventDefault();
-    stopListening();
-  });
-  btn.addEventListener('touchend', function(e) {
-    e.preventDefault();
-    stopListening();
-  }, { passive: false });
-
-  btn.addEventListener('mouseleave', function() {
-    if (isListening) stopListening();
-  });
-  btn.addEventListener('touchcancel', function() {
-    if (isListening) stopListening();
-  });
-}
-
-/* ════════════════════════════════════════
-   IDLE SCREEN — tap anywhere to proceed
-   ════════════════════════════════════════ */
-function wireIdleScreen() {
-  var idle = document.getElementById('screen-idle');
-  idle.addEventListener('click', function() {
-    showScreen('screen-speak');
-    resetIdleTimer();
-  });
-  idle.addEventListener('touchend', function(e) {
-    e.preventDefault();
-    showScreen('screen-speak');
-    resetIdleTimer();
-  }, { passive: false });
-}
-
-/* ════════════════════════════════════════
-   STEP STATE HELPERS
-   ════════════════════════════════════════ */
-function setStep(id, state, message) {
-  var row = document.getElementById(id);
-  if (!row) return;
-  var icon = row.querySelector('.step-icon');
-  var msg  = row.querySelector('.step-msg');
-
-  row.className = 'step-row ' + state;
-
-  if (state === 'active') {
-    icon.innerHTML = '<div class="spinner"></div>';
-  } else if (state === 'complete') {
-    icon.innerHTML = '<span style="color:var(--green);font-size:20px">✓</span>';
-  } else if (state === 'error') {
-    icon.innerHTML = '<span style="color:var(--red);font-size:20px">✗</span>';
-  } else {
-    icon.innerHTML = '<span style="color:var(--gray)">○</span>';
-  }
-
-  if (message !== undefined && message !== null && message !== '') {
-    msg.textContent = message;
-  }
-}
-
-function resetGeneratingSteps() {
-  var ids = ['step-meshy-create','step-meshy-poll','step-meshy-download','step-insforge-upload','step-complete'];
-  for (var i = 0; i < ids.length; i++) {
-    setStep(ids[i], 'pending', '');
-  }
-  document.getElementById('gen-progress-fill').style.width = '0%';
-}
-
-function resetSlicingSteps() {
-  var ids = ['slice-step-load','slice-step-slice','slice-step-usb','slice-step-copy','slice-step-done'];
-  for (var i = 0; i < ids.length; i++) {
-    setStep(ids[i], 'pending', '');
-  }
-  document.getElementById('slice-progress-fill').style.width = '0%';
-  document.getElementById('slice-steps-wrap').style.display = 'flex';
-  document.getElementById('usb-ready-msg').style.display   = 'none';
-}
-
-/* ════════════════════════════════════════
-   SSE EVENT MAPPERS
-   ════════════════════════════════════════ */
-function handleGeneratingEvent(data) {
-  var stepMap = {
-    'create':       'step-meshy-create',
-    'poll':         'step-meshy-poll',
-    'download_glb': 'step-meshy-download',
-    'download_stl': 'step-meshy-download',
-    'insforge':     'step-insforge-upload',
-    'complete':     'step-complete'
-  };
-  var stepId = stepMap[data.step];
-  if (stepId) {
-    setStep(stepId, data.status, data.message || '');
-  }
-  if (data.progress !== undefined) {
-    document.getElementById('gen-progress-fill').style.width = data.progress + '%';
-  }
-}
-
-function handleSlicingEvent(data) {
-  var stepMap = {
-    'load_stl':  'slice-step-load',
-    'slice':     'slice-step-slice',
-    'usb_check': 'slice-step-usb',
-    'copy_usb':  'slice-step-copy',
-    'usb_ready': 'slice-step-done'
-  };
-  var stepId = stepMap[data.step];
-  if (stepId) {
-    setStep(stepId, data.status, data.message || '');
-  }
-  if (data.progress !== undefined) {
-    document.getElementById('slice-progress-fill').style.width = data.progress + '%';
-  }
-}
-
-/* ════════════════════════════════════════
-   SSE HELPER
-   ════════════════════════════════════════ */
-function closeEvtSource() {
-  if (activeEvtSource) {
-    activeEvtSource.close();
-    activeEvtSource = null;
-  }
-}
-
-/* ════════════════════════════════════════
-   TTS
-   ════════════════════════════════════════ */
+/* ════════ TTS ════════ */
 function speak(text) {
   try {
     fetch('/api/speak', {
@@ -1004,120 +382,364 @@ function speak(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text })
     });
-  } catch(e) {}
+  } catch (e) {}
 }
 
-/* ════════════════════════════════════════
-   THREE.JS
-   ════════════════════════════════════════ */
-function initThreeJS() {
-  if (animationId) cancelAnimationFrame(animationId);
-  if (renderer) {
-    renderer.dispose();
-    var container = document.getElementById('three-container');
-    while (container.firstChild) container.removeChild(container.firstChild);
+/* ════════ NAVIGATION ════════ */
+function goToSpeak() {
+  handleRedo();
+  showScreen('s-speak');
+  resetIdle();
+}
+
+function goToIdle() {
+  stopListening();
+  closeEvents();
+  showScreen('s-idle');
+  resetIdle();
+}
+
+/* ════════ SSE HELPER ════════ */
+function closeEvents() {
+  if (evtSource) {
+    evtSource.close();
+    evtSource = null;
   }
+}
+
+/* ════════ SPEECH RECOGNITION ════════ */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+let transcript = '';
+
+if (SR) {
+  recognition = new SR();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = (e) => {
+    let final = '';
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    transcript += final;
+    const display = transcript + interim;
+    if (display.trim()) {
+      document.getElementById('transcript-placeholder').style.display = 'none';
+      document.getElementById('transcript-text').style.display = 'inline';
+      document.getElementById('transcript-text').textContent = display;
+      document.getElementById('action-btns').style.display = 'flex';
+    }
+  };
+
+  recognition.onerror = () => stopListening();
+  recognition.onend = () => { if (isListening) { try { recognition.start(); } catch (e) {} } };
+}
+
+function startListening() {
+  if (!recognition || isListening) return;
+  isListening = true;
+  transcript = '';
+  document.getElementById('transcript-placeholder').style.display = 'inline';
+  document.getElementById('transcript-text').style.display = 'none';
+  document.getElementById('transcript-text').textContent = '';
+  document.getElementById('action-btns').style.display = 'none';
+  document.getElementById('mic-btn').style.borderColor = 'var(--amber)';
+  document.getElementById('mic-label').textContent = 'LISTENING...';
+  document.getElementById('mic-label').style.color = 'var(--amber)';
+  try { recognition.start(); } catch (e) {}
+}
+
+function stopListening() {
+  if (!recognition || !isListening) return;
+  isListening = false;
+  try { recognition.stop(); } catch (e) {}
+  document.getElementById('mic-btn').style.borderColor = 'var(--green)';
+  document.getElementById('mic-label').textContent = 'HOLD TO SPEAK';
+  document.getElementById('mic-label').style.color = 'var(--dim)';
+}
+
+function handleRedo() {
+  transcript = '';
+  document.getElementById('transcript-placeholder').style.display = 'inline';
+  document.getElementById('transcript-text').style.display = 'none';
+  document.getElementById('transcript-text').textContent = '';
+  document.getElementById('action-btns').style.display = 'none';
+}
+
+const micBtn = document.getElementById('mic-btn');
+micBtn.addEventListener('mousedown', startListening);
+micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startListening(); }, { passive: false });
+micBtn.addEventListener('mouseup', stopListening);
+micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopListening(); }, { passive: false });
+micBtn.addEventListener('mouseleave', () => { if (isListening) stopListening(); });
+micBtn.addEventListener('touchcancel', () => { if (isListening) stopListening(); });
+
+/* ════════ STEP HELPERS ════════ */
+function setStep(id, state, msg) {
+  const row = document.getElementById(id);
+  if (!row) return;
+  const icon = row.querySelector('.step-icon');
+  const msgEl = row.querySelector('.step-msg');
+  if (state === 'active') {
+    icon.innerHTML = '<div class="spinner"></div>';
+    icon.style.color = 'var(--amber)';
+  } else if (state === 'done') {
+    icon.innerHTML = '✓';
+    icon.style.color = 'var(--green)';
+  } else if (state === 'error') {
+    icon.innerHTML = '✗';
+    icon.style.color = 'var(--red)';
+  } else {
+    icon.innerHTML = '○';
+    icon.style.color = 'var(--gray)';
+  }
+  if (msg && msgEl) msgEl.textContent = msg;
+}
+
+function setGenProgress(pct) {
+  document.getElementById('gen-progress-bar').style.width = pct + '%';
+}
+
+function resetGenSteps() {
+  ['g-step-1', 'g-step-2', 'g-step-3', 'g-step-4', 'g-step-5'].forEach(id => setStep(id, 'pending', ''));
+  setGenProgress(0);
+}
+
+function setSliceProgress(pct) {
+  document.getElementById('slice-progress-bar').style.width = pct + '%';
+}
+
+function resetSliceSteps() {
+  ['s-step-1', 's-step-2', 's-step-3', 's-step-4', 's-step-5'].forEach(id => setStep(id, 'pending', ''));
+  setSliceProgress(0);
+  document.getElementById('slice-steps').style.display = 'flex';
+  document.getElementById('slice-progress-wrap').style.display = 'block';
+  document.getElementById('usb-ready').style.display = 'none';
+}
+
+/* ════════ SSE EVENT MAPPERS ════════ */
+function statusToState(s) {
+  if (s === 'complete' || s === 'done') return 'done';
+  if (s === 'active') return 'active';
+  if (s === 'error') return 'error';
+  return 'pending';
+}
+
+function handleGenEvent(d) {
+  const map = {
+    create: 'g-step-1',
+    poll: 'g-step-2',
+    download_glb: 'g-step-3',
+    download_stl: 'g-step-3',
+    insforge: 'g-step-4',
+    complete: 'g-step-5'
+  };
+  const id = map[d.step];
+  if (id) setStep(id, statusToState(d.status), d.message || '');
+  if (typeof d.progress === 'number') setGenProgress(d.progress);
+}
+
+function handleSliceEvent(d) {
+  const map = {
+    load_stl: 's-step-1',
+    slice: 's-step-2',
+    usb_check: 's-step-3',
+    copy_usb: 's-step-4',
+    usb_ready: 's-step-5'
+  };
+  const id = map[d.step];
+  if (id) setStep(id, statusToState(d.status), d.message || '');
+  if (typeof d.progress === 'number') setSliceProgress(d.progress);
+}
+
+/* ════════ GENERATE FLOW ════════ */
+function handleConfirm() {
+  const p = transcript.trim();
+  if (!p) return;
+  currentPrompt = p;
+  stopListening();
+
+  document.getElementById('gen-prompt').textContent = '"' + p + '"';
+  document.getElementById('view-prompt').textContent = '"' + p + '"';
+
+  showScreen('s-generating');
+  resetGenSteps();
+  resetIdle();
+  speak('Understood. Conjuring your model now.');
+
+  closeEvents();
+  evtSource = new EventSource('/events');
+  evtSource.onmessage = (e) => {
+    let d;
+    try { d = JSON.parse(e.data); } catch (_) { return; }
+    handleGenEvent(d);
+    if (d.step === 'complete' && (d.status === 'complete' || d.status === 'done')) {
+      closeEvents();
+      showScreen('s-view');
+      initViewer();
+      loadModel('/api/model/glb');
+      resetIdle();
+      speak('Your model is ready. Drag to rotate, then tap print this.');
+    } else if (d.status === 'error') {
+      closeEvents();
+      showError(d.message || 'Generation failed.');
+    }
+  };
+  evtSource.onerror = () => {};
+
+  fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: p })
+  }).catch(() => {
+    closeEvents();
+    showError('Could not reach the server.');
+  });
+}
+
+/* ════════ SLICE FLOW ════════ */
+function handlePrint() {
+  showScreen('s-slicing');
+  resetSliceSteps();
+  resetIdle();
+  speak('Preparing your model for printing.');
+
+  closeEvents();
+  evtSource = new EventSource('/events');
+  evtSource.onmessage = (e) => {
+    let d;
+    try { d = JSON.parse(e.data); } catch (_) { return; }
+    handleSliceEvent(d);
+    if (d.step === 'usb_ready' && (d.status === 'complete' || d.status === 'done')) {
+      closeEvents();
+      showUsbReady();
+      resetIdle();
+      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
+    } else if (d.status === 'error') {
+      closeEvents();
+      showError(d.message || 'Slicing failed.');
+    }
+  };
+  evtSource.onerror = () => {};
+
+  fetch('/api/slice', { method: 'POST' }).catch(() => {
+    closeEvents();
+    showError('Could not start slicing.');
+  });
+}
+
+function showUsbReady() {
+  document.getElementById('slice-steps').style.display = 'none';
+  document.getElementById('slice-progress-wrap').style.display = 'none';
+  document.getElementById('usb-ready').style.display = 'flex';
+}
+
+/* ════════ ERROR ════════ */
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg || 'An unexpected error occurred.';
+  showScreen('s-error');
+  resetIdle();
+  speak('Something went wrong. Please try again.');
+}
+
+/* ════════ RESET ════════ */
+function resetAll() {
+  closeEvents();
+  stopListening();
+  handleRedo();
+  currentPrompt = '';
+  fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  showScreen('s-idle');
+  resetIdle();
+}
+
+/* ════════ THREE.JS VIEWER ════════ */
+let scene, camera, renderer, model3d, rafId;
+let autoRot = true;
+let dragStartX = 0, dragStartY = 0, isDragging = false;
+let autoRotTimer = null;
+
+function initViewer() {
+  const container = document.getElementById('three-container');
+  container.innerHTML = '';
+
+  if (rafId) cancelAnimationFrame(rafId);
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0a0e0a);
 
-  camera = new THREE.PerspectiveCamera(
-    50,
-    window.innerWidth / window.innerHeight,
-    0.01,
-    1000
-  );
-  camera.position.set(0, 0, 4);
-  camera.lookAt(0, 0, 0);
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
+  camera.position.set(0, 0, 5);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x0a0e0a, 1);
+  container.appendChild(renderer.domElement);
 
-  document.getElementById('three-container').appendChild(renderer.domElement);
+  scene.add(new THREE.AmbientLight(0xffffff, 3));
 
-  var ambient = new THREE.AmbientLight(0xffffff, 2.0);
-  scene.add(ambient);
+  const l1 = new THREE.DirectionalLight(0xffffff, 4);
+  l1.position.set(5, 5, 5);
+  scene.add(l1);
 
-  var front = new THREE.DirectionalLight(0xffffff, 3.0);
-  front.position.set(0, 0, 10);
-  scene.add(front);
+  const l2 = new THREE.DirectionalLight(0xffffff, 2);
+  l2.position.set(-5, -2, -5);
+  scene.add(l2);
 
-  var top = new THREE.DirectionalLight(0x00ff41, 2.0);
-  top.position.set(0, 10, 0);
-  scene.add(top);
+  const l3 = new THREE.DirectionalLight(0x00ff41, 1.5);
+  l3.position.set(0, 10, 0);
+  scene.add(l3);
 
-  var left = new THREE.DirectionalLight(0xffffff, 1.5);
-  left.position.set(-10, 0, 0);
-  scene.add(left);
+  renderer.domElement.addEventListener('mousedown', onDragStart);
+  renderer.domElement.addEventListener('mousemove', onDragMove);
+  renderer.domElement.addEventListener('mouseup', onDragEnd);
+  renderer.domElement.addEventListener('mouseleave', onDragEnd);
+  renderer.domElement.addEventListener('touchstart', (e) => onDragStart(e.touches[0]), { passive: true });
+  renderer.domElement.addEventListener('touchmove', (e) => { e.preventDefault(); onDragMove(e.touches[0]); }, { passive: false });
+  renderer.domElement.addEventListener('touchend', onDragEnd, { passive: true });
 
-  var right = new THREE.DirectionalLight(0xffffff, 1.5);
-  right.position.set(10, 0, 0);
-  scene.add(right);
-
-  var back = new THREE.DirectionalLight(0xffffff, 1.0);
-  back.position.set(0, 0, -10);
-  scene.add(back);
-
-  // Touch rotation
-  renderer.domElement.addEventListener('touchstart', function(e) {
-    if (e.touches.length === 1) {
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-      isDragging  = true;
-      autoRotate  = false;
-    }
-  }, { passive: true });
-
-  renderer.domElement.addEventListener('touchmove', function(e) {
-    if (!isDragging || !model || e.touches.length !== 1) return;
-    var dx = e.touches[0].clientX - touchStartX;
-    var dy = e.touches[0].clientY - touchStartY;
-    model.rotation.y += dx * 0.01;
-    model.rotation.x += dy * 0.01;
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
-  }, { passive: true });
-
-  renderer.domElement.addEventListener('touchend', function() {
-    isDragging = false;
-    setTimeout(function() { autoRotate = true; }, 3000);
-  }, { passive: true });
-
-  // Mouse rotation (Mac testing)
-  renderer.domElement.addEventListener('mousedown', function(e) {
-    touchStartX = e.clientX;
-    touchStartY = e.clientY;
-    mouseDown   = true;
-    autoRotate  = false;
-  });
-  renderer.domElement.addEventListener('mousemove', function(e) {
-    if (!mouseDown || !model) return;
-    var dx = e.clientX - touchStartX;
-    var dy = e.clientY - touchStartY;
-    model.rotation.y += dx * 0.01;
-    model.rotation.x += dy * 0.01;
-    touchStartX = e.clientX;
-    touchStartY = e.clientY;
-  });
-  renderer.domElement.addEventListener('mouseup', function() {
-    mouseDown = false;
-    setTimeout(function() { autoRotate = true; }, 3000);
-  });
-
-  animateThree();
+  renderLoop();
 }
 
-function animateThree() {
-  animationId = requestAnimationFrame(animateThree);
-  if (autoRotate && model) model.rotation.y += 0.005;
+function onDragStart(e) {
+  if (!e) return;
+  isDragging = true;
+  autoRot = false;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  clearTimeout(autoRotTimer);
+}
+
+function onDragMove(e) {
+  if (!isDragging || !model3d || !e) return;
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  model3d.rotation.y += dx * 0.008;
+  model3d.rotation.x += dy * 0.008;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+}
+
+function onDragEnd() {
+  isDragging = false;
+  clearTimeout(autoRotTimer);
+  autoRotTimer = setTimeout(() => { autoRot = true; }, 3000);
+}
+
+function renderLoop() {
+  rafId = requestAnimationFrame(renderLoop);
+  if (autoRot && model3d) model3d.rotation.y += 0.004;
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
-function loadGLB(url) {
-  if (!window.THREE || !window.THREE.GLTFLoader) {
-    console.error('Three.js or GLTFLoader not loaded');
+function loadModel(url) {
+  if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
+    console.error('THREE or GLTFLoader not available');
     return;
   }
 
@@ -1125,246 +747,105 @@ function loadGLB(url) {
   loader.load(
     url,
     (gltf) => {
-      if (model) {
-        scene.remove(model);
-        model = null;
-      }
+      if (model3d) scene.remove(model3d);
+      model3d = gltf.scene;
 
-      model = gltf.scene;
-
-      const box = new THREE.Box3().setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
+      const box = new THREE.Box3().setFromObject(model3d);
       const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
-      const scale = 2.5 / maxDim;
+      const scaleFactor = 2.5 / maxDim;
 
-      model.scale.setScalar(scale);
-      model.position.set(
-        -center.x * scale,
-        -center.y * scale,
-        -center.z * scale
+      model3d.scale.setScalar(scaleFactor);
+      model3d.position.set(
+        -center.x * scaleFactor,
+        -center.y * scaleFactor,
+        -center.z * scaleFactor
       );
 
-      const greenMaterial = new THREE.MeshPhongMaterial({
-        color: 0x00cc33,
-        specular: 0x00ff41,
-        shininess: 80,
-        emissive: 0x002200,
-        emissiveIntensity: 0.4,
-        side: THREE.DoubleSide,
-      });
-
-      model.traverse((node) => {
+      model3d.traverse((node) => {
         if (node.isMesh) {
           // Meshy GLBs ship with POSITION only — no NORMAL attribute.
-          // Without normals, lit materials render pure black (N·L has no N).
-          // Generate smooth normals from the geometry so lighting works.
+          // Without normals, lit materials render pure black, so generate
+          // smooth normals from the geometry before applying the material.
           if (node.geometry && !node.geometry.attributes.normal) {
             node.geometry.computeVertexNormals();
           }
-          node.material = greenMaterial;
+          node.material = new THREE.MeshPhongMaterial({
+            color: 0x22cc44,
+            emissive: 0x003300,
+            emissiveIntensity: 0.5,
+            specular: 0x88ffaa,
+            shininess: 100,
+            side: THREE.DoubleSide
+          });
           node.material.needsUpdate = true;
-          node.castShadow = true;
-          node.receiveShadow = true;
         }
       });
 
-      scene.add(model);
-      console.log('Model loaded and materials replaced');
+      scene.add(model3d);
     },
-    (progress) => {
-      console.log('Loading:', (progress.loaded / progress.total * 100).toFixed(0) + '%');
-    },
-    (error) => {
-      console.error('GLB load error:', error);
-    }
+    undefined,
+    (err) => console.error('Load error:', err)
   );
 }
 
-/* ════════════════════════════════════════
-   GENERATE FLOW
-   ════════════════════════════════════════ */
-async function handleConfirm() {
-  var prompt = currentTranscript.trim();
-  if (!prompt) return;
-  currentPrompt = prompt;
-
-  document.getElementById('generating-prompt').textContent = '"' + prompt + '"';
-  document.getElementById('view-prompt-label').textContent = '"' + prompt + '"';
-
-  showScreen('screen-generating');
-  speak('Understood. Conjuring your model now.');
-  resetGeneratingSteps();
-
-  closeEvtSource();
-  activeEvtSource = new EventSource('/events');
-
-  activeEvtSource.onmessage = function(e) {
-    var data;
-    try { data = JSON.parse(e.data); } catch(ex) { return; }
-
-    handleGeneratingEvent(data);
-
-    if (data.step === 'complete' && data.status === 'complete') {
-      closeEvtSource();
-      setTimeout(function() {
-        showScreen('screen-view');
-        setTimeout(function() {
-          initThreeJS();
-          loadGLB('/api/model/glb');
-        }, 350);
-        speak('Your model is ready. Rotate to inspect it. Tap print when ready.');
-      }, 500);
-    }
-
-    if (data.status === 'error') {
-      closeEvtSource();
-      showError(data.message);
-    }
-  };
-
-  activeEvtSource.onerror = function() {
-    // EventSource auto-reconnects; let it
-  };
-
-  try {
-    await fetch('/api/generate', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ prompt: prompt })
-    });
-  } catch(e) {
-    closeEvtSource();
-    showError('Could not reach the server.');
-  }
-}
-
-/* ════════════════════════════════════════
-   SLICE FLOW
-   ════════════════════════════════════════ */
-async function handlePrint() {
-  showScreen('screen-slicing');
-  speak('Preparing your model for printing.');
-  resetSlicingSteps();
-
-  closeEvtSource();
-  activeEvtSource = new EventSource('/events');
-
-  activeEvtSource.onmessage = function(e) {
-    var data;
-    try { data = JSON.parse(e.data); } catch(ex) { return; }
-
-    handleSlicingEvent(data);
-
-    if (data.step === 'usb_ready' && data.status === 'complete') {
-      closeEvtSource();
-      showUsbReady();
-      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
-    }
-
-    if (data.status === 'error') {
-      closeEvtSource();
-      showError(data.message);
-    }
-  };
-
-  activeEvtSource.onerror = function() {};
-
-  try {
-    await fetch('/api/slice', { method: 'POST' });
-  } catch(e) {
-    closeEvtSource();
-    showError('Could not start slicing.');
-  }
-}
-
-function showUsbReady() {
-  document.getElementById('slice-steps-wrap').style.display = 'none';
-  document.getElementById('usb-ready-msg').style.display   = 'flex';
-}
-
-/* ════════════════════════════════════════
-   ERROR
-   ════════════════════════════════════════ */
-function showError(message) {
-  document.getElementById('error-message').textContent = message || 'An unexpected error occurred.';
-  showScreen('screen-error');
-  speak('Something went wrong. Please try again.');
-}
-
-/* ════════════════════════════════════════
-   REDO / RESET
-   ════════════════════════════════════════ */
-function handleRedo() {
-  closeEvtSource();
-  stopListening();
-  currentTranscript = '';
-  var el = document.getElementById('transcript-text');
-  el.textContent = 'your words will appear here...';
-  el.style.color = 'var(--gray)';
-  updateActionButtons();
-  showScreen('screen-speak');
-  resetIdleTimer();
-}
-
-async function resetAll() {
-  closeEvtSource();
-  stopListening();
-  currentTranscript = '';
-  currentPrompt     = '';
-  var el = document.getElementById('transcript-text');
-  el.textContent = 'your words will appear here...';
-  el.style.color = 'var(--gray)';
-  updateActionButtons();
-  try { await fetch('/api/reset', { method: 'POST' }); } catch(e) {}
-  showScreen('screen-idle');
-}
-
-/* ════════════════════════════════════════
-   WINDOW RESIZE
-   ════════════════════════════════════════ */
-window.addEventListener('resize', function() {
-  if (renderer) {
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-  }
+window.addEventListener('resize', () => {
+  if (!renderer || !camera) return;
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
 });
 
-/* ════════════════════════════════════════
-   BOOT
-   ════════════════════════════════════════ */
-window.addEventListener('load', function() {
-  wireIdleScreen();
-  wireMicButton();
-  initRecognition();
+/* ════════ IDLE TIMEOUT (90s) ════════ */
+function resetIdle() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(onIdle, 90000);
+}
 
-  // Resume correct screen if server already has state (browser refresh)
+function onIdle() {
+  const id = currentScreen ? currentScreen.id : null;
+  // Never interrupt an in-progress pipeline.
+  if (id === 's-generating' || id === 's-slicing' || id === 's-idle') {
+    resetIdle();
+    return;
+  }
+  stopListening();
+  closeEvents();
+  showScreen('s-idle');
+  speak('What would you like to conjure today?');
+  resetIdle();
+}
+
+document.addEventListener('touchstart', resetIdle, { passive: true });
+document.addEventListener('mousedown', resetIdle);
+
+/* ════════ BOOT ════════ */
+window.addEventListener('load', () => {
   fetch('/api/state')
-    .then(function(r) { return r.json(); })
-    .then(function(state) {
-      if (state.prompt) {
-        currentPrompt = state.prompt;
-        document.getElementById('view-prompt-label').textContent = '"' + state.prompt + '"';
+    .then(r => r.json())
+    .then(st => {
+      if (st && st.prompt) {
+        currentPrompt = st.prompt;
+        document.getElementById('view-prompt').textContent = '"' + st.prompt + '"';
+        document.getElementById('gen-prompt').textContent = '"' + st.prompt + '"';
       }
-      if (state.status === 'model_ready') {
-        showScreen('screen-view');
-        setTimeout(function() {
-          initThreeJS();
-          loadGLB('/api/model/glb');
-        }, 350);
-      } else if (state.status === 'usb_ready') {
-        showScreen('screen-slicing');
-        setTimeout(showUsbReady, 350);
+      if (st && st.status === 'model_ready') {
+        showScreen('s-view');
+        initViewer();
+        loadModel('/api/model/glb');
+      } else if (st && st.status === 'usb_ready') {
+        showScreen('s-slicing');
+        resetSliceSteps();
+        showUsbReady();
       } else {
-        showScreen('screen-idle');
+        showScreen('s-idle');
       }
-      // Start idle timer — no speak on first load
-      resetIdleTimer();
+      resetIdle();
     })
-    .catch(function() {
-      showScreen('screen-idle');
-      resetIdleTimer();
+    .catch(() => {
+      showScreen('s-idle');
+      resetIdle();
     });
 });
 </script>
