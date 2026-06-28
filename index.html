@@ -824,6 +824,19 @@ function showScreen(id, immediate) {
   }, delay);
 }
 
+// ── TTS — calls /api/speak; never throws ──────────────────────────────────
+async function speak(text) {
+  try {
+    await fetch('/api/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text }),
+    });
+  } catch (e) {
+    console.log('[TTS] speak error:', e);
+  }
+}
+
 // ── Idle timer ─────────────────────────────────────────────────────────────
 let idleTimer = null;
 const IDLE_TIMEOUT_MS = 60000;
@@ -834,6 +847,7 @@ function resetIdleTimer() {
     if (isListening) stopListening();
     closeEvents();
     showScreen('screen-idle');
+    speak('What would you like to conjure today?');
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -984,6 +998,8 @@ function confirmPrompt() {
 
   // Open SSE before POST so we don't miss early events
   openGenerationEvents();
+
+  speak('Understood. Conjuring your model now.');
 
   fetch('/api/generate', {
     method: 'POST',
@@ -1270,6 +1286,7 @@ async function startSlicing() {
     }
     if (data.step === 'usb_ready' && data.status === 'complete') {
       closeEvents();
+      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
       document.getElementById('slicing-steps-wrap').style.display = 'none';
       const done = document.getElementById('slicing-done');
       done.style.display = 'flex';

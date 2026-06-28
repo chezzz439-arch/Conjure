@@ -168,8 +168,9 @@ def _clear_event_buffer() -> None:
 # ---------------------------------------------------------------------------
 # ElevenLabs TTS — non-blocking fire-and-forget
 # ---------------------------------------------------------------------------
-def _speak_sync(text: str) -> None:
+def speak(text: str) -> None:
     if not ELEVENLABS_API_KEY:
+        print(f"[TTS] No ElevenLabs key — skipping: {text}")
         return
     try:
         r = requests.post(
@@ -181,20 +182,19 @@ def _speak_sync(text: str) -> None:
             json={
                 "text": text,
                 "model_id": "eleven_monolingual_v1",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
             },
-            timeout=10,
+            timeout=15,
         )
         if r.status_code == 200:
-            with open("/tmp/conjure_speech.mp3", "wb") as f:
+            audio_path = "/tmp/conjure_speech.mp3"
+            with open(audio_path, "wb") as f:
                 f.write(r.content)
-            os.system("mpg123 -q /tmp/conjure_speech.mp3")
-    except Exception:
-        pass  # TTS is non-critical — never block the pipeline
-
-
-async def speak(text: str) -> None:
-    asyncio.get_event_loop().run_in_executor(None, _speak_sync, text)
+            os.system(f"mpg123 -q {audio_path} &")
+        else:
+            print(f"[TTS] ElevenLabs error {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        print(f"[TTS] speak() failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ async def run_generation(prompt: str) -> None:
     try:
         # ── Step 1: Create Meshy task ──────────────────────────────────────
         await push_event("create", "active", "Sending prompt to Meshy AI...", 2)
-        await speak("Got it. Conjuring your model now.")
+        threading.Thread(target=speak, args=("Got it. Conjuring your model now.",), daemon=True).start()
         r = await asyncio.to_thread(
             requests.post,
             f"{MESHY_BASE}/v2/text-to-3d",
@@ -358,13 +358,13 @@ async def run_generation(prompt: str) -> None:
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "model_ready"
         await push_event("complete", "complete", "Model ready — tap PRINT THIS to slice", 100)
-        await speak("Your model is ready. Tap Print This to slice it.")
+        threading.Thread(target=speak, args=("Your model is ready. Tap Print This to slice it.",), daemon=True).start()
 
     except Exception as exc:
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
-        await speak("Something went wrong. Please try again.")
+        threading.Thread(target=speak, args=("Something went wrong. Please try again.",), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -451,19 +451,30 @@ async def run_slicing() -> None:
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "usb_ready"
         await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
-        await speak("Done. Remove the USB drive and insert it into your printer.")
+        threading.Thread(target=speak, args=("Done. Remove the USB drive and insert it into your printer.",), daemon=True).start()
 
     except Exception as exc:
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
-        await speak("Something went wrong. Please try again.")
+        threading.Thread(target=speak, args=("Something went wrong. Please try again.",), daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Conjure Kiosk", version="2.0.0")
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    init_db()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
+    result = os.system("which mpg123 > /dev/null 2>&1")
+    if result != 0:
+        print("[TTS] mpg123 not found — attempting install")
+        os.system("sudo apt install -y mpg123")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -567,6 +578,22 @@ async def api_reset() -> JSONResponse:
     _clear_event_buffer()
     await push_event("reset", "complete", "System reset", 0)
     return JSONResponse({"status": "reset"})
+
+
+# ---------------------------------------------------------------------------
+# TTS endpoint — lets frontend trigger speech from browser
+# ---------------------------------------------------------------------------
+
+class SpeakRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/speak")
+async def api_speak(req: SpeakRequest) -> JSONResponse:
+    if not req.text.strip():
+        return JSONResponse({"ok": False, "error": "no text"})
+    threading.Thread(target=speak, args=(req.text.strip(),), daemon=True).start()
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------
