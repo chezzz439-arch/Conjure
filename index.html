@@ -934,30 +934,26 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // See-through grid: fully transparent base (writes no depth) so only
-      // the wireframe shows and you can see through to the back faces.
+      // Clean wireframe render: an opaque BLACK body that writes depth and is
+      // pushed slightly back via polygon offset, so the green mesh lines sit on
+      // the surface and back-facing edges are hidden (not see-through).
       node.material = new THREE.MeshBasicMaterial({
         color: 0x000000,
-        transparent: true,
-        opacity: 0.0,
-        side: THREE.DoubleSide,
-        wireframe: false,
-        depthWrite: false,
+        side: THREE.FrontSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       });
       node.material.needsUpdate = true;
 
-      // ...with a bright see-through wireframe overlay clone on top.
+      // ...with a bright green wireframe overlay on top.
       const wireMat = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
         wireframe: true,
-        transparent: true,
-        opacity: 0.9,
-        side: THREE.DoubleSide,
       });
       const wireClone = node.clone();
       wireClone.material = wireMat;
       wireClone.name = 'wire-overlay';
-      wireClone.scale.setScalar(1.0);
       if (node.parent) node.parent.add(wireClone);
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
