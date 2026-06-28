@@ -21,14 +21,16 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-MESHY_API_KEY     = os.getenv("MESHY_API_KEY", "")
-INSFORGE_API_KEY  = os.getenv("INSFORGE_API_KEY", "")
-INSFORGE_BASE_URL = os.getenv("INSFORGE_BASE_URL", "https://api.insforge.dev")
-ORCASLICER_PATH   = os.getenv("ORCASLICER_PATH", "/usr/bin/orcaslicer")
-PRINTER_PROFILE   = os.getenv("PRINTER_PROFILE", "neptune4pro")
-USB_MOUNT_PATH    = os.getenv("USB_MOUNT_PATH", "/media/usb")
-OUTPUT_DIR        = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
-DB_PATH           = BASE_DIR / "conjure.db"
+MESHY_API_KEY        = os.getenv("MESHY_API_KEY", "")
+INSFORGE_API_KEY     = os.getenv("INSFORGE_API_KEY", "")
+INSFORGE_BASE_URL    = os.getenv("INSFORGE_BASE_URL", "https://api.insforge.dev")
+ORCASLICER_PATH      = os.getenv("ORCASLICER_PATH", "/usr/bin/orcaslicer")
+PRINTER_PROFILE      = os.getenv("PRINTER_PROFILE", "neptune4pro")
+USB_MOUNT_PATH       = os.getenv("USB_MOUNT_PATH", "/media/usb")
+OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
+DB_PATH              = BASE_DIR / "conjure.db"
+ELEVENLABS_API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "models").mkdir(exist_ok=True)
@@ -164,6 +166,38 @@ def _clear_event_buffer() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ElevenLabs TTS — non-blocking fire-and-forget
+# ---------------------------------------------------------------------------
+def _speak_sync(text: str) -> None:
+    if not ELEVENLABS_API_KEY:
+        return
+    try:
+        r = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json={
+                "text": text,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            with open("/tmp/conjure_speech.mp3", "wb") as f:
+                f.write(r.content)
+            os.system("mpg123 -q /tmp/conjure_speech.mp3")
+    except Exception:
+        pass  # TTS is non-critical — never block the pipeline
+
+
+async def speak(text: str) -> None:
+    asyncio.get_event_loop().run_in_executor(None, _speak_sync, text)
+
+
+# ---------------------------------------------------------------------------
 # USB detection — tries multiple mount points
 # ---------------------------------------------------------------------------
 def _find_usb():
@@ -188,6 +222,7 @@ async def run_generation(prompt: str) -> None:
     try:
         # ── Step 1: Create Meshy task ──────────────────────────────────────
         await push_event("create", "active", "Sending prompt to Meshy AI...", 2)
+        await speak("Got it. Conjuring your model now.")
         r = await asyncio.to_thread(
             requests.post,
             f"{MESHY_BASE}/v2/text-to-3d",
@@ -323,11 +358,13 @@ async def run_generation(prompt: str) -> None:
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "model_ready"
         await push_event("complete", "complete", "Model ready — tap PRINT THIS to slice", 100)
+        await speak("Your model is ready. Tap Print This to slice it.")
 
     except Exception as exc:
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
+        await speak("Something went wrong. Please try again.")
 
 
 # ---------------------------------------------------------------------------
@@ -414,11 +451,13 @@ async def run_slicing() -> None:
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "usb_ready"
         await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
+        await speak("Done. Remove the USB drive and insert it into your printer.")
 
     except Exception as exc:
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
+        await speak("Something went wrong. Please try again.")
 
 
 # ---------------------------------------------------------------------------
