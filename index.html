@@ -280,10 +280,10 @@
       ● SOLID
     </button>
     <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">
-      ⊞ GRID
+      ⊞ EDGES
     </button>
     <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">
-      ◻ WIRE
+      ≡ WIRE
     </button>
   </div>
 
@@ -906,8 +906,12 @@ function setMaterial(mode) {
 
   if (!model3d) return;
 
-  // Always strip any existing grid wire overlays before re-applying a mode.
-  clearWireOverlays();
+  // Always strip any existing grid/edge overlays before re-applying a mode.
+  const toRemoveGlobal = [];
+  if (model3d) {
+    model3d.traverse(c => { if (c.name === 'wire-overlay') toRemoveGlobal.push(c); });
+    toRemoveGlobal.forEach(c => c.parent && c.parent.remove(c));
+  }
 
   // Collect the real meshes up front (excluding overlay clones) so we never
   // mutate the scene graph while traversing it — adding clones mid-traverse
@@ -930,37 +934,42 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // Fully transparent base (writes no depth) so only the wireframe shows.
-      node.material = new THREE.MeshBasicMaterial({
-        color: 0x000000,
+      // Remove any existing wire overlays first
+      const toRemove = [];
+      model3d.traverse(c => { if (c.name === 'wire-overlay') toRemove.push(c); });
+      toRemove.forEach(c => c.parent && c.parent.remove(c));
+
+      // Make the base mesh dark and semi transparent
+      node.material = new THREE.MeshPhongMaterial({
+        color: 0x001a00,
         transparent: true,
-        opacity: 0.0,
+        opacity: 0.15,
         side: THREE.DoubleSide,
-        wireframe: false,
         depthWrite: false,
       });
       node.material.needsUpdate = true;
 
-      // ...with a bright see-through wireframe overlay clone on top.
-      const wireMat = new THREE.MeshBasicMaterial({
+      // Create a grid overlay mesh using EdgesGeometry
+      // This draws lines only along the actual polygon edges — real grid not wireframe
+      const edges = new THREE.EdgesGeometry(node.geometry, 15);
+      const edgeMat = new THREE.LineBasicMaterial({
         color: 0x00ff41,
-        wireframe: true,
         transparent: true,
-        opacity: 0.9,
-        side: THREE.DoubleSide,
+        opacity: 0.85,
+        linewidth: 1,
       });
-      const wireClone = node.clone();
-      wireClone.material = wireMat;
-      wireClone.name = 'wire-overlay';
-      wireClone.scale.setScalar(1.0);
-      if (node.parent) node.parent.add(wireClone);
+      const edgeMesh = new THREE.LineSegments(edges, edgeMat);
+      edgeMesh.name = 'wire-overlay';
+      edgeMesh.position.copy(node.position);
+      edgeMesh.rotation.copy(node.rotation);
+      edgeMesh.scale.copy(node.scale);
+      node.parent && node.parent.add(edgeMesh);
     } else if (mode === 'wire') {
-      node.material = new THREE.MeshPhongMaterial({
+      node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
-        emissive: 0x002200,
-        emissiveIntensity: 0.2,
-        side: THREE.DoubleSide,
         wireframe: true,
+        transparent: false,
+        side: THREE.DoubleSide,
       });
       node.material.needsUpdate = true;
     }
