@@ -25,6 +25,9 @@ MESHY_API_KEY        = os.getenv("MESHY_API_KEY", "")
 INSFORGE_API_KEY     = os.getenv("INSFORGE_API_KEY", "")
 INSFORGE_BASE_URL    = os.getenv("INSFORGE_BASE_URL", "https://api.insforge.dev")
 ORCASLICER_PATH      = os.getenv("ORCASLICER_PATH", "/usr/bin/orcaslicer")
+ORCASLICER_PROFILE   = os.getenv("ORCASLICER_PROFILE", str(BASE_DIR / "profiles" / "neptune4pro_orca.json"))
+CURAENGINE_PATH      = os.getenv("CURAENGINE_PATH", "/usr/bin/CuraEngine")
+CURA_RESOURCES_PATH  = os.getenv("CURA_RESOURCES_PATH", "/usr/share/cura/resources")
 PRINTER_PROFILE      = os.getenv("PRINTER_PROFILE", "neptune4pro")
 USB_MOUNT_PATH       = os.getenv("USB_MOUNT_PATH", "/media/usb")
 OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
@@ -373,68 +376,128 @@ async def run_generation(prompt: str) -> None:
 async def run_slicing() -> None:
     _clear_event_buffer()
     try:
-        stl_path     = OUTPUT_DIR / "model.stl"
-        gcode_path   = OUTPUT_DIR / "model.gcode"
-        profile_path = PROFILES_DIR / f"{PRINTER_PROFILE}.json"
+        stl_path       = OUTPUT_DIR / "model.stl"
+        gcode_path     = OUTPUT_DIR / "model.gcode"
+        orca_path      = ORCASLICER_PATH
+        orca_profile   = Path(ORCASLICER_PROFILE)
+        cura_path      = CURAENGINE_PATH
+        cura_profile   = PROFILES_DIR / f"{PRINTER_PROFILE}.json"
+        cura_resources = CURA_RESOURCES_PATH
 
-        # ── Step 1: Validate inputs ────────────────────────────────────────
-        await push_event("load_stl", "active", "Loading STL into OrcaSlicer CLI...", 0)
-
+        # ── Step 1: Validate STL ───────────────────────────────────────────
+        await push_event("load_stl", "active", "Loading model for slicing...", 5)
         if not stl_path.exists():
             raise Exception("model.stl not found — generate a model first")
-        if not Path(ORCASLICER_PATH).exists():
-            raise Exception(
-                f"OrcaSlicer not found at {ORCASLICER_PATH} — "
-                "install OrcaSlicer and set ORCASLICER_PATH in .env"
-            )
-
         stl_kb = stl_path.stat().st_size // 1024
-        await push_event("load_stl", "complete", f"STL loaded — {stl_kb} KB", 10)
+        await push_event("load_stl", "complete", f"STL loaded — {stl_kb} KB", 12)
 
-        # ── Step 2: Slice with OrcaSlicer ─────────────────────────────────
-        await push_event("slice", "active", f"Slicing with {PRINTER_PROFILE} profile...", 12)
+        # Clear any stale gcode so the size checks below are meaningful
+        if gcode_path.exists():
+            gcode_path.unlink()
 
-        cmd = [ORCASLICER_PATH]
-        if profile_path.exists():
-            cmd += ["--load", str(profile_path)]
+        sliced = False
+
+        # ── Step 2a: Try OrcaSlicer first ─────────────────────────────────
+        if orca_path and Path(orca_path).exists():
+            await push_event("slice", "active", "Slicing with OrcaSlicer...", 18)
+            orca_cmd = [
+                orca_path,
+                "--slice",
+                "--export-gcode",
+                "--load", str(orca_profile),
+                "--output", str(gcode_path),
+                str(stl_path),
+            ]
+            proc = None
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *orca_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(BASE_DIR),
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                if proc.returncode == 0 and gcode_path.exists() and gcode_path.stat().st_size > 5000:
+                    gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
+                    await push_event("slice", "complete", f"OrcaSlicer: gcode ready — {gcode_mb:.1f} MB", 60)
+                    sliced = True
+                else:
+                    await push_event("slice", "active", "OrcaSlicer failed — trying CuraEngine...", 22)
+            except asyncio.TimeoutError:
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                await push_event("slice", "active", "OrcaSlicer timed out — trying CuraEngine...", 22)
+            except Exception:
+                await push_event("slice", "active", "OrcaSlicer error — trying CuraEngine...", 22)
         else:
-            cmd += ["--preset-name", PRINTER_PROFILE]
-        cmd += ["--export-gcode", str(stl_path), "--output", str(gcode_path)]
+            await push_event("slice", "active", "OrcaSlicer not found — using CuraEngine...", 18)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise Exception("OrcaSlicer timed out after 5 minutes")
+        # ── Step 2b: Fallback to CuraEngine ───────────────────────────────
+        if not sliced:
+            if gcode_path.exists():
+                gcode_path.unlink()
+            cura_cmd = [
+                cura_path, "slice",
+                "-j", str(cura_profile),
+                "-l", str(stl_path),
+                "-o", str(gcode_path),
+                "-s", "layer_height=0.2",
+                "-s", "infill_sparse_density=15",
+                "-s", "support_enable=false",
+            ]
+            proc = None
+            try:
+                cura_env = {**os.environ, "CURA_ENGINE_SEARCH_PATH": cura_resources}
+                proc = await asyncio.create_subprocess_exec(
+                    *cura_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(BASE_DIR),
+                    env=cura_env,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                if proc.returncode != 0:
+                    err = stderr.decode("utf-8", errors="replace")[:500]
+                    raise Exception(f"CuraEngine failed: {err}")
+                if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
+                    raise Exception("Gcode output empty — slicing failed")
+                gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
+                await push_event("slice", "complete", f"CuraEngine: gcode ready — {gcode_mb:.1f} MB", 60)
+                sliced = True
+            except asyncio.TimeoutError:
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                raise Exception("Slicing timed out after 5 minutes")
+            except FileNotFoundError:
+                raise Exception(
+                    "No slicer found — install OrcaSlicer (set ORCASLICER_PATH) "
+                    "or CuraEngine (set CURAENGINE_PATH) in .env"
+                )
 
-        if proc.returncode != 0:
-            err_msg = stderr.decode("utf-8", errors="replace")[:500]
-            raise Exception(f"OrcaSlicer exit {proc.returncode}: {err_msg}")
-
-        if not gcode_path.exists() or gcode_path.stat().st_size < 1000:
-            raise Exception("Gcode output empty — slicing may have failed silently")
+        if not sliced:
+            raise Exception("All slicers failed")
 
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
-        await push_event("slice", "complete", f"Gcode generated — {gcode_mb:.1f} MB", 50)
 
         # ── Step 3: Detect USB ─────────────────────────────────────────────
-        await push_event("usb_check", "active", "Detecting USB drive...", 55)
+        await push_event("usb_check", "active", "Checking USB drive...", 65)
         usb_path = _find_usb()
         if usb_path is None:
             raise Exception(
-                f"USB drive not mounted. "
-                f"Insert USB and ensure it mounts at {USB_MOUNT_PATH} or /mnt/usb"
+                f"USB drive not mounted — insert USB and ensure it mounts at "
+                f"{USB_MOUNT_PATH} or /mnt/usb"
             )
-        await push_event("usb_check", "complete", f"USB found at {usb_path}", 65)
+        await push_event("usb_check", "complete", f"USB found at {usb_path}", 72)
 
         # ── Step 4: Copy gcode to USB ─────────────────────────────────────
-        await push_event("copy_usb", "active", "Copying gcode to USB drive...", 68)
+        await push_event("copy_usb", "active", "Copying gcode to USB...", 78)
         dest = Path(usb_path) / "conjure_print.gcode"
         await asyncio.to_thread(shutil.copy2, str(gcode_path), str(dest))
 
@@ -445,8 +508,7 @@ async def run_slicing() -> None:
         )
         await sync_proc.wait()
         await asyncio.sleep(1)
-
-        await push_event("copy_usb", "complete", "conjure_print.gcode written to USB", 92)
+        await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.1f} MB", 92)
 
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "usb_ready"

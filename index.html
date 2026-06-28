@@ -1157,62 +1157,48 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // Even procedural grid (graph-paper style) projected onto the surface.
-      // Meshy GLBs have no UVs, so use a triplanar object-space grid: green
-      // lines on a solid black body, back faces occluded (like a cube grid).
-      if (node.geometry && !node.geometry.attributes.normal) {
-        node.geometry.computeVertexNormals();
-      }
-      node.geometry.computeBoundingBox();
-      const bb = node.geometry.boundingBox;
-      const dim = Math.max(
-        bb.max.x - bb.min.x,
-        bb.max.y - bb.min.y,
-        bb.max.z - bb.min.z
-      ) || 1;
-      const cells = 22;
-      node.material = new THREE.ShaderMaterial({
-        uniforms: {
-          uScale: { value: cells / dim },
-          uThickness: { value: 0.04 },
-          uColor: { value: new THREE.Color(0x00ff41) },
-          uBg: { value: new THREE.Color(0x000000) },
-        },
+      // Dark semi-transparent body
+      node.material = new THREE.MeshPhongMaterial({
+        color: 0x001408,
+        transparent: true,
+        opacity: 0.25,
         side: THREE.DoubleSide,
-        vertexShader: `
-          varying vec3 vPos;
-          varying vec3 vNrm;
-          void main() {
-            vPos = position;
-            vNrm = normal;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          precision highp float;
-          varying vec3 vPos;
-          varying vec3 vNrm;
-          uniform float uScale;
-          uniform float uThickness;
-          uniform vec3 uColor;
-          uniform vec3 uBg;
-          float lineMask(vec2 c) {
-            vec2 f = fract(c);
-            vec2 d = min(f, 1.0 - f);
-            float m = min(d.x, d.y);
-            return 1.0 - smoothstep(uThickness, uThickness + 0.012, m);
-          }
-          void main() {
-            vec3 c = vPos * uScale;
-            vec3 w = abs(normalize(vNrm));
-            w = w / (w.x + w.y + w.z + 1e-5);
-            float g = lineMask(c.yz) * w.x + lineMask(c.xz) * w.y + lineMask(c.xy) * w.z;
-            g = clamp(g, 0.0, 1.0);
-            gl_FragColor = vec4(mix(uBg, uColor, g), 1.0);
-          }
-        `,
+        depthWrite: false,
+        emissive: 0x001408,
+        emissiveIntensity: 0.5,
       });
       node.material.needsUpdate = true;
+
+      // Primary edge lines — bright green
+      const edges = new THREE.EdgesGeometry(node.geometry, 10);
+
+      const edgeMat1 = new THREE.LineBasicMaterial({
+        color: 0x00ff41,
+        transparent: true,
+        opacity: 1.0,
+        linewidth: 1,
+      });
+      const edgeMesh1 = new THREE.LineSegments(edges, edgeMat1);
+      edgeMesh1.name = 'wire-overlay';
+      edgeMesh1.position.copy(node.position);
+      edgeMesh1.rotation.copy(node.rotation);
+      edgeMesh1.scale.copy(node.scale);
+      node.parent && node.parent.add(edgeMesh1);
+
+      // Glow layer — slightly scaled up, dimmer green
+      const edgeMat2 = new THREE.LineBasicMaterial({
+        color: 0x00ff41,
+        transparent: true,
+        opacity: 0.25,
+        linewidth: 1,
+      });
+      const edgeMesh2 = new THREE.LineSegments(edges, edgeMat2);
+      edgeMesh2.name = 'wire-overlay';
+      edgeMesh2.position.copy(node.position);
+      edgeMesh2.rotation.copy(node.rotation);
+      edgeMesh2.scale.copy(node.scale);
+      edgeMesh2.scale.multiplyScalar(1.003);
+      node.parent && node.parent.add(edgeMesh2);
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
@@ -1223,6 +1209,13 @@ function setMaterial(mode) {
       node.material.needsUpdate = true;
     }
   });
+
+  // Atmospheric fog only in grid mode
+  if (mode === 'grid') {
+    if (scene) scene.fog = new THREE.FogExp2(0x0a0e0a, 0.08);
+  } else {
+    if (scene) scene.fog = null;
+  }
 }
 
 window.addEventListener('resize', () => {
