@@ -98,6 +98,26 @@
     0%, 100% { border-color: var(--green); color: var(--green); }
     50% { border-color: var(--dim); color: var(--dim); }
   }
+
+  /* Material toggle buttons (viewer) */
+  .mat-btn {
+    background: rgba(10,14,10,0.85);
+    border: 1px solid #1a3a1a;
+    color: #00aa2a;
+    font-family: monospace;
+    font-size: 13px;
+    letter-spacing: 2px;
+    padding: 10px 16px;
+    cursor: pointer;
+    text-align: left;
+    min-width: 110px;
+  }
+
+  .mat-btn.active {
+    border-color: #00ff41;
+    color: #00ff41;
+    background: rgba(0,255,65,0.08);
+  }
 </style>
 </head>
 <body>
@@ -245,6 +265,26 @@
   ">
     <div style="font-size:13px;letter-spacing:3px;color:var(--dim)">CONJURE</div>
     <div id="view-prompt" style="font-size:13px;color:var(--dim);font-style:italic"></div>
+  </div>
+
+  <div id="material-toggles" style="
+    position:absolute;
+    top:56px;
+    right:16px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    z-index:10;
+  ">
+    <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')">
+      ● SOLID
+    </button>
+    <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">
+      ⊞ GRID
+    </button>
+    <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">
+      ◻ WIRE
+    </button>
   </div>
 
   <div style="
@@ -664,11 +704,23 @@ let autoRot = true;
 let dragStartX = 0, dragStartY = 0, isDragging = false;
 let autoRotTimer = null;
 
+let zoomLevel = 5;
+const ZOOM_MIN = 1.5;
+const ZOOM_MAX = 12;
+
+function applyZoom() {
+  if (!camera) return;
+  camera.position.setLength(zoomLevel);
+  camera.lookAt(0, 0, 0);
+}
+
 function initViewer() {
   const container = document.getElementById('three-container');
   container.innerHTML = '';
 
   if (rafId) cancelAnimationFrame(rafId);
+
+  zoomLevel = 5;
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0a0e0a);
@@ -680,6 +732,14 @@ function initViewer() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
+
+  // Scroll-wheel zoom (desktop)
+  renderer.domElement.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoomLevel += e.deltaY * 0.01;
+    zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
+    applyZoom();
+  }, { passive: false });
 
   scene.add(new THREE.AmbientLight(0xffffff, 3));
 
@@ -702,6 +762,39 @@ function initViewer() {
   renderer.domElement.addEventListener('touchstart', (e) => onDragStart(e.touches[0]), { passive: true });
   renderer.domElement.addEventListener('touchmove', (e) => { e.preventDefault(); onDragMove(e.touches[0]); }, { passive: false });
   renderer.domElement.addEventListener('touchend', onDragEnd, { passive: true });
+
+  // Pinch-to-zoom (touch)
+  let lastPinchDist = null;
+
+  renderer.domElement.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      lastPinchDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+    }
+  }, { passive: true });
+
+  renderer.domElement.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      if (lastPinchDist !== null) {
+        const delta = lastPinchDist - dist;
+        zoomLevel += delta * 0.04;
+        zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
+        applyZoom();
+      }
+      lastPinchDist = dist;
+    }
+  }, { passive: false });
+
+  renderer.domElement.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) lastPinchDist = null;
+  }, { passive: true });
 
   renderLoop();
 }
@@ -734,6 +827,7 @@ function onDragEnd() {
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop);
   if (autoRot && model3d) model3d.rotation.y += 0.004;
+  applyZoom();
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
@@ -784,10 +878,93 @@ function loadModel(url) {
       });
 
       scene.add(model3d);
+      setMaterial('solid');
     },
     undefined,
     (err) => console.error('Load error:', err)
   );
+}
+
+/* ════════ MATERIAL TOGGLE ════════ */
+let currentMaterial = 'solid';
+
+function clearWireOverlays() {
+  if (!model3d) return;
+  const overlays = [];
+  model3d.traverse((node) => {
+    if (node.name === 'wire-overlay') overlays.push(node);
+  });
+  overlays.forEach((c) => { if (c.parent) c.parent.remove(c); });
+}
+
+function setMaterial(mode) {
+  currentMaterial = mode;
+
+  document.querySelectorAll('.mat-btn').forEach((b) => b.classList.remove('active'));
+  const btn = document.getElementById('mat-' + mode);
+  if (btn) btn.classList.add('active');
+
+  if (!model3d) return;
+
+  // Always strip any existing grid wire overlays before re-applying a mode.
+  clearWireOverlays();
+
+  // Collect the real meshes up front (excluding overlay clones) so we never
+  // mutate the scene graph while traversing it — adding clones mid-traverse
+  // would make Three.js re-visit them and clone endlessly.
+  const meshes = [];
+  model3d.traverse((node) => {
+    if (node.isMesh && node.name !== 'wire-overlay') meshes.push(node);
+  });
+
+  meshes.forEach((node) => {
+    if (mode === 'solid') {
+      node.material = new THREE.MeshPhongMaterial({
+        color: 0x22cc44,
+        emissive: 0x003300,
+        emissiveIntensity: 0.5,
+        specular: 0x88ffaa,
+        shininess: 100,
+        side: THREE.DoubleSide,
+        wireframe: false,
+      });
+      node.material.needsUpdate = true;
+    } else if (mode === 'grid') {
+      // Fully transparent base (writes no depth) so only the wireframe shows.
+      node.material = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.0,
+        side: THREE.DoubleSide,
+        wireframe: false,
+        depthWrite: false,
+      });
+      node.material.needsUpdate = true;
+
+      // ...with a bright see-through wireframe overlay clone on top.
+      const wireMat = new THREE.MeshBasicMaterial({
+        color: 0x00ff41,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+      });
+      const wireClone = node.clone();
+      wireClone.material = wireMat;
+      wireClone.name = 'wire-overlay';
+      wireClone.scale.setScalar(1.0);
+      if (node.parent) node.parent.add(wireClone);
+    } else if (mode === 'wire') {
+      node.material = new THREE.MeshPhongMaterial({
+        color: 0x00ff41,
+        emissive: 0x002200,
+        emissiveIntensity: 0.2,
+        side: THREE.DoubleSide,
+        wireframe: true,
+      });
+      node.material.needsUpdate = true;
+    }
+  });
 }
 
 window.addEventListener('resize', () => {
