@@ -4,8 +4,29 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>CONJURE</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <style>
-/* ── Reset & globals ───────────────────────────────────────────────────── */
+
+/* ════════════════════════════════════════
+   VARIABLES
+   ════════════════════════════════════════ */
+:root {
+  --bg:         #0a0e0a;
+  --panel:      #0f140f;
+  --green:      #00ff41;
+  --green-dim:  #00aa2a;
+  --green-dark: #003310;
+  --amber:      #ffaa00;
+  --red:        #ff3333;
+  --white:      #ffffff;
+  --gray:       #444444;
+  --border:     #1a2b1a;
+}
+
+/* ════════════════════════════════════════
+   RESET
+   ════════════════════════════════════════ */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -13,17 +34,6 @@
   -webkit-tap-highlight-color: transparent;
   -webkit-user-select: none;
   user-select: none;
-}
-
-:root {
-  --bg:    #0a0e0a;
-  --green: #00ff41;
-  --dim:   #00aa2a;
-  --amber: #ffaa00;
-  --red:   #ff3333;
-  --gray:  #555555;
-  --white: #ffffff;
-  --panel: #0f140f;
 }
 
 html, body {
@@ -36,1459 +46,1274 @@ html, body {
   font-size: 18px;
 }
 
-/* ── Screen base ───────────────────────────────────────────────────────── */
+/* ════════════════════════════════════════
+   SCREEN BASE
+   ════════════════════════════════════════ */
 .screen {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
   display: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--bg);
   opacity: 0;
-  transition: opacity 0.4s ease;
+  transition: opacity 0.3s ease;
   overflow: hidden;
 }
 
-/* ── ─── SCREEN: IDLE ──────────────────────────────────────────────────── */
-#screen-idle {
-  cursor: pointer;
-}
-
-.idle-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 32px;
-}
-
-.idle-logo {
-  font-size: 14px;
-  letter-spacing: 10px;
-  color: var(--dim);
-}
-
-.idle-text {
-  font-size: clamp(28px, 5vw, 56px);
-  letter-spacing: 12px;
-  color: var(--green);
-  text-align: center;
-  animation: breath 3s ease-in-out infinite;
-}
-
-.idle-sub {
-  font-size: 14px;
-  letter-spacing: 4px;
-  color: var(--dim);
-  animation: breath 3s ease-in-out infinite;
-  animation-delay: 0.3s;
-}
-
-@keyframes breath {
-  0%, 100% { opacity: 0.15; }
-  50%       { opacity: 1; }
-}
-
-/* Library button — absolute in corner of idle/speak screens */
-.library-btn {
-  position: absolute;
-  bottom: 28px;
-  right: 28px;
-  font-family: monospace;
-  font-size: 11px;
-  letter-spacing: 3px;
-  padding: 10px 18px;
-  background: transparent;
-  border: 1px solid #1a2b1a;
-  color: var(--dim);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: border-color 0.2s, color 0.2s;
-}
-
-.library-btn:active {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-/* ── ─── SCREEN: SPEAK ─────────────────────────────────────────────────── */
-.speak-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-  width: 100%;
-  max-width: 700px;
-  padding: 40px 28px;
-}
-
-.speak-hint {
-  font-size: 14px;
-  letter-spacing: 2px;
-  color: var(--dim);
-  margin-bottom: 48px;
-  text-align: center;
-}
-
-/* Mic button — 200px circle */
-.mic-btn {
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  border: 3px solid var(--green);
-  background: transparent;
-  color: var(--green);
-  font-family: monospace;
-  cursor: pointer;
-  touch-action: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  flex-shrink: 0;
-  transition: border-color 0.2s;
-}
-
-.mic-btn.listening {
-  border-color: var(--amber);
-  color: var(--amber);
-  animation: amber-glow 1s ease-in-out infinite;
-}
-
-@keyframes amber-glow {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(255, 170, 0, 0.5);
-  }
-  50% {
-    box-shadow: 0 0 0 24px rgba(255, 170, 0, 0);
-  }
-}
-
-.mic-icon {
-  font-size: 48px;
-  line-height: 1;
-}
-
-.mic-label {
-  font-size: 12px;
-  letter-spacing: 3px;
-  font-family: monospace;
-}
-
-.transcript-box {
-  margin-top: 40px;
-  min-height: 80px;
-  width: 100%;
-  text-align: center;
-}
-
-#transcript {
-  font-size: 22px;
-  color: var(--white);
-  font-family: monospace;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.speak-actions {
-  display: none;
-  gap: 20px;
-  margin-top: 48px;
-  width: 100%;
-  justify-content: center;
-}
-
-/* ── ─── SHARED BUTTONS ─────────────────────────────────────────────────── */
-.btn-action {
-  font-family: monospace;
-  font-size: 20px;
-  letter-spacing: 4px;
-  padding: 24px 48px;
-  min-height: 80px;
-  min-width: 160px;
-  background: transparent;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: opacity 0.15s;
-  border-radius: 0;
-}
-
-.btn-action:active {
-  opacity: 0.6;
-}
-
-.btn-green {
-  border: 2px solid var(--green);
-  color: var(--green);
-}
-
-.btn-gray {
-  border: 2px solid var(--gray);
-  color: var(--gray);
-}
-
-.btn-red {
-  border: 2px solid var(--red);
-  color: var(--red);
-}
-
-/* ── ─── SCREEN: GENERATING ────────────────────────────────────────────── */
-.gen-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-  width: 100%;
-  max-width: 680px;
-  padding: 40px 28px;
-}
-
-.gen-title {
-  font-size: 13px;
-  letter-spacing: 6px;
-  color: var(--dim);
-  margin-bottom: 20px;
-}
-
-.gen-prompt {
-  font-size: 20px;
-  color: var(--white);
-  text-align: center;
-  font-style: italic;
-  margin-bottom: 48px;
-  line-height: 1.5;
-  max-width: 600px;
-  word-break: break-word;
-}
-
-.progress-list {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.progress-step {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 0;
-  color: #333;
-  font-size: 18px;
-  transition: color 0.2s;
-}
-
-.progress-step.active  { color: var(--green); }
-.progress-step.complete { color: var(--dim); }
-.progress-step.error   { color: var(--red); }
-
-.step-icon {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 22px;
-}
-
-.step-message {
-  flex: 1;
-  font-size: 18px;
-}
-
-/* Spinner */
-.spinner {
-  width: 22px;
-  height: 22px;
-  border: 2.5px solid rgba(0, 255, 65, 0.2);
-  border-top-color: var(--green);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
+/* ════════════════════════════════════════
+   ANIMATIONS
+   ════════════════════════════════════════ */
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-/* Progress bar */
-.progress-bar-wrap {
-  width: 100%;
-  height: 3px;
-  background: #1a2b1a;
-  margin-top: 36px;
-  overflow: hidden;
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 1.0; }
 }
 
-.progress-bar {
-  height: 100%;
-  background: var(--green);
-  width: 0%;
-  transition: width 0.5s ease;
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(255, 170, 0, 0.5); }
+  50%       { box-shadow: 0 0 0 24px rgba(255, 170, 0, 0); }
 }
 
-.gen-eta {
-  font-size: 13px;
-  color: var(--dim);
-  margin-top: 14px;
-  letter-spacing: 2px;
-  min-height: 20px;
+@keyframes border-flash {
+  0%, 100% { box-shadow: inset 0 0 0 4px var(--green); }
+  50%       { box-shadow: inset 0 0 0 4px var(--green-dim); }
 }
 
-/* ── ─── SCREEN: VIEW MODEL ─────────────────────────────────────────────── */
-#screen-view {
-  justify-content: flex-start;
+@keyframes usb-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
 }
 
-#viewer-container {
-  width: 100%;
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-#viewer-container canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.view-actions {
-  display: flex;
-  width: 100%;
-  padding: 0;
+/* ════════════════════════════════════════
+   SPINNER
+   ════════════════════════════════════════ */
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top: 2px solid var(--green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
   flex-shrink: 0;
 }
 
-.view-actions .btn-action {
-  flex: 1;
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
+/* ════════════════════════════════════════
+   STEP ROWS (shared by screens 3 & 5)
+   ════════════════════════════════════════ */
+.steps-list {
+  width: 100%;
+  max-width: 600px;
+}
+
+.step-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.step-row:last-child {
   border-bottom: none;
-  border-top: 1px solid #1a2b1a;
-  padding: 28px;
-  font-size: 22px;
 }
 
-.view-actions .btn-gray {
-  border-right: 1px solid #1a2b1a;
+.step-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 20px;
 }
 
-/* ── ─── SCREEN: SLICING ────────────────────────────────────────────────── */
-.slicing-content {
+.step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.step-name {
+  font-size: 18px;
+  color: var(--white);
+}
+
+.step-msg {
+  font-size: 14px;
+  color: var(--green-dim);
+  min-height: 17px;
+}
+
+.step-row.pending  .step-name { color: var(--gray); }
+.step-row.active   .step-name { color: var(--green); }
+.step-row.complete .step-name { color: var(--green-dim); }
+.step-row.error    .step-name { color: var(--red); }
+.step-row.error    .step-msg  { color: var(--red); }
+
+/* ════════════════════════════════════════
+   PROGRESS BAR (shared)
+   ════════════════════════════════════════ */
+.progress-wrap {
+  width: 100%;
+  max-width: 600px;
+  height: 4px;
+  background: var(--border);
+  margin-top: 28px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--green);
+  width: 0%;
+  transition: width 0.4s ease;
+  border-radius: 2px;
+}
+
+/* ════════════════════════════════════════
+   BUTTONS (shared)
+   ════════════════════════════════════════ */
+.btn {
+  font-family: monospace;
+  font-size: 20px;
+  letter-spacing: 3px;
+  padding: 0 32px;
+  height: 72px;
+  min-height: 72px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  white-space: nowrap;
+  transition: opacity 0.1s;
+}
+
+.btn:active { opacity: 0.55; }
+
+.btn-green { border: 2px solid var(--green); color: var(--green); }
+.btn-gray  { border: 2px solid var(--gray);  color: var(--gray);  }
+.btn-red   { border: 2px solid var(--red);   color: var(--red);   }
+
+/* ════════════════════════════════════════
+   SCREEN 1 — IDLE
+   ════════════════════════════════════════ */
+#screen-idle {
+  cursor: pointer;
+  gap: 0;
+}
+
+.idle-logo {
+  font-size: 64px;
+  font-weight: bold;
+  color: var(--green);
+  letter-spacing: 12px;
+  margin-bottom: 12px;
+}
+
+.idle-tagline {
+  font-size: 18px;
+  color: var(--green-dim);
+  letter-spacing: 4px;
+  margin-bottom: 64px;
+}
+
+.pulse-ring {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  border: 2px solid var(--green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: pulse-opacity 2s ease-in-out infinite;
+  margin-bottom: 28px;
+  flex-shrink: 0;
+}
+
+.pulse-ring-icon {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.idle-tap {
+  font-size: 14px;
+  color: var(--green-dim);
+  letter-spacing: 4px;
+}
+
+/* ════════════════════════════════════════
+   SCREEN 2 — SPEAK
+   ════════════════════════════════════════ */
+#screen-speak {
+  gap: 0;
+  padding: 0 40px;
+}
+
+.speak-header {
+  position: absolute;
+  top: 24px;
+  left: 28px;
+  font-size: 20px;
+  color: var(--green-dim);
+  letter-spacing: 4px;
+  pointer-events: none;
+}
+
+.mic-button {
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 3px solid var(--green);
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: none;
+  flex-shrink: 0;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.mic-button.recording {
+  border-color: var(--amber);
+  background: rgba(255, 170, 0, 0.08);
+  animation: pulse-amber 1s ease-in-out infinite;
+}
+
+.mic-icon-inner {
+  font-size: 56px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.mic-label {
+  font-size: 14px;
+  color: var(--green-dim);
+  letter-spacing: 3px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.transcript-box {
+  width: 80%;
+  max-width: 600px;
+  min-height: 80px;
+  max-height: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 16px;
+  margin-top: 28px;
+  margin-bottom: 20px;
+  overflow-y: auto;
+}
+
+.transcript-content {
+  font-size: 20px;
+  font-family: monospace;
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--gray);
+}
+
+.action-buttons {
+  display: none;
+  gap: 12px;
+  width: 80%;
+  max-width: 600px;
+}
+
+.action-buttons .btn {
+  flex: 1;
+  height: 64px;
+  min-height: 64px;
+}
+
+/* ════════════════════════════════════════
+   SCREEN 3 — GENERATING
+   ════════════════════════════════════════ */
+#screen-generating {
+  padding: 40px;
+  justify-content: center;
+  gap: 0;
+}
+
+.generating-title {
+  font-size: 28px;
+  color: var(--green);
+  letter-spacing: 6px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.generating-prompt {
+  font-size: 18px;
+  color: var(--white);
+  font-style: italic;
+  text-align: center;
+  max-width: 600px;
   width: 100%;
-  max-width: 900px;
-  padding: 40px 28px;
+  line-height: 1.5;
+  margin-bottom: 40px;
+}
+
+/* ════════════════════════════════════════
+   SCREEN 4 — VIEW MODEL
+   ════════════════════════════════════════ */
+#screen-view {
+  padding: 0;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+#three-container {
+  position: absolute;
+  inset: 0;
+}
+
+#three-container canvas {
+  display: block;
+}
+
+#view-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.view-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  background: linear-gradient(to bottom, rgba(10,14,10,0.85) 0%, transparent 100%);
+}
+
+.view-top-logo {
+  font-size: 14px;
+  color: var(--green-dim);
+  letter-spacing: 4px;
+}
+
+.view-top-prompt {
+  font-size: 14px;
+  color: var(--green-dim);
+  letter-spacing: 1px;
+  max-width: 50%;
+  text-align: center;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view-top-spacer {
+  width: 80px;
+}
+
+.view-bottom-bar {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  background: linear-gradient(to top, rgba(10,14,10,0.9) 0%, transparent 100%);
+  pointer-events: auto;
+}
+
+.view-bottom-bar .btn {
+  flex: 1;
+}
+
+/* ════════════════════════════════════════
+   SCREEN 5 — SLICING
+   ════════════════════════════════════════ */
+#screen-slicing {
+  padding: 40px;
   gap: 0;
 }
 
 .slicing-title {
-  font-size: 13px;
+  font-size: 28px;
+  color: var(--green);
   letter-spacing: 6px;
-  color: var(--dim);
   margin-bottom: 40px;
+  text-align: center;
 }
 
-.slicing-body {
-  display: flex;
-  gap: 60px;
+#slice-steps-wrap {
   width: 100%;
-  align-items: flex-start;
-}
-
-.slicing-model-info {
-  flex: 1;
+  max-width: 600px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  border: 1px solid #1a2b1a;
-  padding: 24px;
+  align-items: center;
 }
 
-.model-label {
-  font-size: 11px;
-  letter-spacing: 4px;
-  color: var(--dim);
-}
-
-.model-prompt-text {
-  font-size: 18px;
-  color: var(--white);
-  font-style: italic;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.model-stat {
-  font-size: 14px;
-  color: var(--dim);
-}
-
-.slice-steps-col {
-  flex: 1;
-}
-
-/* USB Ready overlay */
-.usb-ready {
+#usb-ready-msg {
   display: none;
-  position: fixed;
-  inset: 0;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: var(--bg);
+  gap: 32px;
+  text-align: center;
+  padding: 48px 40px;
   border: 4px solid var(--green);
-  text-align: center;
-  padding: 60px 40px;
-  animation: border-pulse 1.5s ease-in-out infinite;
-  z-index: 10;
+  width: 100%;
+  max-width: 600px;
+  animation: border-flash 1.5s ease-in-out infinite;
 }
 
-@keyframes border-pulse {
-  0%, 100% {
-    border-color: var(--green);
-    box-shadow: inset 0 0 0 0 rgba(0, 255, 65, 0.05);
-  }
-  50% {
-    border-color: var(--dim);
-    box-shadow: inset 0 0 60px 0 rgba(0, 255, 65, 0.08);
-  }
-}
-
-.usb-ready-title {
-  font-size: clamp(36px, 7vw, 72px);
-  letter-spacing: 10px;
+.usb-ready-text {
+  font-size: 28px;
+  font-weight: bold;
   color: var(--green);
-  margin-bottom: 28px;
-}
-
-.usb-ready-sub {
-  font-size: clamp(16px, 2.5vw, 24px);
   letter-spacing: 4px;
-  color: var(--dim);
-  line-height: 1.6;
-  max-width: 600px;
-}
-
-/* ── ─── SCREEN: GALLERY ────────────────────────────────────────────────── */
-#screen-gallery {
-  justify-content: flex-start;
-}
-
-.gallery-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 24px 28px;
-  border-bottom: 1px solid #1a2b1a;
-  flex-shrink: 0;
-}
-
-.gallery-title {
-  font-size: 13px;
-  letter-spacing: 8px;
-  color: var(--dim);
-}
-
-.gallery-back {
-  font-family: monospace;
-  font-size: 13px;
-  letter-spacing: 3px;
-  padding: 10px 20px;
-  background: transparent;
-  border: 1px solid #1a2b1a;
-  color: var(--dim);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: border-color 0.2s, color 0.2s;
-}
-
-.gallery-back:active {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  padding: 24px 28px;
-  overflow-y: auto;
-  flex: 1;
-  align-content: start;
-  width: 100%;
-}
-
-@media (max-width: 600px) {
-  .gallery-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.gallery-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: var(--dim);
-  font-size: 14px;
-  letter-spacing: 2px;
-  padding: 60px 0;
-  line-height: 2;
-}
-
-.model-card {
-  border: 1px solid #1a2b1a;
-  background: var(--panel);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 160px;
-  touch-action: manipulation;
-}
-
-.card-prompt {
-  font-size: 16px;
-  color: var(--white);
   line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-style: italic;
-  flex: 1;
+  animation: usb-pulse 1.5s ease-in-out infinite;
 }
 
-.card-date {
-  font-size: 11px;
-  color: var(--dim);
-  letter-spacing: 1px;
-}
-
-.card-btn {
-  font-family: monospace;
-  font-size: 13px;
-  letter-spacing: 3px;
-  padding: 12px;
-  background: transparent;
-  border: 1px solid var(--green);
-  color: var(--green);
-  cursor: pointer;
-  width: 100%;
-  touch-action: manipulation;
-  transition: opacity 0.15s;
-}
-
-.card-btn:active {
-  opacity: 0.6;
-}
-
-.card-btn:disabled {
-  border-color: var(--gray);
-  color: var(--gray);
-  cursor: default;
-}
-
-/* ── ─── SCREEN: ERROR ──────────────────────────────────────────────────── */
-.error-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 40px;
-  max-width: 600px;
-  padding: 40px 28px;
+/* ════════════════════════════════════════
+   SCREEN 6 — ERROR
+   ════════════════════════════════════════ */
+#screen-error {
+  gap: 24px;
+  padding: 40px;
   text-align: center;
+}
+
+.error-icon {
+  font-size: 64px;
+  color: var(--red);
+  line-height: 1;
 }
 
 .error-title {
-  font-size: 48px;
-  letter-spacing: 8px;
+  font-size: 24px;
   color: var(--red);
+  letter-spacing: 4px;
 }
 
 .error-message {
-  font-size: 18px;
-  color: var(--white);
+  font-size: 16px;
+  color: var(--gray);
+  max-width: 500px;
   line-height: 1.6;
-  word-break: break-word;
+  font-family: monospace;
 }
+
+.error-restart-btn {
+  width: 280px;
+  height: 64px;
+  min-height: 64px;
+}
+
 </style>
 </head>
 <body>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: IDLE / ATTRACT                                                 -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 1 — IDLE
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-idle">
-  <div class="idle-content">
-    <div class="idle-logo">CONJURE</div>
-    <div class="idle-text">SPEAK TO CONJURE</div>
-    <div class="idle-sub">TOUCH ANYWHERE TO BEGIN</div>
+  <div class="idle-logo">CONJURE</div>
+  <div class="idle-tagline">speak to fabricate reality</div>
+  <div class="pulse-ring">
+    <div class="pulse-ring-icon">&#x1F3A4;</div>
   </div>
-  <button class="library-btn" id="idle-library-btn">LIBRARY</button>
+  <div class="idle-tap">TAP TO BEGIN</div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: SPEAK                                                          -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 2 — SPEAK
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-speak">
-  <div class="speak-content">
-    <div class="speak-hint">Hold the button and describe what you want to create</div>
+  <div class="speak-header">CONJURE</div>
 
-    <button class="mic-btn" id="btn-mic">
-      <div class="mic-icon">🎙</div>
-      <div class="mic-label" id="mic-label">HOLD TO SPEAK</div>
-    </button>
+  <button class="mic-button" id="mic-button" type="button">
+    <div class="mic-icon-inner">&#x1F3A4;</div>
+  </button>
+  <div class="mic-label" id="mic-label">HOLD TO SPEAK</div>
 
-    <div class="transcript-box">
-      <div id="transcript"></div>
-    </div>
-
-    <div class="speak-actions" id="speak-actions">
-      <button class="btn-action btn-gray" id="btn-redo" onclick="redoSpeak()">REDO</button>
-      <button class="btn-action btn-green" id="btn-confirm" onclick="confirmPrompt()">CONFIRM</button>
-    </div>
+  <div class="transcript-box">
+    <div class="transcript-content" id="transcript-text">your words will appear here...</div>
   </div>
-  <button class="library-btn" id="speak-library-btn">LIBRARY</button>
+
+  <div class="action-buttons" id="action-buttons">
+    <button class="btn btn-green" type="button" id="btn-confirm" onclick="handleConfirm()">CONFIRM</button>
+    <button class="btn btn-gray"  type="button" onclick="redoTranscript()">REDO</button>
+  </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: GENERATING                                                     -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 3 — GENERATING
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-generating">
-  <div class="gen-content">
-    <div class="gen-title">CONJURING YOUR MODEL</div>
-    <div class="gen-prompt" id="gen-prompt"></div>
+  <div class="generating-title">CONJURING</div>
+  <div class="generating-prompt" id="generating-prompt"></div>
 
-    <div class="progress-list" id="gen-steps">
-      <div class="progress-step" id="step-create">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Sending prompt to Meshy AI...</div>
-      </div>
-      <div class="progress-step" id="step-poll">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Meshy task created — polling for completion...</div>
-      </div>
-      <div class="progress-step" id="step-download_glb">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Model ready — downloading GLB...</div>
-      </div>
-      <div class="progress-step" id="step-download_stl">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Preparing STL for slicing...</div>
-      </div>
-      <div class="progress-step" id="step-insforge">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Uploading STL to InsForge...</div>
-      </div>
-      <div class="progress-step" id="step-complete">
-        <div class="step-icon"><span>○</span></div>
-        <div class="step-message">Complete</div>
+  <div class="steps-list">
+    <div class="step-row pending" id="step-meshy-create">
+      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+      <div class="step-text">
+        <div class="step-name">Generating 3D model</div>
+        <div class="step-msg"></div>
       </div>
     </div>
-
-    <div class="progress-bar-wrap">
-      <div class="progress-bar" id="gen-progress-bar"></div>
+    <div class="step-row pending" id="step-meshy-poll">
+      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+      <div class="step-text">
+        <div class="step-name">Processing geometry</div>
+        <div class="step-msg"></div>
+      </div>
     </div>
-    <div class="gen-eta" id="gen-eta"></div>
+    <div class="step-row pending" id="step-meshy-download">
+      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+      <div class="step-text">
+        <div class="step-name">Downloading model</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+    <div class="step-row pending" id="step-insforge-upload">
+      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+      <div class="step-text">
+        <div class="step-name">Saving to cloud</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+    <div class="step-row pending" id="step-complete">
+      <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+      <div class="step-text">
+        <div class="step-name">Model ready</div>
+        <div class="step-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-fill" id="gen-progress-fill"></div>
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: VIEW MODEL                                                     -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 4 — VIEW MODEL
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-view">
-  <div id="viewer-container"></div>
-  <div class="view-actions">
-    <button class="btn-action btn-gray" onclick="redoFromView()">REDO</button>
-    <button class="btn-action btn-green" onclick="startSlicing()">PRINT THIS</button>
+  <div id="three-container"></div>
+  <div id="view-overlay">
+    <div class="view-top-bar">
+      <span class="view-top-logo">CONJURE</span>
+      <span class="view-top-prompt" id="view-prompt-label"></span>
+      <span class="view-top-spacer"></span>
+    </div>
+    <div class="view-bottom-bar">
+      <button class="btn btn-green" type="button" onclick="handlePrint()">PRINT THIS</button>
+      <button class="btn btn-gray"  type="button" onclick="handleRedo()">REDO</button>
+    </div>
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: SLICING                                                        -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 5 — SLICING
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-slicing">
+  <div class="slicing-title">PREPARING PRINT</div>
 
-  <!-- Active slicing steps layout -->
-  <div class="slicing-content" id="slicing-steps-wrap">
-    <div class="slicing-title">PREPARING TO PRINT</div>
-    <div class="slicing-body">
-
-      <!-- Left: model info -->
-      <div class="slicing-model-info">
-        <div class="model-label">MODEL PROMPT</div>
-        <div class="model-prompt-text" id="slice-prompt-display"></div>
-        <div class="model-stat" id="slice-stl-size"></div>
-      </div>
-
-      <!-- Right: progress steps -->
-      <div class="slice-steps-col">
-        <div class="progress-list" id="slice-steps">
-          <div class="progress-step" id="slice-step-load_stl">
-            <div class="step-icon"><span>○</span></div>
-            <div class="step-message">Loading STL into OrcaSlicer CLI...</div>
-          </div>
-          <div class="progress-step" id="slice-step-slice">
-            <div class="step-icon"><span>○</span></div>
-            <div class="step-message">Slicing with Neptune 4 Pro profile...</div>
-          </div>
-          <div class="progress-step" id="slice-step-usb_check">
-            <div class="step-icon"><span>○</span></div>
-            <div class="step-message">Detecting USB drive...</div>
-          </div>
-          <div class="progress-step" id="slice-step-copy_usb">
-            <div class="step-icon"><span>○</span></div>
-            <div class="step-message">Copying gcode to USB...</div>
-          </div>
-          <div class="progress-step" id="slice-step-usb_ready">
-            <div class="step-icon"><span>○</span></div>
-            <div class="step-message">USB ready — safe to remove</div>
-          </div>
+  <div id="slice-steps-wrap">
+    <div class="steps-list">
+      <div class="step-row pending" id="slice-step-load">
+        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+        <div class="step-text">
+          <div class="step-name">Loading model</div>
+          <div class="step-msg"></div>
         </div>
       </div>
+      <div class="step-row pending" id="slice-step-slice">
+        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+        <div class="step-text">
+          <div class="step-name">Slicing for Neptune 4 Pro</div>
+          <div class="step-msg"></div>
+        </div>
+      </div>
+      <div class="step-row pending" id="slice-step-usb">
+        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+        <div class="step-text">
+          <div class="step-name">Checking USB drive</div>
+          <div class="step-msg"></div>
+        </div>
+      </div>
+      <div class="step-row pending" id="slice-step-copy">
+        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+        <div class="step-text">
+          <div class="step-name">Copying to USB</div>
+          <div class="step-msg"></div>
+        </div>
+      </div>
+      <div class="step-row pending" id="slice-step-done">
+        <div class="step-icon"><span style="color:var(--gray)">○</span></div>
+        <div class="step-text">
+          <div class="step-name">Ready to print</div>
+          <div class="step-msg"></div>
+        </div>
+      </div>
+    </div>
 
+    <div class="progress-wrap">
+      <div class="progress-fill" id="slice-progress-fill"></div>
     </div>
   </div>
 
-  <!-- USB Ready full-screen overlay -->
-  <div class="usb-ready" id="slicing-done">
-    <div class="usb-ready-title">USB READY</div>
-    <div class="usb-ready-sub">REMOVE DRIVE AND INSERT INTO PRINTER</div>
-    <button class="btn-action btn-gray" style="margin-top:64px;" onclick="resetAll()">START OVER</button>
-  </div>
-
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: GALLERY                                                        -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<div class="screen" id="screen-gallery">
-  <div class="gallery-header">
-    <div class="gallery-title">LIBRARY</div>
-    <button class="gallery-back" onclick="closeGallery()">← BACK</button>
-  </div>
-  <div class="gallery-grid" id="gallery-grid">
-    <div class="gallery-empty">Loading...</div>
+  <div id="usb-ready-msg">
+    <div class="usb-ready-text">REMOVE USB<br>INSERT INTO PRINTER</div>
+    <button class="btn btn-gray" type="button" onclick="resetAll()" style="width:240px;height:64px;min-height:64px;">
+      START OVER
+    </button>
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- SCREEN: ERROR                                                          -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════
+     SCREEN 6 — ERROR
+     ════════════════════════════════════════ -->
 <div class="screen" id="screen-error">
-  <div class="error-content">
-    <div class="error-title">ERROR</div>
-    <div class="error-message" id="error-message"></div>
-    <button class="btn-action btn-gray" onclick="resetAll()">START OVER</button>
-  </div>
+  <div class="error-icon">✗</div>
+  <div class="error-title">SOMETHING WENT WRONG</div>
+  <div class="error-message" id="error-message">An unexpected error occurred.</div>
+  <button class="btn btn-red error-restart-btn" type="button" onclick="resetAll()">START OVER</button>
 </div>
-
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- Three.js — loaded from CDN                                             -->
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
 <script>
 'use strict';
 
-// ── Screen management ──────────────────────────────────────────────────────
-function showScreen(id, immediate) {
-  const delay = immediate ? 0 : 400;
+/* ════════════════════════════════════════
+   GLOBAL STATE
+   ════════════════════════════════════════ */
+var currentPrompt      = '';
+var currentTranscript  = '';
+var isListening        = false;
+var idleTimer          = null;
+var activeEvtSource    = null;
 
-  document.querySelectorAll('.screen').forEach(s => {
+// Three.js globals
+var scene, camera, renderer, model, animationId;
+var threeInitialized  = false;
+var autoRotate        = true;
+var touchStartX       = 0;
+var touchStartY       = 0;
+var isDragging        = false;
+var mouseDown         = false;
+
+/* ════════════════════════════════════════
+   SCREEN MANAGEMENT
+   ════════════════════════════════════════ */
+function showScreen(id) {
+  // Fade out all screens
+  document.querySelectorAll('.screen').forEach(function(s) {
     s.style.opacity = '0';
-    s.style.pointerEvents = 'none';
+    setTimeout(function() { s.style.display = 'none'; }, 300);
   });
 
-  setTimeout(() => {
-    document.querySelectorAll('.screen').forEach(s => {
-      s.style.display = 'none';
-    });
-    const target = document.getElementById(id);
-    target.style.display = 'flex';
-    target.style.pointerEvents = 'auto';
-    // Double rAF ensures display change has applied before triggering transition
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      target.style.opacity = '1';
-    }));
-  }, delay);
+  // Fade in target after transition completes
+  setTimeout(function() {
+    var el = document.getElementById(id);
+    el.style.display = 'flex';
+    setTimeout(function() { el.style.opacity = '1'; }, 10);
+  }, 300);
 }
 
-// ── TTS — calls /api/speak; never throws ──────────────────────────────────
-async function speak(text) {
-  try {
-    await fetch('/api/speak', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text }),
-    });
-  } catch (e) {
-    console.log('[TTS] speak error:', e);
-  }
-}
-
-// ── Idle timer ─────────────────────────────────────────────────────────────
-let idleTimer = null;
-const IDLE_TIMEOUT_MS = 60000;
-
+/* ════════════════════════════════════════
+   IDLE TIMEOUT — 90 seconds
+   ════════════════════════════════════════ */
 function resetIdleTimer() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    if (isListening) stopListening();
-    closeEvents();
+  idleTimer = setTimeout(function() {
+    stopListening();
+    closeEvtSource();
     showScreen('screen-idle');
     speak('What would you like to conjure today?');
-  }, IDLE_TIMEOUT_MS);
+  }, 90000);
 }
 
-function cancelIdleTimer() {
-  clearTimeout(idleTimer);
-}
+document.addEventListener('touchstart', resetIdleTimer, { passive: true });
+document.addEventListener('mousedown',  resetIdleTimer);
 
-// ── Speech recognition ─────────────────────────────────────────────────────
-let recognition  = null;
-let isListening  = false;
-let currentTranscript = '';
+/* ════════════════════════════════════════
+   SPEECH RECOGNITION
+   ════════════════════════════════════════ */
+var SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+var recognition = null;
 
-function initSpeechRecognition() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    showError('Speech recognition not supported. Launch with Chromium.');
-    return false;
-  }
-  recognition = new SR();
-  recognition.continuous      = true;
-  recognition.interimResults  = true;
-  recognition.lang            = 'en-US';
+function initRecognition() {
+  if (!SpeechRecognitionAPI) return;
+  recognition = new SpeechRecognitionAPI();
+  recognition.continuous     = true;
+  recognition.interimResults = true;
+  recognition.lang           = 'en-US';
 
-  recognition.onresult = (event) => {
-    let transcript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript;
+  recognition.onresult = function(event) {
+    var interim = '';
+    var final   = '';
+    for (var i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        final += event.results[i][0].transcript;
+      } else {
+        interim += event.results[i][0].transcript;
+      }
     }
-    currentTranscript = transcript;
-    document.getElementById('transcript').textContent = transcript;
-    if (transcript.trim().length > 0) {
-      document.getElementById('speak-actions').style.display = 'flex';
+    if (final) currentTranscript += final;
+    var display = currentTranscript + interim;
+    var el = document.getElementById('transcript-text');
+    if (display.trim().length > 0) {
+      el.textContent = display;
+      el.style.color = 'var(--white)';
+    } else {
+      el.textContent = 'your words will appear here...';
+      el.style.color = 'var(--gray)';
     }
+    updateActionButtons();
   };
 
-  recognition.onerror = (event) => {
-    if (event.error === 'not-allowed') {
-      showError(
-        'Microphone access denied.\n' +
-        'Grant permission in Chromium settings or run:\n' +
-        'chromium-browser --use-fake-ui-for-media-stream'
-      );
-    } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
-      console.warn('SpeechRecognition error:', event.error);
+  recognition.onerror = function(e) {
+    if (e.error !== 'aborted' && e.error !== 'no-speech') {
+      console.log('[Speech] error:', e.error);
+    }
+    stopListening();
+  };
+
+  // Auto-restart when it stops unexpectedly while we're still listening
+  recognition.onend = function() {
+    if (isListening) {
+      try { recognition.start(); } catch(ex) {}
     }
   };
-
-  recognition.onend = () => {
-    isListening = false;
-    setMicListening(false);
-  };
-
-  return true;
 }
 
 function startListening() {
-  if (!recognition) {
-    if (!initSpeechRecognition()) return;
-  }
   if (isListening) return;
+  if (!SpeechRecognitionAPI) {
+    showError('Speech recognition not supported.\nPlease use Chromium.');
+    return;
+  }
+  if (!recognition) initRecognition();
+
   isListening = true;
   currentTranscript = '';
-  document.getElementById('transcript').textContent = '';
-  document.getElementById('speak-actions').style.display = 'none';
-  try {
-    recognition.start();
-  } catch (e) {
-    // Already started
-  }
-  setMicListening(true);
+
+  var el = document.getElementById('transcript-text');
+  el.textContent = 'your words will appear here...';
+  el.style.color = 'var(--gray)';
+
+  updateActionButtons();
+
+  try { recognition.start(); } catch(ex) {}
+
+  var btn   = document.getElementById('mic-button');
+  var label = document.getElementById('mic-label');
+  btn.classList.add('recording');
+  label.textContent  = 'LISTENING...';
+  label.style.color  = 'var(--amber)';
+
   resetIdleTimer();
 }
 
 function stopListening() {
-  if (recognition && isListening) {
-    try { recognition.stop(); } catch (e) {}
-  }
+  if (!isListening) return;
   isListening = false;
-  setMicListening(false);
-}
+  try { recognition.stop(); } catch(ex) {}
 
-function setMicListening(on) {
-  const btn   = document.getElementById('btn-mic');
-  const label = document.getElementById('mic-label');
-  if (on) {
-    btn.classList.add('listening');
-    label.textContent = 'LISTENING...';
-  } else {
-    btn.classList.remove('listening');
+  var btn   = document.getElementById('mic-button');
+  var label = document.getElementById('mic-label');
+  if (btn)   btn.classList.remove('recording');
+  if (label) {
     label.textContent = 'HOLD TO SPEAK';
+    label.style.color = 'var(--green-dim)';
   }
 }
 
-// ── Mic button — both mouse and touch ─────────────────────────────────────
-function wireMicButton() {
-  const btn = document.getElementById('btn-mic');
-
-  btn.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    startListening();
-  });
-  btn.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    startListening();
-  }, { passive: false });
-
-  btn.addEventListener('mouseup', (e) => {
-    e.preventDefault();
-    stopListening();
-  });
-  btn.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    stopListening();
-  }, { passive: false });
-
-  btn.addEventListener('mouseleave', () => {
-    if (isListening) stopListening();
-  });
-  btn.addEventListener('touchcancel', () => {
-    if (isListening) stopListening();
-  });
+function updateActionButtons() {
+  var hasText = currentTranscript.trim().length > 0;
+  document.getElementById('action-buttons').style.display = hasText ? 'flex' : 'none';
 }
 
-// ── Speak screen actions ───────────────────────────────────────────────────
-function redoSpeak() {
+function redoTranscript() {
   currentTranscript = '';
-  document.getElementById('transcript').textContent = '';
-  document.getElementById('speak-actions').style.display = 'none';
+  var el = document.getElementById('transcript-text');
+  el.textContent = 'your words will appear here...';
+  el.style.color = 'var(--gray)';
+  updateActionButtons();
   resetIdleTimer();
 }
 
-function goToSpeak() {
-  redoSpeak();
+/* ════════════════════════════════════════
+   MIC BUTTON — mouse & touch
+   ════════════════════════════════════════ */
+function wireMicButton() {
+  var btn = document.getElementById('mic-button');
+
+  btn.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    startListening();
+  });
+  btn.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    startListening();
+  }, { passive: false });
+
+  btn.addEventListener('mouseup', function(e) {
+    e.preventDefault();
+    stopListening();
+  });
+  btn.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    stopListening();
+  }, { passive: false });
+
+  btn.addEventListener('mouseleave', function() {
+    if (isListening) stopListening();
+  });
+  btn.addEventListener('touchcancel', function() {
+    if (isListening) stopListening();
+  });
+}
+
+/* ════════════════════════════════════════
+   IDLE SCREEN — tap anywhere to proceed
+   ════════════════════════════════════════ */
+function wireIdleScreen() {
+  var idle = document.getElementById('screen-idle');
+  idle.addEventListener('click', function() {
+    showScreen('screen-speak');
+    resetIdleTimer();
+  });
+  idle.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    showScreen('screen-speak');
+    resetIdleTimer();
+  }, { passive: false });
+}
+
+/* ════════════════════════════════════════
+   STEP STATE HELPERS
+   ════════════════════════════════════════ */
+function setStep(id, state, message) {
+  var row = document.getElementById(id);
+  if (!row) return;
+  var icon = row.querySelector('.step-icon');
+  var msg  = row.querySelector('.step-msg');
+
+  row.className = 'step-row ' + state;
+
+  if (state === 'active') {
+    icon.innerHTML = '<div class="spinner"></div>';
+  } else if (state === 'complete') {
+    icon.innerHTML = '<span style="color:var(--green);font-size:20px">✓</span>';
+  } else if (state === 'error') {
+    icon.innerHTML = '<span style="color:var(--red);font-size:20px">✗</span>';
+  } else {
+    icon.innerHTML = '<span style="color:var(--gray)">○</span>';
+  }
+
+  if (message !== undefined && message !== null && message !== '') {
+    msg.textContent = message;
+  }
+}
+
+function resetGeneratingSteps() {
+  var ids = ['step-meshy-create','step-meshy-poll','step-meshy-download','step-insforge-upload','step-complete'];
+  for (var i = 0; i < ids.length; i++) {
+    setStep(ids[i], 'pending', '');
+  }
+  document.getElementById('gen-progress-fill').style.width = '0%';
+}
+
+function resetSlicingSteps() {
+  var ids = ['slice-step-load','slice-step-slice','slice-step-usb','slice-step-copy','slice-step-done'];
+  for (var i = 0; i < ids.length; i++) {
+    setStep(ids[i], 'pending', '');
+  }
+  document.getElementById('slice-progress-fill').style.width = '0%';
+  document.getElementById('slice-steps-wrap').style.display = 'flex';
+  document.getElementById('usb-ready-msg').style.display   = 'none';
+}
+
+/* ════════════════════════════════════════
+   SSE EVENT MAPPERS
+   ════════════════════════════════════════ */
+function handleGeneratingEvent(data) {
+  var stepMap = {
+    'create':       'step-meshy-create',
+    'poll':         'step-meshy-poll',
+    'download_glb': 'step-meshy-download',
+    'download_stl': 'step-meshy-download',
+    'insforge':     'step-insforge-upload',
+    'complete':     'step-complete'
+  };
+  var stepId = stepMap[data.step];
+  if (stepId) {
+    setStep(stepId, data.status, data.message || '');
+  }
+  if (data.progress !== undefined) {
+    document.getElementById('gen-progress-fill').style.width = data.progress + '%';
+  }
+}
+
+function handleSlicingEvent(data) {
+  var stepMap = {
+    'load_stl':  'slice-step-load',
+    'slice':     'slice-step-slice',
+    'usb_check': 'slice-step-usb',
+    'copy_usb':  'slice-step-copy',
+    'usb_ready': 'slice-step-done'
+  };
+  var stepId = stepMap[data.step];
+  if (stepId) {
+    setStep(stepId, data.status, data.message || '');
+  }
+  if (data.progress !== undefined) {
+    document.getElementById('slice-progress-fill').style.width = data.progress + '%';
+  }
+}
+
+/* ════════════════════════════════════════
+   SSE HELPER
+   ════════════════════════════════════════ */
+function closeEvtSource() {
+  if (activeEvtSource) {
+    activeEvtSource.close();
+    activeEvtSource = null;
+  }
+}
+
+/* ════════════════════════════════════════
+   TTS
+   ════════════════════════════════════════ */
+function speak(text) {
+  try {
+    fetch('/api/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    });
+  } catch(e) {}
+}
+
+/* ════════════════════════════════════════
+   THREE.JS
+   ════════════════════════════════════════ */
+function initThreeJS() {
+  if (threeInitialized) return;
+  threeInitialized = true;
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0e0a);
+
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 0, 5);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  document.getElementById('three-container').appendChild(renderer.domElement);
+
+  // Lighting
+  var ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+  var keyLight = new THREE.DirectionalLight(0x00ff41, 0.8);
+  keyLight.position.set(5, 10, 5);
+  scene.add(keyLight);
+  var fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+  fillLight.position.set(-5, -5, -5);
+  scene.add(fillLight);
+
+  // Touch rotation
+  renderer.domElement.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      isDragging  = true;
+      autoRotate  = false;
+    }
+  }, { passive: true });
+
+  renderer.domElement.addEventListener('touchmove', function(e) {
+    if (!isDragging || !model || e.touches.length !== 1) return;
+    var dx = e.touches[0].clientX - touchStartX;
+    var dy = e.touches[0].clientY - touchStartY;
+    model.rotation.y += dx * 0.01;
+    model.rotation.x += dy * 0.01;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  renderer.domElement.addEventListener('touchend', function() {
+    isDragging = false;
+    setTimeout(function() { autoRotate = true; }, 3000);
+  }, { passive: true });
+
+  // Mouse rotation (Mac testing)
+  renderer.domElement.addEventListener('mousedown', function(e) {
+    touchStartX = e.clientX;
+    touchStartY = e.clientY;
+    mouseDown   = true;
+    autoRotate  = false;
+  });
+  renderer.domElement.addEventListener('mousemove', function(e) {
+    if (!mouseDown || !model) return;
+    var dx = e.clientX - touchStartX;
+    var dy = e.clientY - touchStartY;
+    model.rotation.y += dx * 0.01;
+    model.rotation.x += dy * 0.01;
+    touchStartX = e.clientX;
+    touchStartY = e.clientY;
+  });
+  renderer.domElement.addEventListener('mouseup', function() {
+    mouseDown = false;
+    setTimeout(function() { autoRotate = true; }, 3000);
+  });
+
+  animateThree();
+}
+
+function animateThree() {
+  animationId = requestAnimationFrame(animateThree);
+  if (autoRotate && model) model.rotation.y += 0.005;
+  if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+function loadGLB(url) {
+  var loader = new THREE.GLTFLoader();
+  loader.load(
+    url,
+    function(gltf) {
+      if (model) scene.remove(model);
+      model = gltf.scene;
+
+      // Center and scale to fit
+      var box    = new THREE.Box3().setFromObject(model);
+      var center = box.getCenter(new THREE.Vector3());
+      var size   = box.getSize(new THREE.Vector3());
+      var maxDim = Math.max(size.x, size.y, size.z);
+      var scale  = 3 / maxDim;
+      model.scale.setScalar(scale);
+      model.position.sub(center.multiplyScalar(scale));
+
+      // Green phong material
+      model.traverse(function(child) {
+        if (child.isMesh) {
+          child.material = new THREE.MeshPhongMaterial({
+            color:       0x00ff41,
+            specular:    0x224422,
+            shininess:   30,
+            transparent: true,
+            opacity:     0.92
+          });
+        }
+      });
+
+      scene.add(model);
+    },
+    undefined,
+    function(err) {
+      console.error('[Three.js] GLB load error:', err);
+    }
+  );
+}
+
+/* ════════════════════════════════════════
+   GENERATE FLOW
+   ════════════════════════════════════════ */
+async function handleConfirm() {
+  var prompt = currentTranscript.trim();
+  if (!prompt) return;
+  currentPrompt = prompt;
+
+  document.getElementById('generating-prompt').textContent = '"' + prompt + '"';
+  document.getElementById('view-prompt-label').textContent = '"' + prompt + '"';
+
+  showScreen('screen-generating');
+  speak('Understood. Conjuring your model now.');
+  resetGeneratingSteps();
+
+  closeEvtSource();
+  activeEvtSource = new EventSource('/events');
+
+  activeEvtSource.onmessage = function(e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch(ex) { return; }
+
+    handleGeneratingEvent(data);
+
+    if (data.step === 'complete' && data.status === 'complete') {
+      closeEvtSource();
+      setTimeout(function() {
+        showScreen('screen-view');
+        setTimeout(function() {
+          initThreeJS();
+          loadGLB('/api/model/glb');
+        }, 350);
+        speak('Your model is ready. Rotate to inspect it. Tap print when ready.');
+      }, 500);
+    }
+
+    if (data.status === 'error') {
+      closeEvtSource();
+      showError(data.message);
+    }
+  };
+
+  activeEvtSource.onerror = function() {
+    // EventSource auto-reconnects; let it
+  };
+
+  try {
+    await fetch('/api/generate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ prompt: prompt })
+    });
+  } catch(e) {
+    closeEvtSource();
+    showError('Could not reach the server.');
+  }
+}
+
+/* ════════════════════════════════════════
+   SLICE FLOW
+   ════════════════════════════════════════ */
+async function handlePrint() {
+  showScreen('screen-slicing');
+  speak('Preparing your model for printing.');
+  resetSlicingSteps();
+
+  closeEvtSource();
+  activeEvtSource = new EventSource('/events');
+
+  activeEvtSource.onmessage = function(e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch(ex) { return; }
+
+    handleSlicingEvent(data);
+
+    if (data.step === 'usb_ready' && data.status === 'complete') {
+      closeEvtSource();
+      showUsbReady();
+      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
+    }
+
+    if (data.status === 'error') {
+      closeEvtSource();
+      showError(data.message);
+    }
+  };
+
+  activeEvtSource.onerror = function() {};
+
+  try {
+    await fetch('/api/slice', { method: 'POST' });
+  } catch(e) {
+    closeEvtSource();
+    showError('Could not start slicing.');
+  }
+}
+
+function showUsbReady() {
+  document.getElementById('slice-steps-wrap').style.display = 'none';
+  document.getElementById('usb-ready-msg').style.display   = 'flex';
+}
+
+/* ════════════════════════════════════════
+   ERROR
+   ════════════════════════════════════════ */
+function showError(message) {
+  document.getElementById('error-message').textContent = message || 'An unexpected error occurred.';
+  showScreen('screen-error');
+  speak('Something went wrong. Please try again.');
+}
+
+/* ════════════════════════════════════════
+   REDO / RESET
+   ════════════════════════════════════════ */
+function handleRedo() {
+  closeEvtSource();
+  stopListening();
+  currentTranscript = '';
+  var el = document.getElementById('transcript-text');
+  el.textContent = 'your words will appear here...';
+  el.style.color = 'var(--gray)';
+  updateActionButtons();
   showScreen('screen-speak');
   resetIdleTimer();
 }
 
-function confirmPrompt() {
-  const prompt = currentTranscript.trim();
-  if (!prompt) return;
-  cancelIdleTimer();
-  if (isListening) stopListening();
-
-  pipeline.prompt = prompt;
-  document.getElementById('gen-prompt').textContent = '"' + prompt + '"';
-  resetGeneratingSteps();
-  showScreen('screen-generating');
-
-  // Open SSE before POST so we don't miss early events
-  openGenerationEvents();
-
-  speak('Understood. Conjuring your model now.');
-
-  fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
-  }).catch(err => showError('Could not reach server: ' + err.message));
-}
-
-// ── Generating screen ──────────────────────────────────────────────────────
-const GEN_STEP_LABELS = {
-  create:       'Sending prompt to Meshy AI...',
-  poll:         'Meshy task created — polling for completion...',
-  download_glb: 'Model ready — downloading GLB...',
-  download_stl: 'Preparing STL for slicing...',
-  insforge:     'Uploading STL to InsForge...',
-  complete:     'Complete',
-};
-
-function resetGeneratingSteps() {
-  Object.keys(GEN_STEP_LABELS).forEach(id => {
-    setStepState('step-' + id, 'pending', GEN_STEP_LABELS[id]);
-  });
-  document.getElementById('gen-progress-bar').style.width = '0%';
-  document.getElementById('gen-eta').textContent = '';
-}
-
-function openGenerationEvents() {
-  listenToEvents(
-    (data) => {
-      if (data.step in GEN_STEP_LABELS || data.step === 'error') {
-        setStepState('step-' + data.step, data.status, data.message);
-      }
-      if (data.progress > 0) {
-        document.getElementById('gen-progress-bar').style.width = data.progress + '%';
-        const remaining = Math.max(0, Math.round((100 - data.progress) * 0.8));
-        if (data.progress < 100) {
-          document.getElementById('gen-eta').textContent = '~' + remaining + 's remaining';
-        } else {
-          document.getElementById('gen-eta').textContent = 'Complete!';
-        }
-      }
-      if (data.step === 'complete' && data.status === 'complete') {
-        closeEvents();
-        setTimeout(() => showViewScreen(), 600);
-      }
-      if (data.step === 'error' && data.status === 'error') {
-        closeEvents();
-        showError(data.message);
-      }
-    }
-  );
-}
-
-// ── Step state helper ──────────────────────────────────────────────────────
-function setStepState(elId, status, message) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  const icon = el.querySelector('.step-icon');
-  const msg  = el.querySelector('.step-message');
-
-  el.className = 'progress-step ' + status;
-
-  if (status === 'active') {
-    icon.innerHTML = '<div class="spinner"></div>';
-  } else if (status === 'complete') {
-    icon.innerHTML = '<span style="color:var(--green)">✓</span>';
-  } else if (status === 'error') {
-    icon.innerHTML = '<span style="color:var(--red)">✕</span>';
-  } else {
-    icon.innerHTML = '<span>○</span>';
-  }
-
-  if (msg && message) msg.textContent = message;
-}
-
-// ── Three.js viewer ────────────────────────────────────────────────────────
-let renderer       = null;
-let scene          = null;
-let camera         = null;
-let controls       = null;
-let loadedModel    = null;
-let viewerReady    = false;
-let autoRotateTimer = null;
-
-function initViewer() {
-  if (viewerReady) return;
-
-  const container = document.getElementById('viewer-container');
-  const w = container.clientWidth  || window.innerWidth;
-  const h = container.clientHeight || (window.innerHeight - 120);
-
-  // Scene
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0e0a);
-
-  // Camera
-  camera = new THREE.PerspectiveCamera(45, w / h, 0.001, 1000);
-  camera.position.set(0, 0, 5);
-
-  // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(w, h);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  container.appendChild(renderer.domElement);
-
-  // Lighting
-  const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-  scene.add(ambient);
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-  dirLight.position.set(2, 3, 2);
-  scene.add(dirLight);
-  const fillLight = new THREE.DirectionalLight(0x00ff41, 0.15);
-  fillLight.position.set(-2, -1, -2);
-  scene.add(fillLight);
-
-  // OrbitControls — handles single-finger rotate + pinch zoom on touch
-  controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping    = true;
-  controls.dampingFactor    = 0.06;
-  controls.enableZoom       = true;
-  controls.autoRotate       = true;
-  controls.autoRotateSpeed  = 0.5;
-  controls.minDistance      = 0.5;
-  controls.maxDistance      = 20;
-
-  controls.addEventListener('start', () => {
-    controls.autoRotate = false;
-    if (autoRotateTimer) clearTimeout(autoRotateTimer);
-  });
-  controls.addEventListener('end', () => {
-    if (autoRotateTimer) clearTimeout(autoRotateTimer);
-    autoRotateTimer = setTimeout(() => {
-      controls.autoRotate = true;
-    }, 3000);
-  });
-
-  // Resize
-  window.addEventListener('resize', () => {
-    if (!viewerReady) return;
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    camera.aspect = cw / ch;
-    camera.updateProjectionMatrix();
-    renderer.setSize(cw, ch);
-  });
-
-  // Animation loop
-  (function animate() {
-    requestAnimationFrame(animate);
-    if (controls) controls.update();
-    if (renderer && scene && camera) renderer.render(scene, camera);
-  })();
-
-  viewerReady = true;
-}
-
-function loadModel() {
-  if (!viewerReady) {
-    initViewer();
-  }
-
-  if (loadedModel) {
-    scene.remove(loadedModel);
-    loadedModel = null;
-  }
-
-  const loader = new THREE.GLTFLoader();
-  loader.load(
-    '/api/model/glb',
-    (gltf) => {
-      loadedModel = gltf.scene;
-
-      loadedModel.traverse((child) => {
-        if (child.isMesh) {
-          // Solid gray base mesh
-          child.material = new THREE.MeshPhongMaterial({
-            color:    0x444444,
-            specular: 0x222222,
-            shininess: 20,
-          });
-          // Green wireframe overlay
-          const wGeo = new THREE.WireframeGeometry(child.geometry);
-          const wMat = new THREE.LineBasicMaterial({
-            color:       0x00ff41,
-            opacity:     0.25,
-            transparent: true,
-          });
-          const wireframe = new THREE.LineSegments(wGeo, wMat);
-          child.add(wireframe);
-        }
-      });
-
-      // Center model, then scale to fit 2-unit bounding box
-      const box    = new THREE.Box3().setFromObject(loadedModel);
-      const center = box.getCenter(new THREE.Vector3());
-      loadedModel.position.set(-center.x, -center.y, -center.z);
-
-      const newBox = new THREE.Box3().setFromObject(loadedModel);
-      const size   = newBox.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      if (maxDim > 0) {
-        const scale = 2.5 / maxDim;
-        loadedModel.scale.setScalar(scale);
-      }
-
-      scene.add(loadedModel);
-
-      camera.position.set(0, 0.5, 5);
-      if (controls) {
-        controls.target.set(0, 0, 0);
-        controls.update();
-      }
-    },
-    null,
-    (err) => {
-      console.error('GLTFLoader error:', err);
-      showError('Failed to load 3D model. Check server logs.');
-    }
-  );
-}
-
-function showViewScreen() {
-  showScreen('screen-view');
-  // Initialize after transition so canvas has real dimensions
-  setTimeout(() => {
-    initViewer();
-    loadModel();
-  }, 450);
-}
-
-// ── Slicing screen ─────────────────────────────────────────────────────────
-const SLICE_STEP_LABELS = {
-  load_stl:  'Loading STL into OrcaSlicer CLI...',
-  slice:     'Slicing with Neptune 4 Pro profile...',
-  usb_check: 'Detecting USB drive...',
-  copy_usb:  'Copying gcode to USB...',
-  usb_ready: 'USB ready — safe to remove',
-};
-
-function resetSlicingSteps() {
-  Object.keys(SLICE_STEP_LABELS).forEach(id => {
-    setStepState('slice-step-' + id, 'pending', SLICE_STEP_LABELS[id]);
-  });
-  document.getElementById('slicing-done').style.display = 'none';
-  document.getElementById('slicing-steps-wrap').style.display = 'flex';
-}
-
-async function startSlicing() {
-  // Check USB first
-  let usbOk = false;
-  try {
-    const r = await fetch('/api/usb/status');
-    const d = await r.json();
-    usbOk = d.mounted;
-  } catch (e) {
-    usbOk = false;
-  }
-  if (!usbOk) {
-    showError(
-      'USB drive not detected.\n' +
-      'Insert a USB drive and tap START OVER to try again.'
-    );
-    return;
-  }
-
-  document.getElementById('slice-prompt-display').textContent =
-    pipeline.prompt ? '"' + pipeline.prompt + '"' : '(unknown prompt)';
-
-  try {
-    const stlR = await fetch('/api/state');
-    const st   = await stlR.json();
-    if (st.stl_path) {
-      document.getElementById('slice-stl-size').textContent =
-        'STL: ' + st.stl_path.split('/').pop();
-    }
-  } catch (e) {}
-
-  resetSlicingSteps();
-  showScreen('screen-slicing');
-
-  listenToEvents((data) => {
-    if (data.step in SLICE_STEP_LABELS || data.step === 'error') {
-      setStepState('slice-step-' + data.step, data.status, data.message);
-    }
-    if (data.step === 'usb_ready' && data.status === 'complete') {
-      closeEvents();
-      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
-      document.getElementById('slicing-steps-wrap').style.display = 'none';
-      const done = document.getElementById('slicing-done');
-      done.style.display = 'flex';
-    }
-    if (data.step === 'error' && data.status === 'error') {
-      closeEvents();
-      showError(data.message);
-    }
-  });
-
-  fetch('/api/slice', { method: 'POST' })
-    .catch(err => showError('Could not start slicing: ' + err.message));
-}
-
-// ── Gallery ────────────────────────────────────────────────────────────────
-let _galleryReturnScreen = 'screen-idle';
-
-async function openGallery() {
-  // Remember which screen we came from so BACK goes to right place
-  const currentVisible = document.querySelector('.screen[style*="display: flex"]');
-  _galleryReturnScreen = currentVisible ? currentVisible.id : 'screen-idle';
-
-  cancelIdleTimer();
-  showScreen('screen-gallery');
-
-  const grid = document.getElementById('gallery-grid');
-  grid.innerHTML = '<div class="gallery-empty">Loading...</div>';
-
-  try {
-    const r = await fetch('/api/models');
-    const models = await r.json();
-    renderModelCards(models);
-  } catch (e) {
-    grid.innerHTML = '<div class="gallery-empty">Could not load library.</div>';
-  }
-}
-
-function closeGallery() {
-  showScreen(_galleryReturnScreen);
-  if (_galleryReturnScreen === 'screen-speak') {
-    resetIdleTimer();
-  }
-}
-
-function renderModelCards(models) {
-  const grid = document.getElementById('gallery-grid');
-  if (!models || models.length === 0) {
-    grid.innerHTML =
-      '<div class="gallery-empty">No models yet —<br>speak to conjure your first one.</div>';
-    return;
-  }
-
-  grid.innerHTML = models.map(m => {
-    const date = m.created_at ? m.created_at.slice(0, 16) : '';
-    const canView = m.has_glb && m.has_stl;
-    const btnAttr = canView ? '' : ' disabled';
-    return (
-      '<div class="model-card">' +
-        '<div class="card-prompt">"' + escapeHtml(m.prompt) + '"</div>' +
-        '<div class="card-date">' + escapeHtml(date) + '</div>' +
-        '<button class="card-btn"' + btnAttr + ' onclick="selectModel(' + m.id + ')">' +
-          (canView ? 'VIEW + PRINT' : 'NOT READY') +
-        '</button>' +
-      '</div>'
-    );
-  }).join('');
-}
-
-async function selectModel(id) {
-  try {
-    const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      showError('Could not select model: ' + (d.detail || r.status));
-      return;
-    }
-    const d = await r.json();
-    pipeline.prompt = d.prompt || '';
-    showViewScreen();
-  } catch (e) {
-    showError('Could not select model: ' + e.message);
-  }
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ── SSE ────────────────────────────────────────────────────────────────────
-let eventSource = null;
-
-function listenToEvents(onEvent) {
-  closeEvents();
-  eventSource = new EventSource('/events');
-  eventSource.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (onEvent) onEvent(data);
-    } catch (err) {
-      console.warn('SSE parse error:', err);
-    }
-  };
-  eventSource.onerror = () => {
-    // Reconnect is automatic with EventSource
-  };
-}
-
-function closeEvents() {
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
-}
-
-// ── Error screen ───────────────────────────────────────────────────────────
-function showError(msg) {
-  closeEvents();
-  cancelIdleTimer();
-  document.getElementById('error-message').textContent = msg;
-  showScreen('screen-error');
-}
-
-// ── Reset ──────────────────────────────────────────────────────────────────
-// Lightweight in-page pipeline mirror
-const pipeline = { prompt: null };
-
 async function resetAll() {
-  closeEvents();
-  cancelIdleTimer();
-  pipeline.prompt = null;
-  try {
-    await fetch('/api/reset', { method: 'POST' });
-  } catch (e) {}
+  closeEvtSource();
+  stopListening();
+  currentTranscript = '';
+  currentPrompt     = '';
+  var el = document.getElementById('transcript-text');
+  el.textContent = 'your words will appear here...';
+  el.style.color = 'var(--gray)';
+  updateActionButtons();
+  try { await fetch('/api/reset', { method: 'POST' }); } catch(e) {}
   showScreen('screen-idle');
 }
 
-function redoFromView() {
-  closeEvents();
-  goToSpeak();
-}
+/* ════════════════════════════════════════
+   WINDOW RESIZE
+   ════════════════════════════════════════ */
+window.addEventListener('resize', function() {
+  if (renderer) {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  }
+});
 
-// ── Idle + Library button wiring ───────────────────────────────────────────
-function wireIdleScreen() {
-  const idle = document.getElementById('screen-idle');
-  idle.addEventListener('click', goToSpeak);
-  idle.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    goToSpeak();
-  });
-
-  // LIBRARY buttons — stop propagation so idle-click doesn't also fire
-  const idleLib = document.getElementById('idle-library-btn');
-  idleLib.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openGallery();
-  });
-  idleLib.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openGallery();
-  });
-
-  const speakLib = document.getElementById('speak-library-btn');
-  speakLib.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (isListening) stopListening();
-    openGallery();
-  });
-  speakLib.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (isListening) stopListening();
-    openGallery();
-  });
-}
-
-// ── Boot ───────────────────────────────────────────────────────────────────
-window.addEventListener('load', () => {
+/* ════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════ */
+window.addEventListener('load', function() {
   wireIdleScreen();
   wireMicButton();
-  initSpeechRecognition();
+  initRecognition();
 
-  // On page load, check if server already has a model ready (browser refresh case)
-  fetch('/api/state').then(r => r.json()).then(state => {
-    if (state.prompt) pipeline.prompt = state.prompt;
-
-    if (state.status === 'model_ready') {
-      showViewScreen();
-    } else if (state.status === 'usb_ready') {
-      document.getElementById('slicing-steps-wrap').style.display = 'none';
-      document.getElementById('slicing-done').style.display = 'flex';
-      showScreen('screen-slicing');
-    } else {
-      showScreen('screen-idle', true);
-    }
-  }).catch(() => {
-    showScreen('screen-idle', true);
-  });
+  // Resume correct screen if server already has state (browser refresh)
+  fetch('/api/state')
+    .then(function(r) { return r.json(); })
+    .then(function(state) {
+      if (state.prompt) {
+        currentPrompt = state.prompt;
+        document.getElementById('view-prompt-label').textContent = '"' + state.prompt + '"';
+      }
+      if (state.status === 'model_ready') {
+        showScreen('screen-view');
+        setTimeout(function() {
+          initThreeJS();
+          loadGLB('/api/model/glb');
+        }, 350);
+      } else if (state.status === 'usb_ready') {
+        showScreen('screen-slicing');
+        setTimeout(showUsbReady, 350);
+      } else {
+        showScreen('screen-idle');
+      }
+      // Start idle timer — no speak on first load
+      resetIdleTimer();
+    })
+    .catch(function() {
+      showScreen('screen-idle');
+      resetIdleTimer();
+    });
 });
 </script>
 </body>
