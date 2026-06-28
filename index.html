@@ -1156,6 +1156,12 @@ function loadGLB(url) {
 
       model.traverse((node) => {
         if (node.isMesh) {
+          // Meshy GLBs ship with POSITION only — no NORMAL attribute.
+          // Without normals, lit materials render pure black (N·L has no N).
+          // Generate smooth normals from the geometry so lighting works.
+          if (node.geometry && !node.geometry.attributes.normal) {
+            node.geometry.computeVertexNormals();
+          }
           node.material = greenMaterial;
           node.material.needsUpdate = true;
           node.castShadow = true;
