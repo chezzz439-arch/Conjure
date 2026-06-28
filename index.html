@@ -1011,43 +1011,54 @@ function speak(text) {
    THREE.JS
    ════════════════════════════════════════ */
 function initThreeJS() {
-  if (threeInitialized) return;
-  threeInitialized = true;
+  if (animationId) cancelAnimationFrame(animationId);
+  if (renderer) {
+    renderer.dispose();
+    var container = document.getElementById('three-container');
+    while (container.firstChild) container.removeChild(container.firstChild);
+  }
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0a0e0a);
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(
+    50,
+    window.innerWidth / window.innerHeight,
+    0.01,
+    1000
+  );
   camera.position.set(0, 0, 4);
   camera.lookAt(0, 0, 0);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputEncoding = THREE.sRGBEncoding;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0a0e0a, 1);
+
   document.getElementById('three-container').appendChild(renderer.domElement);
 
-  // Lighting
-  scene.background = new THREE.Color(0x0a0e0a);
+  var ambient = new THREE.AmbientLight(0xffffff, 2.0);
+  scene.add(ambient);
 
-  var ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-  scene.add(ambientLight);
+  var front = new THREE.DirectionalLight(0xffffff, 3.0);
+  front.position.set(0, 0, 10);
+  scene.add(front);
 
-  var dirLight1 = new THREE.DirectionalLight(0x00ff41, 2.0);
-  dirLight1.position.set(5, 10, 5);
-  scene.add(dirLight1);
+  var top = new THREE.DirectionalLight(0x00ff41, 2.0);
+  top.position.set(0, 10, 0);
+  scene.add(top);
 
-  var dirLight2 = new THREE.DirectionalLight(0xffffff, 1.0);
-  dirLight2.position.set(-5, -5, -5);
-  scene.add(dirLight2);
+  var left = new THREE.DirectionalLight(0xffffff, 1.5);
+  left.position.set(-10, 0, 0);
+  scene.add(left);
 
-  var pointLight = new THREE.PointLight(0x00ff41, 1.5, 100);
-  pointLight.position.set(0, 5, 0);
-  scene.add(pointLight);
+  var right = new THREE.DirectionalLight(0xffffff, 1.5);
+  right.position.set(10, 0, 0);
+  scene.add(right);
+
+  var back = new THREE.DirectionalLight(0xffffff, 1.0);
+  back.position.set(0, 0, -10);
+  scene.add(back);
 
   // Touch rotation
   renderer.domElement.addEventListener('touchstart', function(e) {
@@ -1105,19 +1116,27 @@ function animateThree() {
 }
 
 function loadGLB(url) {
-  var loader = new THREE.GLTFLoader();
+  if (!window.THREE || !window.THREE.GLTFLoader) {
+    console.error('Three.js or GLTFLoader not loaded');
+    return;
+  }
+
+  const loader = new THREE.GLTFLoader();
   loader.load(
     url,
-    function(gltf) {
-      if (model) scene.remove(model);
+    (gltf) => {
+      if (model) {
+        scene.remove(model);
+        model = null;
+      }
+
       model = gltf.scene;
 
-      // Center and scale to fit
-      var box    = new THREE.Box3().setFromObject(model);
-      var center = box.getCenter(new THREE.Vector3());
-      var size   = box.getSize(new THREE.Vector3());
-      var maxDim = Math.max(size.x, size.y, size.z);
-      var scale  = 2.5 / maxDim;
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 2.5 / maxDim;
 
       model.scale.setScalar(scale);
       model.position.set(
@@ -1126,29 +1145,32 @@ function loadGLB(url) {
         -center.z * scale
       );
 
-      camera.position.set(0, 0, 4);
-      camera.lookAt(0, 0, 0);
+      const greenMaterial = new THREE.MeshPhongMaterial({
+        color: 0x00cc33,
+        specular: 0x00ff41,
+        shininess: 80,
+        emissive: 0x002200,
+        emissiveIntensity: 0.4,
+        side: THREE.DoubleSide,
+      });
 
-      // Green standard material
-      model.traverse(function(child) {
-        if (child.isMesh) {
-          child.material = new THREE.MeshStandardMaterial({
-            color:             0x00ff41,
-            metalness:         0.2,
-            roughness:         0.6,
-            emissive:          0x003310,
-            emissiveIntensity: 0.3
-          });
-          child.castShadow    = true;
-          child.receiveShadow = true;
+      model.traverse((node) => {
+        if (node.isMesh) {
+          node.material = greenMaterial;
+          node.material.needsUpdate = true;
+          node.castShadow = true;
+          node.receiveShadow = true;
         }
       });
 
       scene.add(model);
+      console.log('Model loaded and materials replaced');
     },
-    undefined,
-    function(err) {
-      console.error('[Three.js] GLB load error:', err);
+    (progress) => {
+      console.log('Loading:', (progress.loaded / progress.total * 100).toFixed(0) + '%');
+    },
+    (error) => {
+      console.error('GLB load error:', error);
     }
   );
 }
