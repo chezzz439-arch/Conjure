@@ -381,7 +381,7 @@ async def run_slicing() -> None:
         orca_path      = ORCASLICER_PATH
         orca_profile   = Path(ORCASLICER_PROFILE)
         cura_path      = CURAENGINE_PATH
-        cura_profile   = PROFILES_DIR / f"{PRINTER_PROFILE}.json"
+        cura_profile   = PROFILES_DIR / f"{PRINTER_PROFILE}_cura.def.json"
         cura_resources = CURA_RESOURCES_PATH
 
         # ── Step 1: Validate STL ───────────────────────────────────────────
@@ -439,9 +439,13 @@ async def run_slicing() -> None:
         if not sliced:
             if gcode_path.exists():
                 gcode_path.unlink()
+            # CuraEngine needs a real machine definition via -j (inherits
+            # fdmprinter) plus an explicit extruder train (-e0). fdmprinter/
+            # fdmextruder are resolved from CURA_ENGINE_SEARCH_PATH (set below).
             cura_cmd = [
                 cura_path, "slice",
                 "-j", str(cura_profile),
+                "-e0",
                 "-l", str(stl_path),
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
