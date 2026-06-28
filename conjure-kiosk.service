@@ -1,0 +1,20 @@
+[Unit]
+Description=Conjure Kiosk — voice-to-3D touchscreen app
+After=network.target graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+User=orangepi
+Group=orangepi
+WorkingDirectory=/home/orangepi/conjure-kiosk
+ExecStart=/home/orangepi/conjure-kiosk/start.sh
+Restart=always
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/orangepi/.Xauthority
+StandardOutput=append:/home/orangepi/conjure-kiosk/logs/kiosk.log
+StandardError=append:/home/orangepi/conjure-kiosk/logs/kiosk.log
+
+[Install]
+WantedBy=graphical-session.target

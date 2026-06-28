@@ -1,0 +1,7 @@
+.env
+.venv/
+output/
+logs/
+conjure.db
+__pycache__/
+*.pyc
