@@ -438,25 +438,12 @@
   padding: 0;
   overflow: hidden;
 ">
-  <div style="
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: 1px solid #1a3a1a;
-    flex-shrink: 0;
-  ">
-    <div style="font-size: 18px; letter-spacing: 4px; color: #00ff41">LIBRARY</div>
-    <button onclick="closeLibrary()" style="
-      background: transparent;
-      border: 1px solid #555;
-      color: #555;
-      font-family: monospace;
-      font-size: 14px;
-      letter-spacing: 2px;
-      padding: 8px 16px;
-      cursor: pointer;
-    ">← BACK</button>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #1a3a1a;flex-shrink:0;background:#0a0e0a;">
+    <div style="font-size:18px;letter-spacing:4px;color:#00ff41">LIBRARY</div>
+    <div style="display:flex;gap:12px">
+      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;">← BACK</button>
+      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;">⌂ HOME</button>
+    </div>
   </div>
 
   <div id="library-grid" style="
@@ -799,93 +786,59 @@ let libraryReturnScreen = 's-idle';
 
 function openLibrary() {
   libraryReturnScreen = currentScreen ? currentScreen.id : 's-idle';
-  document.getElementById('lib-btn').style.display = 'none';
-  loadLibrary();
+  if (libraryReturnScreen === 's-library') libraryReturnScreen = 's-idle';
+  const libBtn = document.getElementById('lib-btn');
+  if (libBtn) libBtn.style.display = 'none';
   showScreen('s-library');
-  resetIdle();
+  loadLibrary();
 }
 
 function closeLibrary() {
-  document.getElementById('lib-btn').style.display = 'flex';
-  showScreen(libraryReturnScreen);
-  resetIdle();
+  const libBtn = document.getElementById('lib-btn');
+  if (libBtn) libBtn.style.display = 'flex';
+  const returnTo = libraryReturnScreen || 's-idle';
+  libraryReturnScreen = null;
+  showScreen(returnTo);
 }
 
 async function loadLibrary() {
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
-  grid.innerHTML = '<div style="color:#555;font-size:14px;padding:20px">Loading...</div>';
-
+  if (!grid) return;
+  grid.innerHTML = '<div style="color:#555;font-size:14px;letter-spacing:2px;padding:20px">LOADING...</div>';
+  if (empty) empty.style.display = 'none';
   try {
     const r = await fetch('/api/models');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
-    // /api/models returns a bare JSON array; tolerate {models:[...]} too.
-    const models = Array.isArray(data) ? data : (data.models || []);
-
+    const models = Array.isArray(data) ? data : (data.models || data.items || []);
     grid.innerHTML = '';
-
     if (models.length === 0) {
       grid.style.display = 'none';
-      empty.style.display = 'flex';
+      if (empty) empty.style.display = 'flex';
       return;
     }
-
     grid.style.display = 'grid';
-    empty.style.display = 'none';
-
-    models.forEach((m) => {
+    models.forEach((m, i) => {
       const card = document.createElement('div');
-      card.style.cssText = `
-        background: #0f140f;
-        border: 1px solid #1a3a1a;
-        padding: 16px;
-        cursor: pointer;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      `;
-
+      card.style.cssText = 'background:#0f140f;border:1px solid #1a3a1a;padding:16px;display:flex;flex-direction:column;gap:10px;';
+      const prompt = m.prompt || m.name || 'Untitled model ' + (i + 1);
+      const date = m.created_at || m.date || '';
+      const id = m.id || i;
       card.innerHTML = `
-        <div style="
-          height: 120px;
-          background: #0a0e0a;
-          border: 1px solid #1a3a1a;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 32px;
-          color: #1a3a1a;
-        ">◻</div>
-        <div style="font-size:14px;color:#00ff41;line-height:1.4;word-break:break-word">${escapeHtml(m.prompt || 'Untitled')}</div>
-        <div style="font-size:11px;color:#555;letter-spacing:1px">${escapeHtml(m.created_at || '')}</div>
+        <div style="height:100px;background:#0a0e0a;border:1px solid #1a3a1a;display:flex;align-items:center;justify-content:center;font-size:28px;color:#1a3a1a;">◻</div>
+        <div style="font-size:13px;color:#00ff41;line-height:1.5;word-break:break-word">${escapeHtml(String(prompt))}</div>
+        <div style="font-size:11px;color:#555;letter-spacing:1px">${escapeHtml(String(date).slice(0,16))}</div>
         <div style="display:flex;gap:8px;margin-top:4px">
-          <button onclick="selectModel(${m.id})" style="
-            flex:1;height:40px;
-            background:transparent;
-            border:1px solid #00ff41;
-            color:#00ff41;
-            font-family:monospace;
-            font-size:12px;
-            letter-spacing:2px;
-            cursor:pointer;
-          ">VIEW</button>
-          <button onclick="printModel(${m.id})" style="
-            flex:1;height:40px;
-            background:transparent;
-            border:1px solid #555;
-            color:#555;
-            font-family:monospace;
-            font-size:12px;
-            letter-spacing:2px;
-            cursor:pointer;
-          ">PRINT</button>
+          <button style="flex:1;height:40px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;" onclick="selectModelFromLibrary(${JSON.stringify(id)})">VIEW</button>
+          <button style="flex:1;height:40px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;" onclick="printModelFromLibrary(${JSON.stringify(id)})">PRINT</button>
         </div>
       `;
-
       grid.appendChild(card);
     });
-  } catch (e) {
-    grid.innerHTML = '<div style="color:#ff4444;font-size:14px;padding:20px">Failed to load library</div>';
+  } catch(e) {
+    console.error('Library load error:', e);
+    grid.innerHTML = '<div style="color:#ff4444;font-size:14px;padding:20px">Failed to load — ' + e.message + '</div>';
   }
 }
 
@@ -919,6 +872,42 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function goHome() {
+  libraryReturnScreen = null;
+  const libBtn = document.getElementById('lib-btn');
+  if (libBtn) libBtn.style.display = 'flex';
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  stopListening();
+  showScreen('s-idle');
+}
+
+async function selectModelFromLibrary(id) {
+  try {
+    const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    closeLibrary();
+    setTimeout(() => {
+      initViewer();
+      loadModel('/api/model/glb');
+      showScreen('s-view');
+      speak('Model loaded. Rotate to inspect it. Tap print when ready.');
+    }, 100);
+  } catch(e) {
+    showError('Could not load model: ' + e.message);
+  }
+}
+
+async function printModelFromLibrary(id) {
+  try {
+    const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    closeLibrary();
+    setTimeout(() => { handlePrint(); }, 100);
+  } catch(e) {
+    showError('Could not load model for printing: ' + e.message);
+  }
 }
 
 /* ════════ THREE.JS VIEWER ════════ */
@@ -1135,6 +1124,7 @@ function setMaterial(mode) {
     model3d.traverse(c => { if (c.name === 'wire-overlay') toRemoveGlobal.push(c); });
     toRemoveGlobal.forEach(c => c.parent && c.parent.remove(c));
   }
+  if (mode !== 'grid' && scene) scene.fog = null;
 
   // Collect the real meshes up front (excluding overlay clones) so we never
   // mutate the scene graph while traversing it — adding clones mid-traverse
@@ -1157,11 +1147,14 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
     } else if (mode === 'grid') {
-      // Dark semi-transparent body
+      const toRemove = [];
+      model3d.traverse(c => { if (c.name === 'wire-overlay') toRemove.push(c); });
+      toRemove.forEach(c => c.parent && c.parent.remove(c));
+
       node.material = new THREE.MeshPhongMaterial({
         color: 0x001408,
         transparent: true,
-        opacity: 0.25,
+        opacity: 0.2,
         side: THREE.DoubleSide,
         depthWrite: false,
         emissive: 0x001408,
@@ -1169,14 +1162,12 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
 
-      // Primary edge lines — bright green
       const edges = new THREE.EdgesGeometry(node.geometry, 10);
 
       const edgeMat1 = new THREE.LineBasicMaterial({
         color: 0x00ff41,
         transparent: true,
         opacity: 1.0,
-        linewidth: 1,
       });
       const edgeMesh1 = new THREE.LineSegments(edges, edgeMat1);
       edgeMesh1.name = 'wire-overlay';
@@ -1185,20 +1176,20 @@ function setMaterial(mode) {
       edgeMesh1.scale.copy(node.scale);
       node.parent && node.parent.add(edgeMesh1);
 
-      // Glow layer — slightly scaled up, dimmer green
       const edgeMat2 = new THREE.LineBasicMaterial({
         color: 0x00ff41,
         transparent: true,
-        opacity: 0.25,
-        linewidth: 1,
+        opacity: 0.2,
       });
       const edgeMesh2 = new THREE.LineSegments(edges, edgeMat2);
       edgeMesh2.name = 'wire-overlay';
       edgeMesh2.position.copy(node.position);
       edgeMesh2.rotation.copy(node.rotation);
       edgeMesh2.scale.copy(node.scale);
-      edgeMesh2.scale.multiplyScalar(1.003);
+      edgeMesh2.scale.multiplyScalar(1.004);
       node.parent && node.parent.add(edgeMesh2);
+
+      if (scene) scene.fog = new THREE.FogExp2(0x0a0e0a, 0.06);
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
@@ -1210,12 +1201,6 @@ function setMaterial(mode) {
     }
   });
 
-  // Atmospheric fog only in grid mode
-  if (mode === 'grid') {
-    if (scene) scene.fog = new THREE.FogExp2(0x0a0e0a, 0.08);
-  } else {
-    if (scene) scene.fog = null;
-  }
 }
 
 window.addEventListener('resize', () => {

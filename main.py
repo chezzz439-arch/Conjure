@@ -99,19 +99,10 @@ def db_list_models() -> list:
         conn = sqlite3.connect(str(DB_PATH))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, prompt, created_at, glb_path, stl_path FROM models ORDER BY id DESC"
+            "SELECT id, prompt, created_at, meshy_task_id, glb_path, stl_path FROM models ORDER BY created_at DESC"
         ).fetchall()
         conn.close()
-        return [
-            {
-                "id": r["id"],
-                "prompt": r["prompt"],
-                "created_at": r["created_at"],
-                "has_glb": bool(r["glb_path"] and Path(r["glb_path"]).exists()),
-                "has_stl": bool(r["stl_path"] and Path(r["stl_path"]).exists()),
-            }
-            for r in rows
-        ]
+        return [dict(r) for r in rows]
 
 
 def db_get_model(row_id: int):
@@ -692,7 +683,8 @@ async def api_speak(req: SpeakRequest) -> JSONResponse:
 
 @app.get("/api/models")
 def api_list_models() -> JSONResponse:
-    return JSONResponse(db_list_models())
+    models = db_list_models()
+    return JSONResponse({"models": models})
 
 
 @app.get("/api/models/{model_id}/glb")
