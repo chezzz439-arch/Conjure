@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import sqlite3
 import asyncio
@@ -45,6 +46,62 @@ MESHY_HEADERS = {
     "Authorization": f"Bearer {MESHY_API_KEY}",
     "Content-Type": "application/json",
 }
+
+# ---------------------------------------------------------------------------
+# Prompt cleaner — strips voice filler, extracts the object, builds Meshy prompt
+# ---------------------------------------------------------------------------
+_FILLER = re.compile(
+    r"^\s*(?:"
+    r"can you (?:please )?(?:make|create|generate|build|design|print|give me|show me)\s+(?:me\s+)?"
+    r"|please (?:make|create|generate|build|design|print)\s+(?:me\s+)?"
+    r"|(?:make|create|generate|build|design|print)\s+(?:me\s+)?"
+    r"|i (?:want|need|would like)\s+(?:a\s+|an\s+|to have\s+a\s+|to have\s+an\s+)?"
+    r"|give me\s+(?:a\s+|an\s+)?"
+    r"|show me\s+(?:a\s+|an\s+)?"
+    r")",
+    re.IGNORECASE,
+)
+
+_STAND_RE = re.compile(
+    r"\b(stand|holder|mount|rack|dock|cradle|tray|organizer|hanger|hook)\b",
+    re.IGNORECASE,
+)
+_STAND_ITEM_RE = re.compile(
+    r"^([\w\s]+?)\s+(?:stand|holder|mount|rack|dock|cradle|tray|organizer|hanger|hook)\b",
+    re.IGNORECASE,
+)
+
+def build_meshy_prompt(raw: str) -> str:
+    cleaned = _FILLER.sub("", raw).strip().rstrip(".,!?")
+    cleaned = re.sub(r"^(?:a|an|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    if not cleaned:
+        cleaned = raw.strip()
+
+    extras = []
+
+    # For stands/holders: explicitly say it's empty and name what shouldn't be on it
+    if _STAND_RE.search(cleaned):
+        item_match = _STAND_ITEM_RE.match(cleaned)
+        if item_match:
+            item = item_match.group(1).strip()
+            extras.append(f"empty stand with nothing resting on it, no {item} placed on it")
+        else:
+            extras.append("empty stand with nothing placed on it")
+
+    # Pull out decorative/feature phrases ("with a star", "with a logo", etc.)
+    feature_match = re.search(r"\bwith\b.+", cleaned, re.IGNORECASE)
+    if feature_match:
+        feature = feature_match.group(0)
+        extras.append(f"clearly shows {feature}, this feature is prominent and visible")
+
+    extra_str = (", ".join(extras) + ", ") if extras else ""
+
+    return (
+        f"3D printable {cleaned}, "
+        f"{extra_str}"
+        "single solid object, clean manifold mesh, "
+        "no other objects, isolated on empty background, suitable for FDM printing"
+    )
 
 # ---------------------------------------------------------------------------
 # SQLite gallery
@@ -256,9 +313,9 @@ async def run_generation(prompt: str) -> None:
             headers=MESHY_HEADERS,
             json={
                 "mode": "preview",
-                "prompt": prompt,
+                "prompt": build_meshy_prompt(prompt),
                 "art_style": "realistic",
-                "negative_prompt": "low quality, low resolution, ugly, deformed",
+                "negative_prompt": "low quality, low resolution, ugly, deformed, scene, environment, multiple objects, people, hands, text, labels",
             },
             timeout=20,
         )
