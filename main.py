@@ -218,6 +218,39 @@ def _find_usb():
 
 
 # ---------------------------------------------------------------------------
+# InsForge storage upload — real bucket/object REST pattern
+# ---------------------------------------------------------------------------
+INSFORGE_BUCKET = os.getenv("INSFORGE_STORAGE_BUCKET_CONJURE", "conjure-models")
+
+
+def upload_to_insforge_storage(file_path: Path, bucket: str = INSFORGE_BUCKET):
+    # Multipart POST to the bucket's /objects collection; the server assigns a
+    # unique key (returned in JSON). Public read URL is /objects/{key}.
+    if not INSFORGE_API_KEY:
+        print("[InsForge] storage: no key — skipping")
+        return None
+    try:
+        with open(file_path, "rb") as f:
+            r = requests.post(
+                f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket}/objects",
+                headers={"Authorization": f"Bearer {INSFORGE_API_KEY}"},
+                files={"file": (file_path.name, f, "application/octet-stream")},
+                timeout=30,
+            )
+        print(f"[InsForge] storage: HTTP {r.status_code}")
+        if r.status_code in (200, 201):
+            key = (r.json() or {}).get("key", file_path.name)
+            url = f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket}/objects/{key}"
+            print(f"[InsForge] storage: uploaded — {url}")
+            return url
+        print(f"[InsForge] storage upload failed ({r.status_code}): {r.text[:100]}")
+        return None
+    except Exception as e:
+        print(f"[InsForge] storage error ({e})")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Generation background task
 # ---------------------------------------------------------------------------
 async def run_generation(prompt: str) -> None:
@@ -338,23 +371,14 @@ async def run_generation(prompt: str) -> None:
         # Persist final paths to DB
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
 
-        # ── Step 5: Upload STL to InsForge ────────────────────────────────
+        # ── Step 5: Upload STL to InsForge storage ────────────────────────
         await push_event("insforge", "active", "Uploading STL to InsForge...", 78)
         try:
-            def _upload_insforge() -> requests.Response:
-                with open(stl_active_path, "rb") as fh:
-                    return requests.post(
-                        f"{INSFORGE_BASE_URL}/v1/files/upload",
-                        headers={"Authorization": f"Bearer {INSFORGE_API_KEY}"},
-                        files={"file": ("model.stl", fh, "application/octet-stream")},
-                        timeout=60,
-                    )
-
-            ins_r = await asyncio.to_thread(_upload_insforge)
-            await push_event(
-                "insforge", "complete",
-                f"InsForge upload HTTP {ins_r.status_code}", 88,
-            )
+            stl_url = await asyncio.to_thread(upload_to_insforge_storage, stl_active_path)
+            if stl_url:
+                await push_event("insforge", "complete", "STL uploaded to InsForge", 88)
+            else:
+                await push_event("insforge", "error", "InsForge upload skipped/failed (non-fatal)", 88)
         except Exception as e:
             await push_event("insforge", "error", f"InsForge upload failed (non-fatal): {e}", 88)
 
