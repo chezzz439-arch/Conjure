@@ -509,10 +509,20 @@ function speak(text) {
 }
 
 /* ════════ NAVIGATION ════════ */
+let micPermissionGranted = false;
+
 function goToSpeak() {
   handleRedo();
   showScreen('s-speak');
   resetIdle();
+  if (!micPermissionGranted && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        micPermissionGranted = true;
+        stream.getTracks().forEach(t => t.stop());
+      })
+      .catch(() => {});
+  }
 }
 
 function goToIdle() {
