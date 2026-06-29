@@ -70,6 +70,22 @@ _STAND_ITEM_RE = re.compile(
     r"^([\w\s]+?)\s+(?:stand|holder|mount|rack|dock|cradle|tray|organizer|hanger|hook)\b",
     re.IGNORECASE,
 )
+_WITH_RE = re.compile(r"\s+with\b.+$", re.IGNORECASE)
+
+# Structural descriptions for common objects so Meshy understands the form first
+_OBJECT_SHAPES = {
+    "phone holder":    "vertical stand with a slot or groove to hold a phone upright",
+    "phone stand":     "vertical stand with a slot or groove to hold a phone upright",
+    "headphone stand": "tall stand with an arch or hook at the top to hang headphones",
+    "headphone holder":"tall stand with an arch or hook at the top to hang headphones",
+    "pen holder":      "cylindrical cup open at the top to hold pens and pencils",
+    "pen cup":         "cylindrical cup open at the top to hold pens and pencils",
+    "vase":            "hollow vessel open at the top to hold flowers",
+    "mug":             "cylindrical cup with a handle on the side",
+    "bowl":            "round open-top container",
+    "ring holder":     "cone or finger-shaped stand to hold rings",
+    "cable organizer": "flat tray with slots or hooks for organizing cables",
+}
 
 def build_meshy_prompt(raw: str) -> str:
     cleaned = _FILLER.sub("", raw).strip().rstrip(".,!?")
@@ -77,31 +93,45 @@ def build_meshy_prompt(raw: str) -> str:
     if not cleaned:
         cleaned = raw.strip()
 
-    extras = []
+    # Split off "with X" decoration from the base object name
+    with_match = _WITH_RE.search(cleaned)
+    decoration = with_match.group(0).strip() if with_match else ""
+    base_object = _WITH_RE.sub("", cleaned).strip() if with_match else cleaned
 
-    # For stands/holders: explicitly say it's empty and name what shouldn't be on it
-    if _STAND_RE.search(cleaned):
-        item_match = _STAND_ITEM_RE.match(cleaned)
+    # Look up a structural description — match longest key first to avoid partial hits
+    shape_hint = ""
+    base_lower = base_object.lower()
+    for key in sorted(_OBJECT_SHAPES, key=len, reverse=True):
+        if key in base_lower:
+            shape_hint = _OBJECT_SHAPES[key]
+            break
+
+    parts = []
+
+    # Lead with the structural form
+    if shape_hint:
+        parts.append(f"3D printable {base_object}: {shape_hint}")
+    else:
+        parts.append(f"3D printable {base_object}")
+
+    # Decoration goes second, explicitly as surface embellishment not the shape
+    if decoration:
+        # e.g. "with a star on it" → "with a star embossed on the surface as decoration"
+        deco_clean = re.sub(r"\s+on\s+(it|the\s+\w+)$", "", decoration, flags=re.IGNORECASE).strip()
+        parts.append(f"{deco_clean} embossed on the surface as decoration, not as the overall shape")
+
+    # For stands/holders: explicitly empty
+    if _STAND_RE.search(base_object):
+        item_match = _STAND_ITEM_RE.match(base_object)
         if item_match:
             item = item_match.group(1).strip()
-            extras.append(f"empty stand with nothing resting on it, no {item} placed on it")
+            parts.append(f"empty stand with nothing resting on it, no {item} placed on it")
         else:
-            extras.append("empty stand with nothing placed on it")
+            parts.append("empty stand with nothing placed on it")
 
-    # Pull out decorative/feature phrases ("with a star", "with a logo", etc.)
-    feature_match = re.search(r"\bwith\b.+", cleaned, re.IGNORECASE)
-    if feature_match:
-        feature = feature_match.group(0)
-        extras.append(f"clearly shows {feature}, this feature is prominent and visible")
+    parts.append("single solid object, clean manifold mesh, no other objects, isolated on empty background, suitable for FDM printing")
 
-    extra_str = (", ".join(extras) + ", ") if extras else ""
-
-    return (
-        f"3D printable {cleaned}, "
-        f"{extra_str}"
-        "single solid object, clean manifold mesh, "
-        "no other objects, isolated on empty background, suitable for FDM printing"
-    )
+    return ", ".join(parts)
 
 # ---------------------------------------------------------------------------
 # SQLite gallery
