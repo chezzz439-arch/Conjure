@@ -827,6 +827,7 @@ function resetAll() {
   handleRedo();
   currentPrompt = '';
   fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  disposeViewer();
   showScreen('s-idle');
   resetIdle();
 }
@@ -892,30 +893,6 @@ async function loadLibrary() {
   }
 }
 
-async function selectModel(id) {
-  try {
-    await fetch('/api/models/' + id + '/select', { method: 'POST' });
-    closeLibrary();
-    showScreen('s-view');
-    initViewer();
-    loadModel('/api/model/glb');
-    resetIdle();
-    speak('Model loaded. Rotate to inspect it. Tap print when ready.');
-  } catch (e) {
-    showError('Could not load model');
-  }
-}
-
-async function printModel(id) {
-  try {
-    await fetch('/api/models/' + id + '/select', { method: 'POST' });
-    document.getElementById('lib-btn').style.display = 'flex';
-    handlePrint();
-  } catch (e) {
-    showError('Could not load model for printing');
-  }
-}
-
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -928,9 +905,14 @@ function goHome() {
   libraryReturnScreen = null;
   const libBtn = document.getElementById('lib-btn');
   if (libBtn) libBtn.style.display = 'flex';
-  if (evtSource) { evtSource.close(); evtSource = null; }
+  closeEvents();
   stopListening();
+  handleRedo();
+  currentPrompt = '';
+  fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  disposeViewer();
   showScreen('s-idle');
+  resetIdle();
 }
 
 async function selectModelFromLibrary(id) {
@@ -966,6 +948,23 @@ let autoRot = true;
 let dragStartX = 0, dragStartY = 0, isDragging = false;
 let autoRotTimer = null;
 
+function disposeViewer() {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  clearTimeout(autoRotTimer);
+  if (model3d && scene) { scene.remove(model3d); model3d = null; }
+  if (renderer) {
+    renderer.dispose();
+    renderer.forceContextLoss();
+    renderer = null;
+  }
+  scene = null;
+  camera = null;
+  autoRot = true;
+  isDragging = false;
+  const container = document.getElementById('three-container');
+  if (container) container.innerHTML = '';
+}
+
 let zoomLevel = 5;
 const ZOOM_MIN = 1.5;
 const ZOOM_MAX = 12;
@@ -977,10 +976,8 @@ function applyZoom() {
 }
 
 function initViewer() {
+  disposeViewer();
   const container = document.getElementById('three-container');
-  container.innerHTML = '';
-
-  if (rafId) cancelAnimationFrame(rafId);
 
   zoomLevel = 5;
 

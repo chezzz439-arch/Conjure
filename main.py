@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import logging
 import sqlite3
 import asyncio
 import shutil
@@ -21,6 +22,13 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("conjure")
 
 MESHY_API_KEY        = os.getenv("MESHY_API_KEY", "")
 INSFORGE_API_KEY     = os.getenv("INSFORGE_API_KEY", "")
@@ -672,13 +680,9 @@ app = FastAPI(title="Conjure Kiosk", version="2.0.0")
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    init_db()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
-    result = os.system("which mpg123 > /dev/null 2>&1")
-    if result != 0:
-        print("[TTS] mpg123 not found — attempting install")
-        os.system("sudo apt install -y mpg123")
+    log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -773,6 +777,31 @@ def api_copy_stl() -> JSONResponse:
 @app.get("/api/state")
 def api_state() -> JSONResponse:
     return JSONResponse({k: v for k, v in pipeline_state.items()})
+
+
+@app.get("/api/health")
+def api_health() -> JSONResponse:
+    try:
+        models = db_list_models()
+        db_ok = True
+        model_count = len(models)
+    except Exception:
+        db_ok = False
+        model_count = 0
+    disk = shutil.disk_usage(str(OUTPUT_DIR))
+    disk_free_gb = round(disk.free / (1024 ** 3), 2)
+    return JSONResponse({
+        "status": "ok",
+        "db": db_ok,
+        "model_count": model_count,
+        "disk_free_gb": disk_free_gb,
+        "api_keys": {
+            "meshy":       bool(MESHY_API_KEY),
+            "elevenlabs":  bool(ELEVENLABS_API_KEY),
+            "insforge":    bool(INSFORGE_API_KEY),
+        },
+        "pipeline": pipeline_state["status"],
+    })
 
 
 @app.post("/api/reset")
