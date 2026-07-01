@@ -66,6 +66,7 @@ _FILLER = re.compile(
     r"^\s*(?:"
     r"can you (?:please )?(?:make|create|generate|build|design|print|give me|show me)\s+(?:me\s+)?"
     r"|please (?:make|create|generate|build|design|print)\s+(?:me\s+)?"
+    r"|you (?:can\s+)?(?:make|create|generate|build|design|print)\s+(?:me\s+)?"
     r"|(?:make|create|generate|build|design|print)\s+(?:me\s+)?"
     r"|i (?:want|need|would like)\s+(?:a\s+|an\s+|to have\s+a\s+|to have\s+an\s+)?"
     r"|give me\s+(?:a\s+|an\s+)?"
@@ -84,19 +85,60 @@ _STAND_ITEM_RE = re.compile(
 )
 _WITH_RE = re.compile(r"\s+with\b.+$", re.IGNORECASE)
 
+# Strips trailing noise phrases that users append when speaking naturally
+_DECO_NOISE = re.compile(
+    r"\s*\b(?:on\s+(?:it|them|the\s+\w+)|(?:in|as|for)\s+the\s+design|on\s+the\s+design|as\s+(?:a\s+)?design|as\s+decoration)\b.*$",
+    re.IGNORECASE,
+)
+
 # Structural descriptions for common objects so Meshy understands the form first
 _OBJECT_SHAPES = {
-    "phone holder":    "vertical stand with a slot or groove to hold a phone upright",
-    "phone stand":     "vertical stand with a slot or groove to hold a phone upright",
-    "headphone stand": "tall stand with an arch or hook at the top to hang headphones",
-    "headphone holder":"tall stand with an arch or hook at the top to hang headphones",
-    "pen holder":      "cylindrical cup open at the top to hold pens and pencils",
-    "pen cup":         "cylindrical cup open at the top to hold pens and pencils",
-    "vase":            "hollow vessel open at the top to hold flowers",
-    "mug":             "cylindrical cup with a handle on the side",
-    "bowl":            "round open-top container",
-    "ring holder":     "cone or finger-shaped stand to hold rings",
-    "cable organizer": "flat tray with slots or hooks for organizing cables",
+    # Furniture
+    "dining table":     "rectangular flat tabletop supported by four vertical legs, furniture",
+    "coffee table":     "low rectangular tabletop supported by four short legs, furniture",
+    "side table":       "small square tabletop on four legs, furniture",
+    "table":            "flat rectangular tabletop supported by four vertical legs, furniture piece, NOT a tile or plaque",
+    "desk":             "wide flat rectangular surface on four legs with a drawer, furniture",
+    "chair":            "seat with a flat seat surface, backrest, and four legs, furniture",
+    "stool":            "round seat on three or four legs, no backrest, furniture",
+    "shelf":            "horizontal flat rectangular board mounted on a wall bracket, furniture",
+    "bookshelf":        "tall rectangular unit with multiple horizontal shelves, furniture",
+    "cabinet":          "rectangular box with a door on the front, furniture",
+    "drawer":           "rectangular box that slides in and out of a frame",
+    "bench":            "long flat seat on four legs, no backrest, furniture",
+    "bed frame":        "rectangular frame with headboard, footboard, and side rails, furniture",
+    "nightstand":       "small box-shaped bedside table on four legs with a drawer, furniture",
+    # Storage / containers
+    "phone holder":     "vertical stand with a slot or groove to hold a phone upright",
+    "phone stand":      "vertical stand with a slot or groove to hold a phone upright",
+    "headphone stand":  "tall stand with an arch or hook at the top to hang headphones",
+    "headphone holder": "tall stand with an arch or hook at the top to hang headphones",
+    "pen holder":       "cylindrical cup open at the top to hold pens and pencils",
+    "pen cup":          "cylindrical cup open at the top to hold pens and pencils",
+    "vase":             "hollow vessel with a narrow opening at the top to hold flowers",
+    "mug":              "cylindrical cup with a handle on the side",
+    "cup":              "cylindrical open-top drinking vessel",
+    "bowl":             "round open-top container, wider than it is tall",
+    "box":              "hollow rectangular container with a flat lid",
+    "ring holder":      "cone or finger-shaped stand to hold rings upright",
+    "cable organizer":  "flat tray with slots or hooks for organizing cables",
+    "planter":          "hollow pot open at the top for holding soil and plants",
+    "pot":              "hollow cylindrical open-top container",
+    "basket":           "open-top woven container with a handle",
+    "tray":             "flat shallow rectangular container with raised edges",
+    # Tools / accessories
+    "lamp":             "vertical pole on a flat base with a shade at the top",
+    "bottle":           "narrow-necked cylindrical container with a cap",
+    "can":              "cylindrical metal container with a flat bottom and top",
+    "hook":             "curved metal peg for hanging items on a wall",
+    "key holder":       "flat panel with protruding pegs or hooks for hanging keys",
+    "coat hook":        "wall-mounted peg with a curved tip for hanging coats",
+    "name tag":         "small flat rectangular badge with raised lettering",
+    "coaster":          "small flat circular disc used under a drink",
+    "plate":            "flat circular disc with a shallow raised rim",
+    "jar":              "cylindrical container with a wide mouth and screw-top lid",
+    "funnel":           "cone-shaped object with a narrow spout at the bottom",
+    "bracket":          "L-shaped flat support for mounting shelves on walls",
 }
 
 
@@ -106,7 +148,7 @@ def build_meshy_prompt(raw: str) -> str:
     if not cleaned:
         cleaned = raw.strip()
 
-    # Split off "with X" decoration from the base object name
+    # Split off "with X decoration" clause from the base object name
     with_match = _WITH_RE.search(cleaned)
     decoration = with_match.group(0).strip() if with_match else ""
     base_object = _WITH_RE.sub("", cleaned).strip() if with_match else cleaned
@@ -121,27 +163,38 @@ def build_meshy_prompt(raw: str) -> str:
 
     parts = []
 
-    # Lead with the structural form
+    # Lead with the structural form — shape hint forces Meshy to build the right silhouette
     if shape_hint:
         parts.append(f"3D printable {base_object}: {shape_hint}")
     else:
         parts.append(f"3D printable {base_object}")
 
-    # Decoration goes second, explicitly as surface embellishment not the shape
+    # Decoration goes second — strip trailing filler phrases ("on it", "on the design", etc.)
     if decoration:
-        deco_clean = re.sub(r"\s+on\s+(it|the\s+\w+)$", "", decoration, flags=re.IGNORECASE).strip()
-        parts.append(f"{deco_clean} embossed on the surface as decoration, not as the overall shape")
+        deco_clean = _DECO_NOISE.sub("", decoration).strip()
+        # Strip leading "with"
+        deco_clean = re.sub(r"^with\s+", "", deco_clean, flags=re.IGNORECASE).strip()
+        if deco_clean:
+            # Avoid doubling: "geometric patterns pattern" — only append " pattern" if not already there
+            suffix = "" if re.search(r"\bpatterns?\b", deco_clean, re.IGNORECASE) else " pattern"
+            parts.append(
+                f"{deco_clean}{suffix} embossed on the surface as decoration only, "
+                f"do NOT change the overall shape of the object"
+            )
 
-    # For stands/holders: explicitly empty
+    # For stands/holders: explicitly empty so nothing sits on top
     if _STAND_RE.search(base_object):
         item_match = _STAND_ITEM_RE.match(base_object)
         if item_match:
             item = item_match.group(1).strip()
-            parts.append(f"empty stand with nothing resting on it, no {item} placed on it")
+            parts.append(f"empty stand, no {item} placed on it")
         else:
             parts.append("empty stand with nothing placed on it")
 
-    parts.append("single solid object, clean manifold mesh, no other objects, isolated on empty background, suitable for FDM printing")
+    parts.append(
+        "single isolated object, clean manifold mesh, no scene, "
+        "no background objects, suitable for FDM 3D printing"
+    )
 
     return ", ".join(parts)
 
