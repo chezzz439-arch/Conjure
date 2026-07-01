@@ -1,10 +1,12 @@
 import os
 import re
 import json
+import time
 import logging
 import sqlite3
 import asyncio
 import shutil
+import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +49,17 @@ ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
+
+# ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
+# CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
+YOUCOM_API_KEY       = os.getenv("YOUCOM_API_KEY", "")
+TAVILY_API_KEY       = os.getenv("TAVILY_API_KEY", "")
+KITE_API_KEY         = os.getenv("KITE_API_KEY", "")
+NEBIUS_API_KEY       = os.getenv("NEBIUS_API_KEY", "")
+NEBIUS_MODEL         = os.getenv("NEBIUS_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
+OPENSCAD_PATH        = os.getenv("OPENSCAD_PATH", "/usr/bin/openscad")
+PRINTER_IP           = os.getenv("PRINTER_IP", "")
+MOONRAKER_PORT       = os.getenv("MOONRAKER_PORT", "7125")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "models").mkdir(exist_ok=True)
@@ -1222,6 +1235,492 @@ async def sse_events() -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# ENGINEER MODE — research-driven parametric CAD pipeline
+# ---------------------------------------------------------------------------
+engineer_state = {
+    "status": "IDLE",
+    "current_step": 0,
+    "current_step_name": "",
+    "logs": [],
+    "scad_script": None,
+    "specs": None,
+    "nebius_analysis": None,
+    "lock": threading.Lock(),
+}
+
+ENGINEER_STEP_NAMES = [
+    "Kite AI Auth",
+    "You.com Research",
+    "Tavily Research",
+    "Nebius CAD Generation",
+    "OpenSCAD Render",
+    "CuraEngine Slice",
+    "Moonraker Dispatch",
+    "Nebius Analysis",
+]
+
+FALLBACK_SCAD = """pipe_od = 60.325;
+wall = 5;
+bolt_d = 4.5;
+clamp_h = 30;
+inner_r = pipe_od / 2 + 0.4;
+outer_r = inner_r + wall;
+
+module clamp() {
+    difference() {
+        cylinder(h=clamp_h, r=outer_r, $fn=64);
+        cylinder(h=clamp_h, r=inner_r, $fn=64);
+        translate([-(outer_r+1), -bolt_d/2, clamp_h/2-bolt_d/2])
+            cube([outer_r*2+2, bolt_d, bolt_d]);
+    }
+}
+
+module mount_face() {
+    difference() {
+        translate([-30, outer_r-2, 0]) cube([60, 8, 40]);
+        translate([-15, outer_r-3, 10]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
+        translate([15, outer_r-3, 10]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
+        translate([-15, outer_r-3, 30]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
+        translate([15, outer_r-3, 30]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
+    }
+}
+
+union() {
+    clamp();
+    mount_face();
+}"""
+
+
+def engineer_log(message: str, level: str = "info") -> None:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    entry = {"time": timestamp, "message": message, "level": level}
+    with engineer_state["lock"]:
+        engineer_state["logs"].append(entry)
+    print(f"[ENGINEER][{timestamp}] [{level.upper()}] {message}", flush=True)
+
+
+def engineer_set_step(n: int) -> None:
+    with engineer_state["lock"]:
+        engineer_state["current_step"] = n
+        engineer_state["current_step_name"] = ENGINEER_STEP_NAMES[n] if n < len(ENGINEER_STEP_NAMES) else ""
+
+
+def engineer_set_status(s: str) -> None:
+    with engineer_state["lock"]:
+        engineer_state["status"] = s
+
+
+def research_specs_youcom(intent: str) -> dict:
+    specs = {"od_mm": 60.325, "tensile_mpa": 37.0, "wall_mm": 5.0, "source": "default"}
+    if not YOUCOM_API_KEY:
+        engineer_log("You.com: no API key — using safe defaults", "warning")
+        return specs
+    try:
+        r = requests.get(
+            "https://ydc-index.io/search",
+            headers={"X-API-Key": YOUCOM_API_KEY},
+            params={
+                "query": f"{intent} engineering specifications dimensions mm",
+                "num_web_results": 5,
+            },
+            timeout=20,
+        )
+        engineer_log(f"You.com: HTTP {r.status_code}", "info")
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
+        blobs = []
+        source_url = ""
+        data = r.json()
+        for key in ("hits", "web", "results", "organic_results"):
+            items = data.get(key, [])
+            if isinstance(items, dict):
+                items = items.get("results", [])
+            for item in (items if isinstance(items, list) else []):
+                if not isinstance(item, dict):
+                    continue
+                for field in ("snippet", "description", "body", "content", "text"):
+                    v = item.get(field, "")
+                    if isinstance(v, list):
+                        blobs.extend(str(x) for x in v)
+                    elif isinstance(v, str) and v:
+                        blobs.append(v)
+                if not source_url:
+                    source_url = item.get("url", item.get("link", ""))
+        blob = " ".join(blobs)
+        for m in re.findall(r"(\d{2,3}(?:\.\d+)?)\s*mm", blob):
+            val = float(m)
+            if 20.0 <= val <= 200.0:
+                specs["od_mm"] = val
+                engineer_log(f"You.com: found dimension {val}mm from {source_url}", "success")
+                break
+        specs["source"] = "you.com"
+    except Exception as e:
+        engineer_log(f"You.com failed ({e}) — using defaults", "warning")
+    return specs
+
+
+def research_specs_tavily(intent: str) -> dict:
+    result = {"tensile_mpa": 37.0, "safety_factor": 2.5}
+    if not TAVILY_API_KEY:
+        engineer_log("Tavily: no API key — using safe defaults", "warning")
+        return result
+    try:
+        r = requests.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": TAVILY_API_KEY,
+                "query": f"{intent} material strength MPa load bearing safety factor",
+                "search_depth": "advanced",
+                "max_results": 5,
+            },
+            timeout=25,
+        )
+        engineer_log(f"Tavily: HTTP {r.status_code}", "info")
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
+        results = r.json().get("results", [])
+        for res in results:
+            content = res.get("content", "") + " " + res.get("title", "")
+            url = res.get("url", "")
+            for m in re.findall(r"(\d{2,3}(?:\.\d+)?)\s*MPa", content, re.IGNORECASE):
+                val = float(m)
+                if 20.0 <= val <= 200.0:
+                    result["tensile_mpa"] = val
+                    engineer_log(f"Tavily: tensile {val}MPa from {url}", "success")
+                    break
+            for m in re.findall(r"safety\s+factor[^\d]{0,20}(\d+(?:\.\d+)?)", content, re.IGNORECASE):
+                val = float(m)
+                if 1.0 <= val <= 10.0:
+                    result["safety_factor"] = val
+                    engineer_log(f"Tavily: safety factor {val}x from {url}", "success")
+                    break
+    except Exception as e:
+        engineer_log(f"Tavily failed ({e}) — using defaults", "warning")
+    return result
+
+
+def generate_scad_nebius(intent: str, specs: dict) -> str:
+    od_mm = specs.get("od_mm", 60.325)
+    inner_r = od_mm / 2 + 0.4
+    tensile = specs.get("tensile_mpa", 37.0)
+    sf = specs.get("safety_factor", 2.5)
+    wall_mm = specs.get("wall_mm", 5.0)
+
+    system_content = (
+        "You are a parametric CAD engineer. Output ONLY raw valid OpenSCAD code. "
+        "No markdown. No backticks. No explanation. No comments. Just the OpenSCAD script.\n\n"
+        f"Engineering specs from live web research:\n"
+        f"- Object dimension: {od_mm}mm\n"
+        f"- Inner radius: {inner_r}mm\n"
+        f"- Material tensile strength: {tensile}MPa\n"
+        f"- Safety factor: {sf}x\n"
+        f"- Wall thickness: {wall_mm}mm\n\n"
+        f"User intent: {intent}\n\n"
+        "Generate a parametric OpenSCAD script for this object. "
+        "Use difference() and union() correctly. All dimensions in millimeters."
+    )
+
+    if not NEBIUS_API_KEY:
+        engineer_log("Nebius: no API key — using fallback SCAD", "warning")
+        return FALLBACK_SCAD
+
+    try:
+        r = requests.post(
+            "https://api.studio.nebius.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {NEBIUS_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": NEBIUS_MODEL,
+                "temperature": 0,
+                "max_tokens": 1500,
+                "messages": [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": "Generate the OpenSCAD script now."},
+                ],
+            },
+            timeout=60,
+        )
+        engineer_log(f"Nebius: HTTP {r.status_code}", "info")
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+        raw = r.json()["choices"][0]["message"]["content"]
+        cleaned = re.sub(r"```[a-zA-Z]*", "", raw).strip("`").strip()
+        keywords = ["cylinder", "cube", "difference", "union", "sphere"]
+        if any(kw in cleaned for kw in keywords):
+            engineer_log(f"Nebius: SCAD validated ({len(cleaned.splitlines())} lines)", "success")
+            return cleaned
+        else:
+            engineer_log("Nebius: SCAD failed validation — using fallback", "warning")
+            return FALLBACK_SCAD
+    except Exception as e:
+        engineer_log(f"Nebius failed ({e}) — using fallback SCAD", "warning")
+        return FALLBACK_SCAD
+
+
+def analyze_with_nebius(scad_script: str, specs: dict) -> None:
+    if not NEBIUS_API_KEY:
+        return
+    try:
+        r = requests.post(
+            "https://api.studio.nebius.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {NEBIUS_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": NEBIUS_MODEL,
+                "temperature": 0,
+                "max_tokens": 200,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a structural engineering reviewer. "
+                            "Analyze this OpenSCAD design for structural integrity. "
+                            "Be extremely concise — 3 bullet points maximum. "
+                            "Format: each bullet starts with OK: or WARN: or FAIL:"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Specs: OD={specs.get('od_mm')}mm, "
+                            f"wall={specs.get('wall_mm')}mm, "
+                            f"tensile={specs.get('tensile_mpa')}MPa\n\n"
+                            f"SCAD:\n{scad_script[:800]}"
+                        ),
+                    },
+                ],
+            },
+            timeout=30,
+        )
+        if r.status_code == 200:
+            feedback = r.json()["choices"][0]["message"]["content"].strip()
+            engineer_log("Nebius structural review:", "success")
+            for line in feedback.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("OK:"):
+                    engineer_log(f"  {line}", "success")
+                elif line.startswith("WARN:"):
+                    engineer_log(f"  {line}", "warning")
+                elif line.startswith("FAIL:"):
+                    engineer_log(f"  {line}", "error")
+                else:
+                    engineer_log(f"  {line}", "info")
+            with engineer_state["lock"]:
+                engineer_state["nebius_analysis"] = feedback
+    except Exception as e:
+        engineer_log(f"Nebius analysis failed ({e})", "warning")
+
+
+def run_engineer_pipeline(intent: str) -> None:
+    with engineer_state["lock"]:
+        engineer_state["status"] = "RUNNING"
+        engineer_state["current_step"] = 0
+        engineer_state["current_step_name"] = ENGINEER_STEP_NAMES[0]
+        engineer_state["logs"] = []
+        engineer_state["scad_script"] = None
+        engineer_state["specs"] = None
+        engineer_state["nebius_analysis"] = None
+
+    engineer_log("=== ENGINEER PIPELINE STARTED ===", "success")
+    engineer_log(f"Intent: {intent}", "info")
+
+    engineer_set_step(0)
+    engineer_log("Step 0 — Kite AI agent authentication", "info")
+    try:
+        if KITE_API_KEY:
+            r = requests.post(
+                "https://api.kite.ai/v1/agents/authenticate",
+                headers={"Authorization": f"Bearer {KITE_API_KEY}"},
+                json={"agent_id": "conjure-engineer", "permissions": ["compute", "fabricate"]},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                engineer_log("Kite AI: agent authenticated", "success")
+            else:
+                engineer_log(f"Kite AI: auth failed ({r.status_code}) — continuing", "warning")
+        else:
+            engineer_log("Kite AI: no key — continuing without agent identity", "warning")
+    except Exception as e:
+        engineer_log(f"Kite AI: unreachable ({e}) — continuing", "warning")
+
+    engineer_set_step(1)
+    engineer_log("Step 1 — You.com research", "info")
+    youcom_specs = research_specs_youcom(intent)
+
+    engineer_set_step(2)
+    engineer_log("Step 2 — Tavily deep research", "info")
+    tavily_specs = research_specs_tavily(intent)
+
+    specs = {
+        "od_mm": youcom_specs.get("od_mm", 60.325),
+        "inner_r": round(youcom_specs.get("od_mm", 60.325) / 2 + 0.4, 4),
+        "tensile_mpa": tavily_specs.get("tensile_mpa", 37.0),
+        "safety_factor": tavily_specs.get("safety_factor", 2.5),
+        "wall_mm": youcom_specs.get("wall_mm", 5.0),
+    }
+    with engineer_state["lock"]:
+        engineer_state["specs"] = specs
+    engineer_log(f"Specs merged: {specs}", "success")
+
+    engineer_set_step(3)
+    engineer_log("Step 3 — Nebius CAD generation", "info")
+    scad_script = generate_scad_nebius(intent, specs)
+
+    scad_path = OUTPUT_DIR / "engineer_bracket.scad"
+    scad_path.write_text(scad_script)
+    with engineer_state["lock"]:
+        engineer_state["scad_script"] = scad_script
+    engineer_log(f"SCAD saved: {len(scad_script.splitlines())} lines", "success")
+
+    engineer_set_step(4)
+    engineer_log(f"Step 4 — OpenSCAD render (binary: {OPENSCAD_PATH})", "info")
+    stl_path = OUTPUT_DIR / "model.stl"
+    try:
+        result = subprocess.run(
+            [OPENSCAD_PATH, "-o", str(stl_path), str(scad_path)],
+            capture_output=True,
+            timeout=90,
+            cwd=str(BASE_DIR),
+        )
+        if result.returncode != 0:
+            raise Exception(result.stderr.decode("utf-8", errors="replace")[:500])
+        if not stl_path.exists() or stl_path.stat().st_size < 1000:
+            raise Exception("STL too small — geometry likely invalid")
+        stl_kb = stl_path.stat().st_size / 1024
+        engineer_log(f"STL rendered: {stl_kb:.1f}KB", "success")
+    except Exception as e:
+        engineer_log(f"OpenSCAD render failed: {e}", "error")
+        engineer_set_status("ERROR")
+        return
+
+    engineer_set_step(5)
+    engineer_log(f"Step 5 — CuraEngine slice (binary: {CURAENGINE_PATH})", "info")
+    gcode_path = OUTPUT_DIR / "model.gcode"
+    profile_path = BASE_DIR / "profiles" / "neptune4pro.json"
+    try:
+        cura_env = {**os.environ, "CURA_ENGINE_SEARCH_PATH": CURA_RESOURCES_PATH}
+        result = subprocess.run(
+            [
+                CURAENGINE_PATH, "slice",
+                "-j", str(profile_path),
+                "-l", str(stl_path),
+                "-o", str(gcode_path),
+                "-s", "layer_height=0.2",
+                "-s", "infill_sparse_density=20",
+                "-s", "support_enable=false",
+            ],
+            capture_output=True,
+            timeout=180,
+            cwd=str(BASE_DIR),
+            env=cura_env,
+        )
+        if result.returncode != 0:
+            raise Exception(result.stderr.decode("utf-8", errors="replace")[:500])
+        if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
+            raise Exception("Gcode too small — slice likely failed")
+        gcode_kb = gcode_path.stat().st_size / 1024
+        engineer_log(f"Gcode sliced: {gcode_kb:.1f}KB", "success")
+    except Exception as e:
+        engineer_log(f"CuraEngine failed: {e}", "error")
+        engineer_set_status("ERROR")
+        return
+
+    try:
+        model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
+        db_update_model_paths(model_id, str(stl_path), str(stl_path))
+        engineer_log(f"DB: model record saved (id {model_id})", "success")
+    except Exception as e:
+        engineer_log(f"DB save failed: {e}", "warning")
+        model_id = None
+
+    engineer_set_step(6)
+    engineer_log(f"Step 6 — Moonraker dispatch ({PRINTER_IP}:{MOONRAKER_PORT})", "info")
+    try:
+        if not PRINTER_IP:
+            raise Exception("PRINTER_IP not set")
+        moonraker_base = f"http://{PRINTER_IP}:{MOONRAKER_PORT}"
+        with open(gcode_path, "rb") as f:
+            up = requests.post(
+                f"{moonraker_base}/server/files/upload",
+                files={"file": ("model.gcode", f, "application/octet-stream")},
+                timeout=30,
+            )
+        up.raise_for_status()
+        time.sleep(2)
+        sp = requests.post(
+            f"{moonraker_base}/printer/print/start",
+            json={"filename": "model.gcode"},
+            timeout=15,
+        )
+        sp.raise_for_status()
+        engineer_log("Moonraker: print started", "success")
+    except Exception as e:
+        engineer_log("Moonraker unreachable — gcode saved to output/model.gcode for USB transfer", "warning")
+
+    engineer_set_step(7)
+    engineer_log("Step 7 — Nebius structural analysis", "info")
+    analyze_with_nebius(scad_script, specs)
+
+    def _engineer_supabase_backup():
+        try:
+            stl_url = upload_to_supabase(stl_path, folder="engineer/stl")
+            if stl_url and model_id:
+                log_supabase_event("engineer_model_generated", model_id=model_id, message=intent)
+        except Exception as e:
+            print(f"[Supabase] Engineer backup error: {e}")
+
+    threading.Thread(target=_engineer_supabase_backup, daemon=True).start()
+
+    engineer_set_status("COMPLETE")
+    engineer_log("=== ENGINEER PIPELINE COMPLETE ===", "success")
+
+
+@app.post("/api/engineer/trigger")
+async def engineer_trigger(body: dict) -> JSONResponse:
+    intent = body.get("intent", "").strip()
+    if not intent:
+        return JSONResponse({"ok": False, "error": "intent is required"}, status_code=400)
+    with engineer_state["lock"]:
+        if engineer_state["status"] == "RUNNING":
+            return JSONResponse({"error": "Engineer pipeline already running"}, status_code=409)
+    threading.Thread(target=run_engineer_pipeline, args=(intent,), daemon=True).start()
+    return JSONResponse({"ok": True, "status": "started", "intent": intent})
+
+
+@app.get("/api/engineer/status")
+def engineer_status() -> JSONResponse:
+    with engineer_state["lock"]:
+        return JSONResponse({
+            "status":            engineer_state["status"],
+            "current_step":      engineer_state["current_step"],
+            "current_step_name": engineer_state["current_step_name"],
+            "logs":              list(engineer_state["logs"]),
+            "scad_script":       engineer_state["scad_script"],
+            "specs":             engineer_state["specs"],
+            "nebius_analysis":   engineer_state["nebius_analysis"],
+        })
+
+
+@app.post("/api/engineer/reset")
+def engineer_reset() -> JSONResponse:
+    with engineer_state["lock"]:
+        engineer_state["status"] = "IDLE"
+        engineer_state["current_step"] = 0
+        engineer_state["current_step_name"] = ""
+        engineer_state["logs"] = []
+        engineer_state["scad_script"] = None
+        engineer_state["specs"] = None
+        engineer_state["nebius_analysis"] = None
+    return JSONResponse({"ok": True})
 
 
 if __name__ == "__main__":

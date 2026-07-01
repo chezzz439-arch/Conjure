@@ -146,18 +146,29 @@
 </div>
 
 <!-- ════════ SCREEN 1 — IDLE ════════ -->
-<div id="s-idle" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:32px;cursor:pointer" onclick="goToSpeak()">
-  <div style="font-size:56px;font-weight:bold;letter-spacing:12px;color:var(--green)">CONJURE</div>
-  <div style="font-size:16px;letter-spacing:4px;color:var(--dim)">speak to fabricate reality</div>
-  <div id="idle-ring" style="
-    width:180px;height:180px;border-radius:50%;
-    border:2px solid var(--green);
-    display:flex;align-items:center;justify-content:center;
-    margin:16px 0;
-  ">
-    <div style="font-size:64px">🎙</div>
+<div id="s-idle" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:32px;">
+
+  <div style="font-size:56px;font-weight:bold;letter-spacing:12px;color:#00ff41">CONJURE</div>
+  <div style="font-size:14px;letter-spacing:4px;color:#00aa2a">autonomous fabrication agent</div>
+
+  <div style="display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;justify-content:center;">
+
+    <div onclick="goToSpeak()" style="border:2px solid #00ff41;padding:32px 40px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:200px;background:transparent;">
+      <div style="font-size:48px">🎙</div>
+      <div style="font-size:18px;letter-spacing:3px;color:#00ff41">SPEAK</div>
+      <div style="font-size:12px;color:#00aa2a;text-align:center;line-height:1.5">Describe any object.<br>Meshy AI generates it.</div>
+    </div>
+
+    <div onclick="goToEngineer()" style="border:2px solid #00aa2a;padding:32px 40px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:200px;background:transparent;">
+      <div style="font-size:48px">⚙</div>
+      <div style="font-size:18px;letter-spacing:3px;color:#00aa2a">ENGINEER</div>
+      <div style="font-size:12px;color:#555;text-align:center;line-height:1.5">Describe a functional part.<br>AI researches and CADs it.</div>
+    </div>
+
   </div>
-  <div style="font-size:13px;letter-spacing:4px;color:var(--dim)">TAP TO BEGIN</div>
+
+  <div style="font-size:12px;letter-spacing:3px;color:#333;margin-top:16px">TAP A MODE TO BEGIN</div>
+
 </div>
 
 <!-- ════════ SCREEN 2 — SPEAK ════════ -->
@@ -447,9 +458,9 @@
 ">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #1a3a1a;flex-shrink:0;background:#0a0e0a;">
     <div style="font-size:18px;letter-spacing:4px;color:#00ff41">LIBRARY</div>
-    <div style="display:flex;gap:12px">
-      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:44px;min-height:44px;">← BACK</button>
-      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:44px;min-height:44px;">⌂ HOME</button>
+    <div style="display:flex;gap:12px;">
+      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;min-width:80px;">← BACK</button>
+      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;min-width:80px;">⌂ HOME</button>
     </div>
   </div>
 
@@ -476,6 +487,71 @@
     <div style="font-size: 16px; letter-spacing: 2px">NO MODELS YET</div>
     <div style="font-size: 14px; color: #333">Generate something first</div>
   </div>
+</div>
+
+<!-- ════════ SCREEN 8 — ENGINEER ════════ -->
+<div id="s-engineer" class="screen" style="flex-direction:column;align-items:center;padding-top:60px;gap:24px;">
+
+  <div style="font-size:13px;letter-spacing:4px;color:#00aa2a">⚙ ENGINEER MODE</div>
+
+  <div style="font-size:14px;color:#555;letter-spacing:2px;text-align:center;max-width:500px;line-height:1.6;">
+    Describe a functional part. The agent researches real engineering specs and generates precise CAD geometry.
+  </div>
+
+  <textarea
+    id="engineer-input"
+    placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two bolt holes"
+    style="width:80%;max-width:600px;height:120px;background:#0f140f;border:1px solid #1a3a1a;color:#ffffff;font-family:monospace;font-size:16px;padding:16px;resize:none;line-height:1.6;"
+  ></textarea>
+
+  <div style="display:flex;gap:12px;width:80%;max-width:600px;">
+    <button onclick="handleEngineerConfirm()" style="flex:1;height:64px;background:transparent;border:2px solid #00aa2a;color:#00aa2a;font-family:monospace;font-size:18px;letter-spacing:2px;cursor:pointer;">ENGINEER IT</button>
+    <button onclick="showScreen('s-idle')" style="flex:1;height:64px;background:transparent;border:2px solid #555;color:#555;font-family:monospace;font-size:18px;letter-spacing:2px;cursor:pointer;">← BACK</button>
+  </div>
+
+</div>
+
+<!-- ════════ SCREEN 9 — ENGINEER GENERATING ════════ -->
+<div id="s-engineer-generating" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px;overflow-y:auto;">
+
+  <div style="font-size:24px;letter-spacing:4px;color:#00aa2a">ENGINEERING</div>
+  <div id="engineer-gen-prompt" style="font-size:14px;color:#555;font-style:italic;text-align:center;max-width:500px;line-height:1.6;"></div>
+
+  <div style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0;">
+    <div class="step-row" id="eg-step-0"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Kite AI — agent auth</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-1"><div class="step-icon">○</div><div class="step-body"><div class="step-title">You.com — web research</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-2"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Tavily — deep research</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-3"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Nebius — CAD generation</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-4"><div class="step-icon">○</div><div class="step-body"><div class="step-title">OpenSCAD — render STL</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-5"><div class="step-icon">○</div><div class="step-body"><div class="step-title">CuraEngine — slice gcode</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-6"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Moonraker — dispatch</div><div class="step-msg"></div></div></div>
+    <div class="step-row" id="eg-step-7"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Nebius — structural review</div><div class="step-msg"></div></div></div>
+  </div>
+
+  <div style="width:100%;max-width:500px;height:4px;background:#0f140f;border-radius:2px;">
+    <div id="eg-progress-bar" style="height:4px;background:#00aa2a;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+  </div>
+
+  <div id="eg-specs-panel" style="display:none;width:100%;max-width:500px;background:#0f140f;border:1px solid #1a3a1a;padding:14px;">
+    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:10px;">RETRIEVED SPECS</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;">
+      <div><span style="color:#555">OD: </span><span id="eg-sv-od" style="color:#00aa2a">—</span></div>
+      <div><span style="color:#555">Tensile: </span><span id="eg-sv-tensile" style="color:#00aa2a">—</span></div>
+      <div><span style="color:#555">Safety: </span><span id="eg-sv-safety" style="color:#00aa2a">—</span></div>
+      <div><span style="color:#555">Wall: </span><span id="eg-sv-wall" style="color:#00aa2a">—</span></div>
+    </div>
+  </div>
+
+  <div id="eg-scad-panel" style="display:none;width:100%;max-width:500px;">
+    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:8px;">GENERATED SCAD</div>
+    <div id="eg-scad-code" style="font-family:monospace;font-size:11px;color:#00aa2a;background:#050a05;padding:12px;max-height:150px;overflow-y:auto;white-space:pre;"></div>
+  </div>
+
+  <div id="eg-analysis-panel" style="display:none;width:100%;max-width:500px;background:#0f140f;border:1px solid #1a3a1a;padding:14px;">
+    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:10px;">STRUCTURAL REVIEW</div>
+    <div id="eg-analysis-content" style="font-family:monospace;font-size:12px;line-height:1.8;"></div>
+  </div>
+
 </div>
 
 <script>
@@ -832,64 +908,91 @@ function resetAll() {
   resetIdle();
 }
 
+function startOver() {
+  resetAll();
+}
+
 /* ════════ LIBRARY ════════ */
 let libraryReturnScreen = 's-idle';
 
 function openLibrary() {
-  libraryReturnScreen = currentScreen ? currentScreen.id : 's-idle';
-  if (libraryReturnScreen === 's-library') libraryReturnScreen = 's-idle';
-  const libBtn = document.getElementById('lib-btn');
-  if (libBtn) libBtn.style.display = 'none';
+  const currentId = currentScreen ? currentScreen.id : 's-idle';
+  libraryReturnScreen = (currentId === 's-library') ? 's-idle' : currentId;
   showScreen('s-library');
   loadLibrary();
 }
 
 function closeLibrary() {
-  const libBtn = document.getElementById('lib-btn');
-  if (libBtn) libBtn.style.display = 'flex';
   const returnTo = libraryReturnScreen || 's-idle';
-  libraryReturnScreen = null;
+  libraryReturnScreen = 's-idle';
   showScreen(returnTo);
 }
 
 async function loadLibrary() {
   const grid = document.getElementById('library-grid');
   const empty = document.getElementById('library-empty');
-  if (!grid) return;
-  grid.innerHTML = '<div style="color:#555;font-size:14px;letter-spacing:2px;padding:20px">LOADING...</div>';
+  if (!grid) { console.error('library-grid element not found'); return; }
+
+  grid.innerHTML = '<div style="color:#555;font-size:14px;letter-spacing:2px;padding:20px;text-align:center">LOADING...</div>';
   if (empty) empty.style.display = 'none';
+  grid.style.display = 'block';
+
   try {
-    const r = await fetch('/api/models');
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const r = await fetch('/api/models?' + Date.now());
+    if (!r.ok) throw new Error('Server returned ' + r.status);
     const data = await r.json();
-    const models = Array.isArray(data) ? data : (data.models || data.items || []);
+    const models = Array.isArray(data) ? data : (data.models || []);
+
+    console.log('Library: loaded ' + models.length + ' models');
+
     grid.innerHTML = '';
-    if (models.length === 0) {
+
+    if (!models || models.length === 0) {
       grid.style.display = 'none';
-      if (empty) empty.style.display = 'flex';
+      if (empty) {
+        empty.style.display = 'flex';
+        empty.innerHTML = `
+          <div style="font-size:48px;color:#1a3a1a">◻</div>
+          <div style="font-size:16px;color:#555;letter-spacing:2px;margin-top:16px">NO MODELS YET</div>
+          <div style="font-size:13px;color:#333;margin-top:8px">Generate something first</div>
+        `;
+      }
       return;
     }
+
     grid.style.display = 'grid';
+
     models.forEach((m, i) => {
+      const id = m.id != null ? m.id : i;
+      const prompt = String(m.prompt || 'Untitled model ' + (i + 1));
+      const date = String(m.created_at || '').slice(0, 16).replace('T', ' ');
+      const hasGlb = m.glb_path && m.glb_path.length > 0;
+
       const card = document.createElement('div');
       card.style.cssText = 'background:#0f140f;border:1px solid #1a3a1a;padding:16px;display:flex;flex-direction:column;gap:10px;';
-      const prompt = m.prompt || m.name || 'Untitled model ' + (i + 1);
-      const date = m.created_at || m.date || '';
-      const id = m.id || i;
+
       card.innerHTML = `
-        <div style="height:100px;background:#0a0e0a;border:1px solid #1a3a1a;display:flex;align-items:center;justify-content:center;font-size:28px;color:#1a3a1a;">◻</div>
-        <div style="font-size:13px;color:#00ff41;line-height:1.5;word-break:break-word">${escapeHtml(String(prompt))}</div>
-        <div style="font-size:13px;color:#555;letter-spacing:1px">${escapeHtml(String(date).slice(0,16))}</div>
-        <div style="display:flex;gap:8px;margin-top:4px">
-          <button style="flex:1;height:44px;min-height:44px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:13px;letter-spacing:2px;cursor:pointer;" onclick="selectModelFromLibrary(${JSON.stringify(id)})">VIEW</button>
-          <button style="flex:1;height:44px;min-height:44px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;cursor:pointer;" onclick="printModelFromLibrary(${JSON.stringify(id)})">PRINT</button>
+        <div style="height:100px;background:#0a0e0a;border:1px solid #1a3a1a;display:flex;align-items:center;justify-content:center;font-size:32px;color:#1a3a1a;">${hasGlb ? '◼' : '◻'}</div>
+        <div style="font-size:13px;color:#00ff41;line-height:1.5;word-break:break-word;min-height:36px;">${escapeHtml(prompt)}</div>
+        <div style="font-size:11px;color:#555;letter-spacing:1px;">${escapeHtml(date)}</div>
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button onclick="selectModelFromLibrary(${JSON.stringify(id)})" style="flex:1;height:44px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;">VIEW</button>
+          <button onclick="printModelFromLibrary(${JSON.stringify(id)})" style="flex:1;height:44px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;">PRINT</button>
         </div>
       `;
+
       grid.appendChild(card);
     });
+
   } catch(e) {
     console.error('Library load error:', e);
-    grid.innerHTML = '<div style="color:#ff4444;font-size:14px;padding:20px">Failed to load — ' + e.message + '</div>';
+    grid.innerHTML = `
+      <div style="color:#ff4444;font-size:14px;padding:20px;text-align:center">
+        Failed to load library<br>
+        <span style="font-size:12px;color:#555;margin-top:8px;display:block">${escapeHtml(e.message)}</span>
+        <button onclick="loadLibrary()" style="margin-top:12px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;padding:8px 16px;cursor:pointer;">RETRY</button>
+      </div>
+    `;
   }
 }
 
@@ -902,31 +1005,27 @@ function escapeHtml(str) {
 }
 
 function goHome() {
-  libraryReturnScreen = null;
-  const libBtn = document.getElementById('lib-btn');
-  if (libBtn) libBtn.style.display = 'flex';
+  libraryReturnScreen = 's-idle';
   closeEvents();
-  stopListening();
-  handleRedo();
-  currentPrompt = '';
-  fetch('/api/reset', { method: 'POST' }).catch(() => {});
-  disposeViewer();
+  try { stopListening(); } catch(e) {}
+  transcript = '';
+  try { handleRedo(); } catch(e) {}
   showScreen('s-idle');
-  resetIdle();
 }
 
 async function selectModelFromLibrary(id) {
   try {
     const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
     closeLibrary();
-    setTimeout(() => {
-      initViewer();
-      loadModel('/api/model/glb');
-      showScreen('s-view');
-      speak('Model loaded. Rotate to inspect it. Tap print when ready.');
-    }, 100);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    initViewer();
+    loadModel('/api/model/glb?' + Date.now());
+    showScreen('s-view');
+    speak('Model loaded. Rotate to inspect it. Tap print when ready.');
   } catch(e) {
+    console.error('selectModelFromLibrary error:', e);
     showError('Could not load model: ' + e.message);
   }
 }
@@ -934,82 +1033,199 @@ async function selectModelFromLibrary(id) {
 async function printModelFromLibrary(id) {
   try {
     const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
     closeLibrary();
-    setTimeout(() => { handlePrint(); }, 100);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    handlePrint();
   } catch(e) {
+    console.error('printModelFromLibrary error:', e);
     showError('Could not load model for printing: ' + e.message);
   }
+}
+
+/* ════════ ENGINEER MODE ════════ */
+function goToEngineer() {
+  showScreen('s-engineer');
+  const input = document.getElementById('engineer-input');
+  if (input) { input.value = ''; input.focus(); }
+}
+
+async function handleEngineerConfirm() {
+  const input = document.getElementById('engineer-input');
+  if (!input) return;
+  const intent = input.value.trim();
+  if (!intent) return;
+
+  document.getElementById('engineer-gen-prompt').textContent = '"' + intent + '"';
+  showScreen('s-engineer-generating');
+  resetEngineerSteps();
+  speak('Understood. Engineering your part now.');
+
+  let engineerPoller = setInterval(async () => {
+    try {
+      const r = await fetch('/api/engineer/status');
+      if (!r.ok) return;
+      const data = await r.json();
+      updateEngineerScreen(data);
+      if (data.status === 'COMPLETE') {
+        clearInterval(engineerPoller);
+        setTimeout(() => {
+          initViewer();
+          loadModel('/api/model/stl?' + Date.now());
+          showScreen('s-view');
+          speak('Engineering complete. Your part is ready. Tap print when ready.');
+        }, 800);
+      }
+      if (data.status === 'ERROR') {
+        clearInterval(engineerPoller);
+        const logs = data.logs || [];
+        const lastError = logs.filter(l => l.level === 'error').pop();
+        showError(lastError ? lastError.message : 'Engineering pipeline failed');
+      }
+    } catch(e) { console.error('Engineer poll error:', e); }
+  }, 1000);
+
+  try {
+    const r = await fetch('/api/engineer/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent })
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      clearInterval(engineerPoller);
+      showError(d.error || 'Engineer trigger failed');
+    }
+  } catch(e) {
+    clearInterval(engineerPoller);
+    showError('Could not reach server: ' + e.message);
+  }
+}
+
+function resetEngineerSteps() {
+  for (let i = 0; i <= 7; i++) {
+    setStep('eg-step-' + i, 'pending', '');
+  }
+  const pb = document.getElementById('eg-progress-bar');
+  if (pb) pb.style.width = '0%';
+  const panels = ['eg-scad-panel', 'eg-specs-panel', 'eg-analysis-panel'];
+  panels.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
+function updateEngineerScreen(data) {
+  const step = data.current_step || 0;
+  const progress = Math.min(100, Math.round((step / 8) * 100));
+  const pb = document.getElementById('eg-progress-bar');
+  if (pb) pb.style.width = progress + '%';
+
+  for (let i = 0; i <= 7; i++) {
+    if (data.status === 'COMPLETE') {
+      setStep('eg-step-' + i, 'done', '');
+    } else if (i < step) {
+      setStep('eg-step-' + i, 'done', '');
+    } else if (i === step) {
+      setStep('eg-step-' + i, 'active', data.current_step_name || '');
+    } else {
+      setStep('eg-step-' + i, 'pending', '');
+    }
+  }
+
+  if (data.specs) {
+    const sp = document.getElementById('eg-specs-panel');
+    if (sp) sp.style.display = 'block';
+    const svOd = document.getElementById('eg-sv-od');
+    const svT = document.getElementById('eg-sv-tensile');
+    const svS = document.getElementById('eg-sv-safety');
+    const svW = document.getElementById('eg-sv-wall');
+    if (svOd) svOd.textContent = data.specs.od_mm != null ? data.specs.od_mm + 'mm' : '—';
+    if (svT) svT.textContent = data.specs.tensile_mpa != null ? data.specs.tensile_mpa + 'MPa' : '—';
+    if (svS) svS.textContent = data.specs.safety_factor != null ? data.specs.safety_factor + 'x' : '—';
+    if (svW) svW.textContent = data.specs.wall_mm != null ? data.specs.wall_mm + 'mm' : '—';
+  }
+
+  if (data.scad_script) {
+    const sp = document.getElementById('eg-scad-panel');
+    const sc = document.getElementById('eg-scad-code');
+    if (sp) sp.style.display = 'block';
+    if (sc) sc.textContent = data.scad_script;
+  }
+
+  if (data.nebius_analysis) {
+    const ap = document.getElementById('eg-analysis-panel');
+    const ac = document.getElementById('eg-analysis-content');
+    if (ap) ap.style.display = 'block';
+    if (ac) {
+      const lines = data.nebius_analysis.split('\n').filter(l => l.trim());
+      ac.innerHTML = lines.map(line => {
+        line = line.trim();
+        if (line.startsWith('OK:')) return '<div style="color:#00ff41">' + escapeHtml(line) + '</div>';
+        if (line.startsWith('WARN:')) return '<div style="color:#ffaa00">' + escapeHtml(line) + '</div>';
+        if (line.startsWith('FAIL:')) return '<div style="color:#ff4444">' + escapeHtml(line) + '</div>';
+        return '<div style="color:#555">' + escapeHtml(line) + '</div>';
+      }).join('');
+    }
+  }
+
+  if (data.status === 'COMPLETE' && pb) pb.style.width = '100%';
 }
 
 /* ════════ THREE.JS VIEWER ════════ */
 let scene, camera, renderer, model3d, rafId;
 let autoRot = true;
-let dragStartX = 0, dragStartY = 0, isDragging = false;
 let autoRotTimer = null;
+let dragStartX = 0, dragStartY = 0;
+let isDragging = false;
+let lastPinchDist = null;
+let zoomLevel = 5;
+const ZOOM_MIN = 1.5;
+const ZOOM_MAX = 15;
+let currentMaterial = 'solid';
 
 function disposeViewer() {
   if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  clearTimeout(autoRotTimer);
-  if (model3d && scene) { scene.remove(model3d); model3d = null; }
   if (renderer) {
     renderer.dispose();
-    renderer.forceContextLoss();
+    const container = document.getElementById('three-container');
+    if (container) container.innerHTML = '';
     renderer = null;
   }
-  scene = null;
+  if (scene) { scene.clear(); scene = null; }
+  model3d = null;
   camera = null;
-  autoRot = true;
-  isDragging = false;
-  const container = document.getElementById('three-container');
-  if (container) container.innerHTML = '';
-}
-
-let zoomLevel = 5;
-const ZOOM_MIN = 1.5;
-const ZOOM_MAX = 12;
-
-function applyZoom() {
-  if (!camera) return;
-  camera.position.setLength(zoomLevel);
-  camera.lookAt(0, 0, 0);
 }
 
 function initViewer() {
   disposeViewer();
-  const container = document.getElementById('three-container');
-
   zoomLevel = 5;
+  autoRot = true;
+  currentMaterial = 'solid';
+
+  const container = document.getElementById('three-container');
+  if (!container) { console.error('three-container not found'); return; }
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0a0e0a);
 
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
-  camera.position.set(0, 0, 5);
+  camera.position.set(0, 0, zoomLevel);
+  camera.lookAt(0, 0, 0);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
-  // Scroll-wheel zoom (desktop)
-  renderer.domElement.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    zoomLevel += e.deltaY * 0.01;
-    zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
-    applyZoom();
-  }, { passive: false });
-
   scene.add(new THREE.AmbientLight(0xffffff, 3));
-
   const l1 = new THREE.DirectionalLight(0xffffff, 4);
   l1.position.set(5, 5, 5);
   scene.add(l1);
-
   const l2 = new THREE.DirectionalLight(0xffffff, 2);
   l2.position.set(-5, -2, -5);
   scene.add(l2);
-
   const l3 = new THREE.DirectionalLight(0x00ff41, 1.5);
   l3.position.set(0, 10, 0);
   scene.add(l3);
@@ -1018,14 +1234,9 @@ function initViewer() {
   renderer.domElement.addEventListener('mousemove', onDragMove);
   renderer.domElement.addEventListener('mouseup', onDragEnd);
   renderer.domElement.addEventListener('mouseleave', onDragEnd);
-  renderer.domElement.addEventListener('touchstart', (e) => onDragStart(e.touches[0]), { passive: true });
-  renderer.domElement.addEventListener('touchmove', (e) => { e.preventDefault(); onDragMove(e.touches[0]); }, { passive: false });
-  renderer.domElement.addEventListener('touchend', onDragEnd, { passive: true });
-
-  // Pinch-to-zoom (touch)
-  let lastPinchDist = null;
 
   renderer.domElement.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) onDragStart(e.touches[0]);
     if (e.touches.length === 2) {
       lastPinchDist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
@@ -1035,40 +1246,43 @@ function initViewer() {
   }, { passive: true });
 
   renderer.domElement.addEventListener('touchmove', (e) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
+    e.preventDefault();
+    if (e.touches.length === 1) onDragMove(e.touches[0]);
+    if (e.touches.length === 2 && lastPinchDist !== null) {
       const dist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       );
-      if (lastPinchDist !== null) {
-        const delta = lastPinchDist - dist;
-        zoomLevel += delta * 0.04;
-        zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
-        applyZoom();
-      }
+      zoomLevel += (lastPinchDist - dist) * 0.05;
+      zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
       lastPinchDist = dist;
     }
   }, { passive: false });
 
   renderer.domElement.addEventListener('touchend', (e) => {
     if (e.touches.length < 2) lastPinchDist = null;
+    onDragEnd();
   }, { passive: true });
 
-  renderLoop();
+  renderer.domElement.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoomLevel += e.deltaY * 0.01;
+    zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel));
+  }, { passive: false });
+
+  rafId = requestAnimationFrame(renderLoop);
 }
 
 function onDragStart(e) {
-  if (!e) return;
   isDragging = true;
   autoRot = false;
+  clearTimeout(autoRotTimer);
   dragStartX = e.clientX;
   dragStartY = e.clientY;
-  clearTimeout(autoRotTimer);
 }
 
 function onDragMove(e) {
-  if (!isDragging || !model3d || !e) return;
+  if (!isDragging || !model3d) return;
   const dx = e.clientX - dragStartX;
   const dy = e.clientY - dragStartY;
   model3d.rotation.y += dx * 0.008;
@@ -1079,22 +1293,22 @@ function onDragMove(e) {
 
 function onDragEnd() {
   isDragging = false;
-  clearTimeout(autoRotTimer);
   autoRotTimer = setTimeout(() => { autoRot = true; }, 3000);
 }
 
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop);
   if (autoRot && model3d) model3d.rotation.y += 0.004;
-  applyZoom();
+  if (camera) {
+    camera.position.setLength(zoomLevel);
+    camera.lookAt(0, 0, 0);
+  }
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
 function loadModel(url) {
-  if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
-    console.error('THREE or GLTFLoader not available');
-    return;
-  }
+  if (!window.THREE) { console.error('THREE not loaded'); return; }
+  if (!THREE.GLTFLoader) { console.error('GLTFLoader not loaded'); return; }
 
   const loader = new THREE.GLTFLoader();
   loader.load(
@@ -1116,23 +1330,12 @@ function loadModel(url) {
         -center.z * scaleFactor
       );
 
+      // Meshy GLBs ship with POSITION only — no NORMAL attribute. Without
+      // normals, lit materials render pure black, so generate smooth normals
+      // from the geometry before setMaterial() applies the lit material.
       model3d.traverse((node) => {
-        if (node.isMesh) {
-          // Meshy GLBs ship with POSITION only — no NORMAL attribute.
-          // Without normals, lit materials render pure black, so generate
-          // smooth normals from the geometry before applying the material.
-          if (node.geometry && !node.geometry.attributes.normal) {
-            node.geometry.computeVertexNormals();
-          }
-          node.material = new THREE.MeshPhongMaterial({
-            color: 0x22cc44,
-            emissive: 0x003300,
-            emissiveIntensity: 0.5,
-            specular: 0x88ffaa,
-            shininess: 100,
-            side: THREE.DoubleSide
-          });
-          node.material.needsUpdate = true;
+        if (node.isMesh && node.geometry && !node.geometry.attributes.normal) {
+          node.geometry.computeVertexNormals();
         }
       });
 
@@ -1140,48 +1343,29 @@ function loadModel(url) {
       setMaterial('solid');
     },
     undefined,
-    (err) => console.error('Load error:', err)
+    (err) => console.error('GLB load error:', err)
   );
 }
 
 /* ════════ MATERIAL TOGGLE ════════ */
-let currentMaterial = 'solid';
-
-function clearWireOverlays() {
-  if (!model3d) return;
-  const overlays = [];
-  model3d.traverse((node) => {
-    if (node.name === 'wire-overlay') overlays.push(node);
-  });
-  overlays.forEach((c) => { if (c.parent) c.parent.remove(c); });
-}
-
 function setMaterial(mode) {
   currentMaterial = mode;
 
-  document.querySelectorAll('.mat-btn').forEach((b) => b.classList.remove('active'));
-  const btn = document.getElementById('mat-' + mode);
-  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.mat-btn').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('mat-' + mode);
+  if (activeBtn) activeBtn.classList.add('active');
 
   if (!model3d) return;
 
-  // Always strip any existing grid/edge overlays before re-applying a mode.
-  const toRemoveGlobal = [];
-  if (model3d) {
-    model3d.traverse(c => { if (c.name === 'wire-overlay') toRemoveGlobal.push(c); });
-    toRemoveGlobal.forEach(c => c.parent && c.parent.remove(c));
-  }
-  if (mode !== 'grid' && scene) scene.fog = null;
+  if (scene) scene.fog = null;
 
-  // Collect the real meshes up front (excluding overlay clones) so we never
-  // mutate the scene graph while traversing it — adding clones mid-traverse
-  // would make Three.js re-visit them and clone endlessly.
-  const meshes = [];
+  const toRemove = [];
+  model3d.traverse(c => { if (c.name === 'wire-overlay') toRemove.push(c); });
+  toRemove.forEach(c => c.parent && c.parent.remove(c));
+
   model3d.traverse((node) => {
-    if (node.isMesh && node.name !== 'wire-overlay') meshes.push(node);
-  });
+    if (!node.isMesh) return;
 
-  meshes.forEach((node) => {
     if (mode === 'solid') {
       node.material = new THREE.MeshPhongMaterial({
         color: 0x22cc44,
@@ -1193,11 +1377,8 @@ function setMaterial(mode) {
         wireframe: false,
       });
       node.material.needsUpdate = true;
-    } else if (mode === 'grid') {
-      const toRemove = [];
-      model3d.traverse(c => { if (c.name === 'wire-overlay') toRemove.push(c); });
-      toRemove.forEach(c => c.parent && c.parent.remove(c));
 
+    } else if (mode === 'grid') {
       node.material = new THREE.MeshPhongMaterial({
         color: 0x001408,
         transparent: true,
@@ -1209,7 +1390,7 @@ function setMaterial(mode) {
       });
       node.material.needsUpdate = true;
 
-      const edges = new THREE.EdgesGeometry(node.geometry, 10);
+      const edges = new THREE.EdgesGeometry(node.geometry, 12);
 
       const edgeMat1 = new THREE.LineBasicMaterial({
         color: 0x00ff41,
@@ -1237,17 +1418,16 @@ function setMaterial(mode) {
       node.parent && node.parent.add(edgeMesh2);
 
       if (scene) scene.fog = new THREE.FogExp2(0x0a0e0a, 0.06);
+
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
         color: 0x00ff41,
         wireframe: true,
-        transparent: false,
         side: THREE.DoubleSide,
       });
       node.material.needsUpdate = true;
     }
   });
-
 }
 
 window.addEventListener('resize', () => {
