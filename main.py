@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
+from supabase import create_client, Client
 
 # ---------------------------------------------------------------------------
 # Config
@@ -179,8 +180,6 @@ def db_insert_model(prompt: str, task_id: str) -> int:
         conn.commit()
         row_id = cur.lastrowid
         conn.close()
-    # Mirror to Supabase — fire-and-forget, never blocks pipeline
-    _supa_fire(supabase_insert_model, prompt, task_id)
     return row_id
 
 
@@ -193,7 +192,6 @@ def db_update_model_paths(row_id: int, glb_path: str, stl_path: str) -> None:
         )
         conn.commit()
         conn.close()
-    # Supabase update is fired by run_generation (needs task_id, not sqlite row_id)
 
 
 def db_list_models() -> list:
@@ -201,7 +199,9 @@ def db_list_models() -> list:
         conn = sqlite3.connect(str(DB_PATH))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, prompt, created_at, meshy_task_id, glb_path, stl_path FROM models ORDER BY created_at DESC"
+            """SELECT id, prompt, created_at, meshy_task_id, glb_path, stl_path
+               FROM models
+               ORDER BY created_at DESC"""
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -224,114 +224,88 @@ init_db()
 
 
 # ---------------------------------------------------------------------------
-# Supabase integration — fire-and-forget; failures never block the pipeline
+# Supabase SDK integration — all calls non-blocking via daemon threads
 # ---------------------------------------------------------------------------
 
-def _supa_fire(fn, *args, **kwargs) -> None:
-    """Run a Supabase function in a daemon thread — fire-and-forget."""
-    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
-
-
-def _supa_headers() -> dict:
-    return {
-        "apikey":        SUPABASE_ANON_KEY,
-        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-        "Content-Type":  "application/json",
-        "Prefer":        "return=representation",
-    }
-
-
-def supabase_insert_model(prompt: str, task_id: str) -> None:
-    """Insert a model row into the Supabase models table.
-
-    Schema (actual): id, prompt, created_at, meshy_task_id, glb_path, stl_path,
-                     glb_url, stl_url, status, device_id
-    """
+def get_supabase_client():
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        return
+        return None
     try:
-        r = requests.post(
-            f"{SUPABASE_URL}/rest/v1/models",
-            headers=_supa_headers(),
-            json={
-                "prompt":        prompt,
-                "meshy_task_id": task_id,
-                "glb_path":      None,
-                "stl_path":      None,
-                "glb_url":       None,
-                "stl_url":       None,
-                "status":        "generating",
-            },
-            timeout=10,
-        )
-        if r.status_code in (200, 201):
-            rows = r.json()
-            row = rows[0] if isinstance(rows, list) and rows else {}
-            log.info("[Supabase] model inserted — supa_id=%s task_id=%s", row.get("id"), task_id[:10])
-        else:
-            log.warning("[Supabase] insert model failed (%s): %s", r.status_code, r.text[:120])
+        return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     except Exception as e:
-        log.warning("[Supabase] insert model error: %s", e)
+        log.warning("[Supabase] Client init failed: %s", e)
+        return None
 
 
-def supabase_update_model_paths(task_id: str, glb_path: str, stl_path: str) -> None:
-    """Update glb_path, stl_path, and status on the Supabase row matching meshy_task_id.
-
-    Uses meshy_task_id as the lookup key because sqlite_id is not in the remote schema.
-    """
+def upload_to_supabase(file_path: Path, folder: str = "models") -> str | None:
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        return
+        return None
+    client = get_supabase_client()
+    if not client:
+        return None
     try:
-        headers = {**_supa_headers()}
-        headers.pop("Prefer", None)
-        r = requests.patch(
-            f"{SUPABASE_URL}/rest/v1/models",
-            headers=headers,
-            params={"meshy_task_id": f"eq.{task_id}"},
-            json={"glb_path": glb_path, "stl_path": stl_path, "status": "complete"},
-            timeout=10,
+        filename = f"{folder}/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_path.name}"
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+        mime = "model/gltf-binary" if file_path.suffix == ".glb" else "application/octet-stream"
+        client.storage.from_(SUPABASE_BUCKET).upload(
+            path=filename,
+            file=file_bytes,
+            file_options={"content-type": mime, "upsert": "true"}
         )
-        if r.status_code in (200, 204):
-            log.info("[Supabase] model paths updated — task_id=%s", task_id[:10])
-        else:
-            log.warning("[Supabase] update paths failed (%s): %s", r.status_code, r.text[:120])
+        public_url = client.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
+        log.info("[Supabase] Uploaded %s → %s", file_path.name, public_url)
+        return public_url
     except Exception as e:
-        log.warning("[Supabase] update paths error: %s", e)
+        log.warning("[Supabase] Upload failed for %s: %s", file_path.name, e)
+        return None
 
 
-def supabase_log_event(step: str, status: str, message: str, progress: int, prompt: str) -> None:
-    """Append a pipeline event row to the Supabase events table. Never raises.
-
-    Schema (actual): id, created_at, event_type (NOT NULL), model_id, message, metadata
-    event_type = "{step}:{status}", extra fields stored as JSONB in metadata.
-    """
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        return
+def save_model_to_supabase(
+    prompt: str,
+    task_id: str,
+    glb_path: Path,
+    stl_path: Path,
+    glb_url: str | None,
+    stl_url: str | None
+) -> None:
     try:
-        headers = {
-            "apikey":        SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-            "Content-Type":  "application/json",
-        }
-        r = requests.post(
-            f"{SUPABASE_URL}/rest/v1/events",
-            headers=headers,
-            json={
-                "event_type": f"{step}:{status}",
-                "message":    message,
-                "metadata": {
-                    "step":     step,
-                    "status":   status,
-                    "progress": progress,
-                    "prompt":   prompt,
-                },
-            },
-            timeout=5,
-        )
-        if r.status_code not in (200, 201):
-            log.debug("[Supabase] log_event skipped (%s)", r.status_code)
-    except Exception:
-        pass
+        client = get_supabase_client()
+        if not client:
+            return
+        client.table("models").insert({
+            "prompt": prompt,
+            "meshy_task_id": task_id,
+            "glb_path": str(glb_path),
+            "stl_path": str(stl_path),
+            "glb_url": glb_url,
+            "stl_url": stl_url,
+            "status": "complete",
+        }).execute()
+        log.info("[Supabase] Model record inserted for prompt: %s", prompt[:50])
+    except Exception as e:
+        log.warning("[Supabase] Model record insert failed: %s", e)
+
+
+def log_supabase_event(
+    event_type: str,
+    model_id: int | None = None,
+    message: str = "",
+    metadata: dict | None = None
+) -> None:
+    try:
+        client = get_supabase_client()
+        if not client:
+            return
+        client.table("events").insert({
+            "event_type": event_type,
+            "model_id": model_id,
+            "message": message,
+            "metadata": metadata or {}
+        }).execute()
+        log.info("[Supabase] Event logged: %s", event_type)
+    except Exception as e:
+        log.warning("[Supabase] Event log failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -367,9 +341,6 @@ async def push_event(step: str, status: str, message: str, progress: int = 0) ->
             q.put_nowait(event)
         except asyncio.QueueFull:
             pass
-    # Log every pipeline event to Supabase events table (fire-and-forget)
-    prompt = pipeline_state.get("prompt") or ""
-    _supa_fire(supabase_log_event, step, status, message, progress, prompt)
 
 
 def _clear_event_buffer() -> None:
@@ -517,7 +488,7 @@ async def run_generation(prompt: str) -> None:
         pipeline_state["task_id"] = task_id
         log.info("[Meshy] task created — %s", task_id)
 
-        # Insert DB row (SQLite + Supabase) and create per-model directory
+        # Insert DB row (SQLite) and create per-model directory
         row_id = db_insert_model(prompt, task_id)
         pipeline_state["model_id"] = row_id
         model_dir = OUTPUT_DIR / "models" / str(row_id)
@@ -611,9 +582,8 @@ async def run_generation(prompt: str) -> None:
 
         pipeline_state["stl_path"] = str(stl_active_path)
 
-        # Persist final paths to SQLite, then mirror to Supabase via meshy task_id
+        # Persist final paths to SQLite
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
-        _supa_fire(supabase_update_model_paths, task_id, str(glb_model_path), str(stl_model_path))
 
         # ── Step 5: Upload STL to InsForge storage ────────────────────────
         await push_event("insforge", "active", "Uploading to cloud...", 78)
@@ -630,6 +600,42 @@ async def run_generation(prompt: str) -> None:
                     await push_event("insforge", "complete", "Cloud upload skipped", 88)
             except Exception as e:
                 await push_event("insforge", "complete", f"Cloud upload skipped: {e}", 88)
+
+        # ── Supabase backup — runs in background thread, never blocks pipeline ──
+        _prompt_for_backup  = prompt
+        _task_id_for_backup = task_id
+        _glb_path_for_backup = glb_model_path
+        _stl_path_for_backup = stl_model_path
+        _model_id_for_backup = row_id
+
+        def _supabase_backup():
+            try:
+                glb_url_supa = upload_to_supabase(_glb_path_for_backup, folder="glb")
+                stl_url_supa = upload_to_supabase(_stl_path_for_backup, folder="stl")
+
+                save_model_to_supabase(
+                    prompt=_prompt_for_backup,
+                    task_id=_task_id_for_backup,
+                    glb_path=_glb_path_for_backup,
+                    stl_path=_stl_path_for_backup,
+                    glb_url=glb_url_supa,
+                    stl_url=stl_url_supa
+                )
+
+                log_supabase_event(
+                    "model_generated",
+                    model_id=_model_id_for_backup,
+                    message=_prompt_for_backup,
+                    metadata={
+                        "task_id": _task_id_for_backup,
+                        "glb_url": glb_url_supa,
+                        "stl_url": stl_url_supa
+                    }
+                )
+            except Exception as e:
+                log.warning("[Supabase] Backup thread error: %s", e)
+
+        threading.Thread(target=_supabase_backup, daemon=True).start()
 
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "model_ready"
@@ -769,6 +775,13 @@ async def run_slicing() -> None:
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
 
+        threading.Thread(
+            target=log_supabase_event,
+            args=("model_sliced",),
+            kwargs={"message": f"{gcode_mb:.1f}MB gcode generated"},
+            daemon=True
+        ).start()
+
         # ── Step 3: Detect USB ─────────────────────────────────────────────
         await push_event("usb_check", "active", "Checking USB drive...", 65)
         usb_path = _find_usb()
@@ -795,6 +808,13 @@ async def run_slicing() -> None:
         log.info("[Slice] gcode written to USB — %.1f MB", gcode_mb)
         await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.1f} MB", 92)
 
+        threading.Thread(
+            target=log_supabase_event,
+            args=("usb_exported",),
+            kwargs={"message": "gcode exported to USB"},
+            daemon=True
+        ).start()
+
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "usb_ready"
         await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
@@ -811,7 +831,7 @@ async def run_slicing() -> None:
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Conjure Kiosk", version="2.1.0")
+app = FastAPI(title="Conjure Kiosk", version="2.2.0")
 
 
 @app.on_event("startup")
@@ -917,48 +937,71 @@ def api_state() -> JSONResponse:
 
 
 @app.get("/api/health")
-def api_health() -> JSONResponse:
-    # SQLite check
+def health_check() -> JSONResponse:
+    disk = shutil.disk_usage(str(BASE_DIR))
+
     try:
-        models = db_list_models()
+        conn = sqlite3.connect(str(DB_PATH))
+        model_count = conn.execute("SELECT COUNT(*) FROM models").fetchone()[0]
+        conn.close()
         db_ok = True
-        model_count = len(models)
     except Exception:
-        db_ok = False
         model_count = 0
-    # Disk free
-    disk = shutil.disk_usage(str(OUTPUT_DIR))
-    disk_free_gb = round(disk.free / (1024 ** 3), 2)
-    # Supabase connectivity check (lightweight HEAD → GET with limit=0)
-    supa_ok = False
-    if SUPABASE_URL and SUPABASE_ANON_KEY:
-        try:
-            r = requests.get(
-                f"{SUPABASE_URL}/rest/v1/models",
-                headers={
-                    "apikey":        SUPABASE_ANON_KEY,
-                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-                },
-                params={"limit": "1"},
-                timeout=5,
-            )
-            supa_ok = r.status_code in (200, 206)
-        except Exception:
-            supa_ok = False
+        db_ok = False
+
+    try:
+        sb_ok = get_supabase_client() is not None if (SUPABASE_URL and SUPABASE_ANON_KEY) else False
+    except Exception:
+        sb_ok = False
+
     return JSONResponse({
-        "status":       "ok",
-        "db":           db_ok,
-        "supabase":     supa_ok,
-        "model_count":  model_count,
-        "disk_free_gb": disk_free_gb,
+        "status": "ok",
+        "db": db_ok,
+        "model_count": model_count,
+        "disk_free_gb": round(disk.free / (1024 ** 3), 2),
         "api_keys": {
             "meshy":      bool(MESHY_API_KEY),
             "elevenlabs": bool(ELEVENLABS_API_KEY),
             "insforge":   bool(INSFORGE_API_KEY),
-            "supabase":   bool(SUPABASE_URL and SUPABASE_ANON_KEY),
         },
-        "pipeline": pipeline_state["status"],
+        "supabase_configured": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
+        "supabase_connected":  sb_ok,
+        "output_dir": str(OUTPUT_DIR),
+        "db_path":    str(DB_PATH),
     })
+
+
+@app.get("/api/supabase/status")
+def supabase_status() -> JSONResponse:
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return JSONResponse({
+            "connected": False,
+            "reason": "SUPABASE_URL or SUPABASE_ANON_KEY not set in .env"
+        })
+    try:
+        client = get_supabase_client()
+        if not client:
+            return JSONResponse({"connected": False, "reason": "Client init failed"})
+        buckets = client.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+
+        model_count = None
+        try:
+            result = client.table("models").select("id", count="exact").execute()
+            model_count = result.count
+        except Exception:
+            pass
+
+        return JSONResponse({
+            "connected": True,
+            "bucket": SUPABASE_BUCKET,
+            "bucket_exists": SUPABASE_BUCKET in bucket_names,
+            "all_buckets": bucket_names,
+            "supabase_url": SUPABASE_URL,
+            "model_count_in_supabase": model_count,
+        })
+    except Exception as e:
+        return JSONResponse({"connected": False, "reason": str(e)})
 
 
 @app.post("/api/reset")
@@ -1005,9 +1048,15 @@ async def api_speak(req: SpeakRequest) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/models")
-def api_list_models() -> JSONResponse:
-    models = db_list_models()
-    return JSONResponse({"models": models})
+def list_models() -> JSONResponse:
+    try:
+        models = db_list_models()
+        return JSONResponse({"models": models, "count": len(models)})
+    except Exception as e:
+        return JSONResponse(
+            {"models": [], "count": 0, "error": str(e)},
+            status_code=500
+        )
 
 
 @app.get("/api/models/{model_id}/glb")
@@ -1033,28 +1082,53 @@ def api_gallery_stl(model_id: int) -> FileResponse:
 
 
 @app.post("/api/models/{model_id}/select")
-def api_model_select(model_id: int) -> JSONResponse:
-    m = db_get_model(model_id)
-    if not m:
-        raise HTTPException(404, "Model not found")
-    if not m.get("glb_path") or not m.get("stl_path"):
-        raise HTTPException(400, "Model files not ready yet")
-    glb_src = Path(m["glb_path"])
-    stl_src = Path(m["stl_path"])
-    if not glb_src.exists() or not stl_src.exists():
-        raise HTTPException(404, "Model files missing from disk")
-    shutil.copy2(str(glb_src), str(OUTPUT_DIR / "model.glb"))
-    shutil.copy2(str(stl_src), str(OUTPUT_DIR / "model.stl"))
-    pipeline_state.update({
-        "status":   "model_ready",
-        "prompt":   m["prompt"],
-        "task_id":  m.get("meshy_task_id"),
-        "model_id": m["id"],
-        "glb_path": str(OUTPUT_DIR / "model.glb"),
-        "stl_path": str(OUTPUT_DIR / "model.stl"),
-        "error":    None,
-    })
-    return JSONResponse({"ok": True, "prompt": m["prompt"]})
+def select_model(model_id: int) -> JSONResponse:
+    try:
+        with _db_lock:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM models WHERE id = ?", (model_id,)
+            ).fetchone()
+            conn.close()
+
+        if not row:
+            return JSONResponse(
+                {"ok": False, "error": f"Model {model_id} not found"},
+                status_code=404
+            )
+
+        model = dict(row)
+
+        if model.get("glb_path") and Path(model["glb_path"]).exists():
+            shutil.copy2(model["glb_path"], OUTPUT_DIR / "model.glb")
+        else:
+            return JSONResponse(
+                {"ok": False, "error": "GLB file not found for this model"},
+                status_code=404
+            )
+
+        if model.get("stl_path") and Path(model["stl_path"]).exists():
+            shutil.copy2(model["stl_path"], OUTPUT_DIR / "model.stl")
+
+        pipeline_state["status"] = "model_ready"
+        pipeline_state["active_model_id"] = model_id
+
+        threading.Thread(
+            target=log_supabase_event,
+            args=("model_selected",),
+            kwargs={"model_id": model_id, "message": model.get("prompt", "")},
+            daemon=True
+        ).start()
+
+        return JSONResponse({
+            "ok": True,
+            "model_id": model_id,
+            "prompt": model.get("prompt")
+        })
+
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 # ---------------------------------------------------------------------------

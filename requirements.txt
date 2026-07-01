@@ -6,3 +6,5 @@ python-multipart==0.0.20
 aiofiles==23.2.1
 trimesh==4.12.2
 numpy==2.5.0
+supabase>=2.7.0
+websockets>=13
