@@ -6,6 +6,7 @@
 <title>CONJURE</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
 <style>
   :root {
     --green: #00ff41;
@@ -1072,7 +1073,7 @@ async function handleEngineerConfirm() {
         clearInterval(engineerPoller);
         setTimeout(() => {
           initViewer();
-          loadModel('/api/model/stl?' + Date.now());
+          loadSTL('/api/model/stl?' + Date.now());
           showScreen('s-view');
           speak('Engineering complete. Your part is ready. Tap print when ready.');
         }, 800);
@@ -1344,6 +1345,50 @@ function loadModel(url) {
     },
     undefined,
     (err) => console.error('GLB load error:', err)
+  );
+}
+
+function loadSTL(url) {
+  if (!window.THREE) { console.error('THREE not loaded'); return; }
+  if (!THREE.STLLoader) { console.error('STLLoader not loaded'); return; }
+
+  const loader = new THREE.STLLoader();
+  loader.load(
+    url,
+    (geometry) => {
+      if (model3d) scene.remove(model3d);
+
+      geometry.computeVertexNormals();
+
+      const material = new THREE.MeshPhongMaterial({
+        color: 0x22cc44,
+        emissive: 0x003300,
+        emissiveIntensity: 0.5,
+        specular: 0x88ffaa,
+        shininess: 100,
+        side: THREE.DoubleSide,
+      });
+
+      model3d = new THREE.Mesh(geometry, material);
+
+      const box = new THREE.Box3().setFromObject(model3d);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scaleFactor = 2.5 / maxDim;
+
+      model3d.scale.setScalar(scaleFactor);
+      model3d.position.set(
+        -center.x * scaleFactor,
+        -center.y * scaleFactor,
+        -center.z * scaleFactor
+      );
+
+      scene.add(model3d);
+      setMaterial('solid');
+    },
+    undefined,
+    (err) => console.error('STL load error:', err)
   );
 }
 
