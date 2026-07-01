@@ -61,6 +61,8 @@
   .screen.active { display: flex; }
 
   #s-view { padding-top: 0; }
+  #s-idle { justify-content: flex-start; align-items: stretch; padding-top: 52px; overflow-y: auto; }
+  #s-speak, #s-engineer { justify-content: center; padding-top: 52px; overflow-y: auto; }
   #s-library { justify-content: flex-start; padding-top: 52px; }
   #s-engineer-generating {
     justify-content: flex-start;
@@ -111,7 +113,12 @@
     font-weight: 600;
     color: var(--text-1);
     letter-spacing: -0.3px;
+    cursor: pointer;
+    opacity: 0.95;
+    transition: opacity 0.15s ease;
   }
+
+  #nav-logo:hover { opacity: 1; }
 
   #nav-status {
     font-size: 13px;
@@ -119,6 +126,13 @@
     letter-spacing: 0.2px;
   }
 
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #nav-home-btn,
   #nav-library-btn {
     display: flex;
     align-items: center;
@@ -132,6 +146,7 @@
     font-weight: 500;
   }
 
+  #nav-home-btn:hover,
   #nav-library-btn:hover {
     background: var(--surface-2);
     color: var(--text-1);
@@ -143,9 +158,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 40px;
+    gap: 36px;
     width: 100%;
-    max-width: 640px;
+    max-width: 760px;
     padding: 0 24px;
   }
 
@@ -171,29 +186,340 @@
   }
 
   .mode-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
     width: 100%;
   }
 
   .mode-card {
     display: flex;
-    align-items: center;
-    gap: 20px;
-    padding: 20px 24px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 24px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     cursor: pointer;
     transition: all 0.15s ease;
     text-align: left;
+    height: 100%;
   }
 
   .mode-card:hover {
     background: var(--surface-2);
     border-color: #333;
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+  }
+
+  .mode-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    font-size: 12px;
+    color: var(--text-3);
+    letter-spacing: 0.2px;
+  }
+
+  @media (max-width: 640px) {
+    .mode-cards { grid-template-columns: 1fr; }
+  }
+
+  /* ════════ LANDING PAGE ════════ */
+  .landing {
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 24px 56px;
+  }
+
+  .hero {
+    position: relative;
+    text-align: center;
+    padding: 72px 0 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 48px;
+    left: 50%;
+    width: 760px;
+    height: 380px;
+    transform: translateX(-50%);
+    background: radial-gradient(closest-side, var(--accent-glow), transparent);
+    filter: blur(44px);
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .hero-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  .hero-title {
+    font-size: 52px;
+    line-height: 1.08;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    color: var(--text-1);
+    max-width: 820px;
+  }
+
+  .hero-sub {
+    font-size: 18px;
+    line-height: 1.6;
+    color: var(--text-2);
+    max-width: 640px;
+  }
+
+  .hero-cta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .hero-btn {
+    height: 48px;
+    padding: 0 24px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 15px;
+    flex: 0 0 auto;
+    border-radius: var(--radius-md);
+  }
+
+  .section {
+    padding: 56px 0;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .section-head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-eyebrow {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #a5b4fc;
+  }
+
+  .section-title {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.6px;
+    color: var(--text-1);
+  }
+
+  .section-lead {
+    font-size: 16px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .step-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--accent-glow);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step-card h3 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+
+  .step-card p {
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .mode-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .feature-card h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-1);
+    letter-spacing: -0.3px;
+  }
+
+  .feature-desc {
+    font-size: 15px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .feature-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .feature-list li {
+    position: relative;
+    padding-left: 24px;
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  .feature-list li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  .card-cta {
+    margin-top: 6px;
+    height: 46px;
+    padding: 0 22px;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    font-size: 14px;
+    border-radius: var(--radius-md);
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+
+  .mini-feature {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mini-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a5b4fc;
+  }
+
+  .mini-feature h4 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+
+  .mini-feature p {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .site-footer {
+    border-top: 1px solid var(--border-soft);
+    padding: 32px 0 8px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .site-footer > div:first-child {
+    font-size: 14px;
+    color: var(--text-2);
+    font-weight: 500;
+  }
+
+  .footer-note {
+    font-size: 13px;
+    color: var(--text-3);
+  }
+
+  @media (max-width: 860px) {
+    .hero-title { font-size: 38px; }
+    .steps-grid { grid-template-columns: repeat(2, 1fr); }
+    .mode-grid { grid-template-columns: 1fr; }
+    .features-grid { grid-template-columns: 1fr; }
   }
 
   .mode-card-icon {
@@ -248,13 +574,51 @@
 
   /* ════════ SPEAK ════════ */
   .speak-container {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 28px;
+    gap: 22px;
     width: 100%;
     max-width: 560px;
     padding: 0 24px;
+  }
+
+  /* Soft accent glow behind the composer so the screen doesn't read as empty. */
+  .speak-container::before {
+    content: '';
+    position: absolute;
+    top: 46%;
+    left: 50%;
+    width: 540px;
+    height: 360px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(closest-side, var(--accent-glow), transparent);
+    filter: blur(30px);
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .speak-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  .prompt-suggestions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
   }
 
   .speak-header { text-align: center; }
@@ -392,6 +756,184 @@
 
   .back-btn { align-self: flex-start; }
 
+  /* ════════ PROMPT COMPOSER (type + voice) ════════ */
+  .compose-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .prompt-composer {
+    position: relative;
+    width: 100%;
+  }
+
+  .prompt-input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.6;
+    padding: 16px 60px 16px 18px;
+    resize: none;
+    min-height: 96px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .prompt-input:focus { border-color: var(--accent); }
+  .prompt-input::placeholder { color: var(--text-3); }
+
+  .mic-inline {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .mic-inline:hover {
+    border-color: var(--accent);
+    color: var(--text-1);
+  }
+
+  .mic-inline.recording {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: var(--accent);
+    color: #818cf8;
+    animation: mic-pulse 1.5s ease-in-out infinite;
+  }
+
+  .mic-caption {
+    font-size: 13px;
+    color: var(--text-3);
+    padding-left: 2px;
+  }
+
+  .speak-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 12px;
+  }
+
+  .speak-actions .btn-primary { flex: 0 0 auto; }
+
+  /* ════════ TWO-COLUMN MODE LAYOUT (compose + info aside) ════════ */
+  .compose-layout {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 32px;
+    width: 100%;
+    max-width: 980px;
+    padding: 40px 24px;
+    align-items: start;
+  }
+
+  .compose-main {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    align-items: stretch;
+  }
+
+  .compose-main > .speak-badge { align-self: flex-start; }
+  .compose-main .speak-header,
+  .compose-main .engineer-header { text-align: left; }
+  .compose-main .speak-container::before { display: none; }
+
+  .compose-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .aside-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+  }
+
+  .aside-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 14px;
+  }
+
+  .aside-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .aside-list li {
+    position: relative;
+    padding-left: 22px;
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .aside-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: #a5b4fc;
+  }
+
+  .aside-steps {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .aside-steps li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  .aside-steps li span {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    background: var(--accent-glow);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  @media (max-width: 820px) {
+    .compose-layout { grid-template-columns: 1fr; max-width: 560px; }
+    .compose-aside { display: none; }
+  }
+
   /* ════════ PROGRESS (generating / slicing / engineering) ════════ */
   .progress-container {
     display: flex;
@@ -522,45 +1064,63 @@
     left: 0; right: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 16px 24px;
+    padding: 20px 32px;
     pointer-events: none;
   }
 
   .view-prompt-pill {
-    background: rgba(13,13,13,0.7);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background: rgba(20,20,20,0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--border);
     border-radius: 20px;
-    padding: 6px 14px;
-    font-size: 13px;
+    padding: 9px 18px;
+    font-size: 14px;
     color: var(--text-2);
     font-style: italic;
     pointer-events: none;
-    max-width: 300px;
+    max-width: 440px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .material-toggle-group {
+  .view-overlay-bottom {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 28px 32px;
+    background: linear-gradient(to top, rgba(13,13,13,0.94) 0%, rgba(13,13,13,0.45) 55%, transparent 100%);
     display: flex;
-    background: rgba(13,13,13,0.8);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    pointer-events: none;
+  }
+
+  .view-bottom-left {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: auto;
+  }
+
+  .material-toggle-group {
+    display: inline-flex;
+    width: fit-content;
+    background: rgba(20,20,20,0.8);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     overflow: hidden;
-    pointer-events: all;
   }
 
   .mat-btn {
     background: transparent;
     border: none;
     color: var(--text-3);
-    padding: 7px 14px;
-    font-size: 13px;
+    padding: 11px 22px;
+    font-size: 14px;
     font-weight: 500;
     border-right: 1px solid var(--border);
     transition: all 0.15s;
@@ -572,51 +1132,48 @@
 
   .mat-btn.active { color: var(--text-1); background: var(--surface-2); }
 
-  .view-overlay-bottom {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    padding: 20px 24px;
-    background: linear-gradient(to top, rgba(13,13,13,0.9) 0%, transparent 100%);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
   .view-hint {
     font-size: 13px;
     color: var(--text-3);
+    padding-left: 4px;
   }
 
   .view-actions {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     align-items: center;
+    pointer-events: auto;
   }
 
   .view-btn-primary {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     background: var(--accent);
     color: white;
-    padding: 10px 20px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
+    height: 52px;
+    padding: 0 30px;
+    border-radius: var(--radius-md);
+    font-size: 15px;
     font-weight: 600;
     border: none;
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.25);
   }
 
   .view-btn-primary:hover { background: var(--accent-dim); }
 
   .view-btn-secondary {
-    background: rgba(13,13,13,0.7);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    display: inline-flex;
+    align-items: center;
+    background: rgba(20,20,20,0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--border);
     color: var(--text-2);
-    padding: 10px 16px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
+    height: 52px;
+    padding: 0 26px;
+    border-radius: var(--radius-md);
+    font-size: 15px;
     font-weight: 500;
   }
 
@@ -1034,7 +1591,7 @@
 
 <!-- ════════ TOP NAV (persistent) ════════ -->
 <nav id="top-nav">
-  <div id="nav-logo">
+  <div id="nav-logo" onclick="goHome()" title="Home">
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#6366f1" stroke-width="1.5"/>
       <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#6366f1" opacity="0.4"/>
@@ -1042,86 +1599,239 @@
     <span>Conjure</span>
   </div>
   <div id="nav-status"></div>
-  <button id="nav-library-btn" onclick="openLibrary()">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-      <rect x="2" y="2" width="5" height="5" rx="1"/>
-      <rect x="9" y="2" width="5" height="5" rx="1"/>
-      <rect x="2" y="9" width="5" height="5" rx="1"/>
-      <rect x="9" y="9" width="5" height="5" rx="1"/>
-    </svg>
-    Library
-  </button>
+  <div class="nav-actions">
+    <button id="nav-home-btn" onclick="goHome()" title="Return to the home page and start fresh">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 10.5 12 3l9 7.5"/>
+        <path d="M5 9.5V21h14V9.5"/>
+        <path d="M9 21v-6h6v6"/>
+      </svg>
+      Home
+    </button>
+    <button id="nav-library-btn" onclick="openLibrary()" title="Browse every model you've generated">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="2" y="2" width="5" height="5" rx="1"/>
+        <rect x="9" y="2" width="5" height="5" rx="1"/>
+        <rect x="2" y="9" width="5" height="5" rx="1"/>
+        <rect x="9" y="9" width="5" height="5" rx="1"/>
+      </svg>
+      Library
+    </button>
+  </div>
 </nav>
 
 <!-- ════════ SCREEN 1 — IDLE ════════ -->
 <div id="s-idle" class="screen">
-  <div class="idle-container">
-    <div class="idle-header">
-      <h1>What would you like to build?</h1>
-      <p>Describe any object and Conjure will generate a printable 3D model.</p>
+  <div class="landing">
+
+    <!-- ── HERO ── -->
+    <section class="hero">
+      <div class="hero-badge"><span class="hero-dot"></span> AI voice &amp; text to 3D printing</div>
+      <h1 class="hero-title">Describe it out loud.<br>Conjure prints it in 3D.</h1>
+      <p class="hero-sub">Conjure turns a spoken or typed description into a real, 3D‑printable model. Generate it with AI, inspect it in an interactive 3D viewer, then slice it and send it straight to your printer — no CAD skills required.</p>
+      <div class="hero-cta">
+        <button class="btn-primary hero-btn" onclick="goToSpeak()" title="Describe an object by voice or text and let Meshy AI build a 3D model">Start creating →</button>
+        <button class="btn-secondary hero-btn" onclick="goToEngineer()" title="Describe a functional part; the AI researches real specs and generates precise CAD">Engineer a part</button>
+        <button class="btn-ghost hero-btn" onclick="openLibrary()" title="Browse the models you've already generated">View library</button>
+      </div>
+    </section>
+
+    <!-- ── HOW IT WORKS ── -->
+    <section class="section">
+      <div class="section-head">
+        <span class="section-eyebrow">How it works</span>
+        <h2 class="section-title">Four steps from idea to object</h2>
+        <p class="section-lead">You never open modeling software. Conjure handles the geometry, the preview, and the print prep for you.</p>
+      </div>
+      <div class="steps-grid">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <h3>Describe</h3>
+          <p>Type it, or hold the mic and say what you want — “a hexagonal plant pot,” “a wall bracket for a 2‑inch pipe.”</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <h3>Generate</h3>
+          <p>AI builds the 3D model. Speak or type uses Meshy for creative shapes; Engineer researches specs and writes parametric CAD.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <h3>Inspect</h3>
+          <p>Rotate, zoom, and switch between solid, edges, and wireframe views to check the model before you commit.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <h3>Print</h3>
+          <p>Conjure slices the model for your printer and exports the file to USB — or dispatches it straight to the machine.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TWO MODES ── -->
+    <section class="section">
+      <div class="section-head">
+        <span class="section-eyebrow">Two ways to build</span>
+        <h2 class="section-title">Pick the workflow that fits</h2>
+        <p class="section-lead">A creative object or a functional part — Conjure has a mode tuned for each.</p>
+      </div>
+      <div class="mode-grid">
+        <div class="feature-card">
+          <div class="mode-card-icon speak-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+          <h3>Speak or type</h3>
+          <p class="feature-desc">Describe any object by voice or text and Meshy AI generates a printable 3D mesh. Best for figurines, décor, gifts, and quick prototypes.</p>
+          <ul class="feature-list">
+            <li>Voice or keyboard input</li>
+            <li>Creative, organic shapes</li>
+            <li>Ready in a couple of minutes</li>
+          </ul>
+          <button class="btn-primary card-cta" onclick="goToSpeak()" title="Open the Speak or type screen">Start with Speak or type →</button>
+        </div>
+        <div class="feature-card">
+          <div class="mode-card-icon engineer-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/>
+            </svg>
+          </div>
+          <h3>Engineer</h3>
+          <p class="feature-desc">Describe a functional part. The AI researches real dimensions and material specs, generates precise parametric CAD, and prepares it for print.</p>
+          <ul class="feature-list">
+            <li>Researched, real‑world dimensions</li>
+            <li>Parametric OpenSCAD geometry</li>
+            <li>Best for brackets, mounts, clips, enclosures</li>
+          </ul>
+          <button class="btn-secondary card-cta" onclick="goToEngineer()" title="Open the Engineer screen">Start with Engineer →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── FEATURES ── -->
+    <section class="section">
+      <div class="section-head">
+        <span class="section-eyebrow">What you get</span>
+        <h2 class="section-title">Everything from words to a finished print</h2>
+      </div>
+      <div class="features-grid">
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
+          <h4>Voice or text input</h4>
+          <p>Speak naturally or type — whichever is faster for you.</p>
+        </div>
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+          <h4>Interactive 3D preview</h4>
+          <p>Drag to rotate and scroll to zoom before you print anything.</p>
+        </div>
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+          <h4>Solid, edges &amp; wire views</h4>
+          <p>Switch material modes to inspect surfaces and geometry.</p>
+        </div>
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg></div>
+          <h4>Print‑ready export</h4>
+          <p>Slices to gcode and writes to USB, or sends to the printer.</p>
+        </div>
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+          <h4>Model library</h4>
+          <p>Everything you make is saved so you can revisit or reprint it.</p>
+        </div>
+        <div class="mini-feature">
+          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5L13 3z"/></svg></div>
+          <h4>No CAD skills needed</h4>
+          <p>The AI does the modeling — you just describe the result.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── FOOTER ── -->
+    <footer class="site-footer">
+      <div>Conjure · autonomous 3D fabrication</div>
+      <div class="footer-note">Powered by Meshy AI, OpenSCAD &amp; CuraEngine · prints on your local Neptune 4 Pro</div>
+    </footer>
+
+  </div>
+</div>
+
+<!-- ════════ SCREEN 2 — SPEAK / TYPE ════════ -->
+<div id="s-speak" class="screen">
+  <div class="compose-layout">
+    <div class="compose-main">
+    <div class="speak-badge">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+      </svg>
+      Speak or type
     </div>
-    <div class="mode-cards">
-      <div class="mode-card" onclick="goToSpeak()">
-        <div class="mode-card-icon speak-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <div class="speak-header">
+      <h2>Describe what you want to build</h2>
+      <p>Type your idea, or hold the mic to speak it</p>
+    </div>
+    <div class="compose-group">
+      <div class="prompt-composer">
+        <textarea
+          id="prompt-input"
+          class="prompt-input"
+          rows="3"
+          placeholder="e.g. a low-poly fox figurine with a bushy tail"
+          spellcheck="true"
+          data-gramm="false"
+          data-gramm_editor="false"
+          data-enable-grammarly="false"
+          oninput="onPromptInput()"
+        ></textarea>
+        <button id="mic-btn" class="mic-inline" type="button" title="Hold to speak">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
             <line x1="12" y1="19" x2="12" y2="23"/>
             <line x1="8" y1="23" x2="16" y2="23"/>
           </svg>
-        </div>
-        <div class="mode-card-content">
-          <h3>Speak</h3>
-          <p>Hold to describe any object. Meshy AI generates a 3D model from your voice.</p>
-        </div>
-        <div class="mode-card-arrow">→</div>
+        </button>
       </div>
-      <div class="mode-card" onclick="goToEngineer()">
-        <div class="mode-card-icon engineer-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/>
-          </svg>
-        </div>
-        <div class="mode-card-content">
-          <h3>Engineer</h3>
-          <p>Describe a functional part. The AI researches real specs and generates precise CAD geometry.</p>
-        </div>
-        <div class="mode-card-arrow">→</div>
+      <div id="mic-label" class="mic-caption">Hold the mic to speak</div>
+    </div>
+    <div class="prompt-suggestions">
+      <span class="examples-label">Try:</span>
+      <button class="example-pill" onclick="useExample(this)">a low-poly fox figurine</button>
+      <button class="example-pill" onclick="useExample(this)">a hexagonal plant pot</button>
+      <button class="example-pill" onclick="useExample(this)">a desktop phone stand</button>
+      <button class="example-pill" onclick="useExample(this)">a dragon keychain</button>
+    </div>
+    <div class="speak-actions">
+      <button class="btn-ghost" onclick="goToIdle()" title="Return to the home page">← Back</button>
+      <button id="btn-generate" class="btn-primary" onclick="handleConfirm()" disabled title="Send your description to the AI and build the 3D model">Generate model →</button>
+    </div>
+    </div>
+    <aside class="compose-aside">
+      <div class="aside-card">
+        <div class="aside-title">Tips for better results</div>
+        <ul class="aside-list">
+          <li>Name the object first — “a mug,” “a phone stand.”</li>
+          <li>Add size, style or detail — “tall,” “hexagonal,” “low‑poly.”</li>
+          <li>Describe one object at a time.</li>
+          <li>Say it's for 3D printing if it should be solid.</li>
+        </ul>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- ════════ SCREEN 2 — SPEAK ════════ -->
-<div id="s-speak" class="screen">
-  <div class="speak-container">
-    <div class="speak-header">
-      <h2>Describe what you want to build</h2>
-      <p>Hold the button and speak clearly</p>
-    </div>
-    <div class="mic-area">
-      <button id="mic-btn" class="mic-button">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" y1="19" x2="12" y2="23"/>
-          <line x1="8" y1="23" x2="16" y2="23"/>
-        </svg>
-        <span id="mic-label">Hold to speak</span>
-      </button>
-      <div id="mic-hint" class="mic-hint">Release when done speaking</div>
-    </div>
-    <div id="transcript-box" class="transcript-box">
-      <p id="transcript-placeholder" class="transcript-placeholder">Your words will appear here...</p>
-      <p id="transcript-text" class="transcript-text" style="display:none"></p>
-    </div>
-    <div id="action-btns" class="action-buttons" style="display:none">
-      <button class="btn-secondary" onclick="handleRedo()">Start over</button>
-      <button class="btn-primary" onclick="handleConfirm()">Generate model →</button>
-    </div>
-    <button class="btn-ghost back-btn" onclick="showScreen('s-idle')">← Back</button>
+      <div class="aside-card">
+        <div class="aside-title">What happens next</div>
+        <ol class="aside-steps">
+          <li><span>1</span> AI generates your 3D model</li>
+          <li><span>2</span> Inspect it in the 3D viewer</li>
+          <li><span>3</span> Slice &amp; send to the printer</li>
+        </ol>
+      </div>
+    </aside>
   </div>
 </div>
 
@@ -1182,19 +1892,21 @@
 
   <div class="view-overlay-top">
     <div class="view-prompt-pill" id="view-prompt"></div>
-    <div class="material-toggle-group">
-      <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')">Solid</button>
-      <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">Edges</button>
-      <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">Wire</button>
-    </div>
   </div>
 
   <div class="view-overlay-bottom">
-    <div class="view-hint">Drag to rotate · Scroll to zoom</div>
+    <div class="view-bottom-left">
+      <div class="material-toggle-group">
+        <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')" title="Shaded solid surfaces — how the print will look">Solid</button>
+        <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')" title="Solid with highlighted edges to read the geometry">Edges</button>
+        <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')" title="Wireframe mesh only — see the underlying triangles">Wire</button>
+      </div>
+      <div class="view-hint">Drag to rotate · scroll to zoom</div>
+    </div>
     <div class="view-actions">
-      <button class="view-btn-secondary" onclick="goToSpeak()">Start over</button>
-      <button class="view-btn-primary" id="btn-print" onclick="handlePrint()">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <button class="view-btn-secondary" onclick="goToSpeak()" title="Discard this model and describe a new one">Start over</button>
+      <button class="view-btn-primary" id="btn-print" onclick="handlePrint()" title="Slice this model for the printer and export the file to USB">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M4 6V2h8v4"/>
           <path d="M4 12H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-2"/>
           <rect x="4" y="10" width="8" height="5" rx="1"/>
@@ -1290,7 +2002,8 @@
 
 <!-- ════════ SCREEN 8 — ENGINEER INPUT ════════ -->
 <div id="s-engineer" class="screen">
-  <div class="engineer-container">
+  <div class="compose-layout">
+    <div class="compose-main">
     <div class="engineer-header">
       <div class="engineer-badge">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1317,11 +2030,31 @@
       </div>
     </div>
     <div class="engineer-actions">
-      <button class="btn-ghost" onclick="showScreen('s-idle')">← Back</button>
-      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;padding: 12px 28px;">
+      <button class="btn-ghost" onclick="showScreen('s-idle')" title="Return to the home page">← Back</button>
+      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;padding: 12px 28px;" title="Research specs, generate parametric CAD, and prepare the part">
         Start engineering →
       </button>
     </div>
+    </div>
+    <aside class="compose-aside">
+      <div class="aside-card">
+        <div class="aside-title">How Engineer works</div>
+        <ol class="aside-steps">
+          <li><span>1</span> Researches real dimensions &amp; specs</li>
+          <li><span>2</span> Generates parametric OpenSCAD CAD</li>
+          <li><span>3</span> Renders &amp; slices for your printer</li>
+          <li><span>4</span> Reviews the design for strength</li>
+        </ol>
+      </div>
+      <div class="aside-card">
+        <div class="aside-title">Best for</div>
+        <ul class="aside-list">
+          <li>Brackets, mounts &amp; clips</li>
+          <li>Enclosures &amp; adapters</li>
+          <li>Parts with exact dimensions</li>
+        </ul>
+      </div>
+    </aside>
   </div>
 </div>
 
@@ -1426,6 +2159,10 @@ function showScreen(id) {
   };
   const navStatus = document.getElementById('nav-status');
   if (navStatus) navStatus.textContent = screenNames[id] || '';
+
+  // The Home button is redundant on the idle screen itself.
+  const homeBtn = document.getElementById('nav-home-btn');
+  if (homeBtn) homeBtn.style.display = (id === 's-idle') ? 'none' : 'flex';
 }
 
 /* ════════ GLOBALS ════════ */
@@ -1534,51 +2271,53 @@ function safeStart() {
   try { recognition.start(); } catch (e) { /* still winding down; onstart/onend settle it */ }
 }
 
+// The prompt textarea is the single source of truth — voice writes into it,
+// and the user can type or edit it freely. Both paths feed handleConfirm().
+function promptInputEl() { return document.getElementById('prompt-input'); }
+
+function onPromptInput() {
+  const gen = document.getElementById('btn-generate');
+  const el = promptInputEl();
+  if (gen) gen.disabled = !(el && el.value.trim());
+}
+
+function useExample(btn) {
+  const el = promptInputEl();
+  if (el) { el.value = btn.textContent.trim(); el.focus(); }
+  onPromptInput();
+}
+
 function renderTranscript() {
-  const ph = document.getElementById('transcript-placeholder');
-  const tx = document.getElementById('transcript-text');
-  const btns = document.getElementById('action-btns');
-  const full = transcript + interimText;
-  if (full.trim()) {
-    if (ph) ph.style.display = 'none';
-    if (tx) { tx.style.display = 'inline'; tx.textContent = full; }
-    if (btns) btns.style.display = 'flex';
-  } else {
-    if (ph) ph.style.display = 'inline';
-    if (tx) { tx.style.display = 'none'; tx.textContent = ''; }
-    if (btns) btns.style.display = 'none';
-  }
+  const el = promptInputEl();
+  if (el) el.value = transcript + interimText;
+  onPromptInput();
 }
 
 function updateMicUI(listening) {
   const btn = document.getElementById('mic-btn');
   const label = document.getElementById('mic-label');
   if (btn) btn.classList.toggle('recording', listening);
-  if (label) label.textContent = listening ? 'Listening...' : 'Hold to speak';
+  if (label) label.textContent = listening ? 'Listening… release when done' : 'Hold the mic to speak';
 }
 
 function showSpeechMessage(msg) {
-  const ph = document.getElementById('transcript-placeholder');
-  const tx = document.getElementById('transcript-text');
-  if (ph) { ph.style.display = 'inline'; ph.textContent = msg; }
-  if (tx) tx.style.display = 'none';
+  const label = document.getElementById('mic-label');
+  if (label) label.textContent = msg;
 }
 
 function startListening() {
   if (!speechSupported) {
-    showSpeechMessage('Speech input is not available in this browser — try Chrome.');
+    showSpeechMessage('Voice needs Chrome — type your prompt instead.');
     return;
   }
   if (isListening) return;
   isListening = true;
-  transcript = '';
+  // Continue from whatever is already typed so voice appends rather than wipes.
+  const el = promptInputEl();
+  transcript = el ? el.value : '';
+  if (transcript && !/\s$/.test(transcript)) transcript += ' ';
   interimText = '';
   clearTimeout(restartTimer);
-  const ph = document.getElementById('transcript-placeholder');
-  if (ph) { ph.style.display = 'inline'; ph.textContent = DEFAULT_PLACEHOLDER; }
-  document.getElementById('transcript-text').style.display = 'none';
-  document.getElementById('transcript-text').textContent = '';
-  document.getElementById('action-btns').style.display = 'none';
   updateMicUI(true);
   safeStart();
 }
@@ -1592,8 +2331,10 @@ function stopListening() {
   if (interimText.trim()) {
     transcript += interimText;
     interimText = '';
-    renderTranscript();
   }
+  const el = promptInputEl();
+  if (el) el.value = transcript;
+  onPromptInput();
   try { recognition.stop(); } catch (e) {}
   updateMicUI(false);
 }
@@ -1601,11 +2342,9 @@ function stopListening() {
 function handleRedo() {
   transcript = '';
   interimText = '';
-  const ph = document.getElementById('transcript-placeholder');
-  if (ph) { ph.style.display = 'inline'; ph.textContent = DEFAULT_PLACEHOLDER; }
-  document.getElementById('transcript-text').style.display = 'none';
-  document.getElementById('transcript-text').textContent = '';
-  document.getElementById('action-btns').style.display = 'none';
+  const el = promptInputEl();
+  if (el) el.value = '';
+  onPromptInput();
 }
 
 const micBtn = document.getElementById('mic-btn');
@@ -1705,7 +2444,8 @@ function handleSliceEvent(d) {
 
 /* ════════ GENERATE FLOW ════════ */
 function handleConfirm() {
-  const p = transcript.trim();
+  const el = document.getElementById('prompt-input');
+  const p = (el ? el.value : '').trim();
   if (!p) return;
   currentPrompt = p;
   stopListening();
@@ -1728,7 +2468,7 @@ function handleConfirm() {
       closeEvents();
       showScreen('s-view');
       initViewer();
-      loadModel('/api/model/glb');
+      loadModel('/api/model/glb?' + Date.now());
       resetIdle();
       speak('Your model is ready. Drag to rotate, then tap print this.');
     } else if (d.status === 'error') {
@@ -1900,8 +2640,8 @@ async function loadLibrary() {
           <div class="library-card-prompt">${escapeHtml(prompt)}</div>
           <div class="library-card-date">${escapeHtml(date)}</div>
           <div class="library-card-actions">
-            <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})">View</button>
-            <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})">Print</button>
+            <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})" title="Open this model in the 3D viewer">View</button>
+            <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})" title="Load this model and prepare it for printing">Print</button>
           </div>
         </div>
       `;
@@ -2441,7 +3181,7 @@ window.addEventListener('load', () => {
       if (st && st.status === 'model_ready') {
         showScreen('s-view');
         initViewer();
-        loadModel('/api/model/glb');
+        loadModel('/api/model/glb?' + Date.now());
       } else if (st && st.status === 'usb_ready') {
         showScreen('s-slicing');
         resetSliceSteps();
