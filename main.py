@@ -251,7 +251,7 @@ def _clear_event_buffer() -> None:
 # ---------------------------------------------------------------------------
 def speak(text: str) -> None:
     if not ELEVENLABS_API_KEY:
-        print(f"[TTS] No ElevenLabs key — skipping: {text}")
+        _speak_fallback(text)
         return
     try:
         r = requests.post(
@@ -274,8 +274,22 @@ def speak(text: str) -> None:
             os.system(f"mpg123 -q {audio_path} &")
         else:
             print(f"[TTS] ElevenLabs error {r.status_code}: {r.text[:100]}")
+            _speak_fallback(text)
     except Exception as e:
         print(f"[TTS] speak() failed: {e}")
+        _speak_fallback(text)
+
+
+def _speak_fallback(text: str) -> None:
+    import platform
+    if platform.system() == "Darwin":
+        safe = text.replace('"', '\\"')
+        os.system(f'say "{safe}" &')
+    elif shutil.which("espeak"):
+        safe = text.replace('"', '\\"')
+        os.system(f'espeak "{safe}" &')
+    else:
+        print(f"[TTS] fallback: {text}")
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +306,24 @@ def _find_usb():
             for child in parent.iterdir():
                 if child.is_mount():
                     return str(child)
+    # macOS: find external removable USB volumes under /Volumes
+    volumes = Path("/Volumes")
+    if volumes.exists():
+        import subprocess
+        for vol in sorted(volumes.iterdir()):
+            if not vol.is_dir() or vol.name in (".localized",):
+                continue
+            info = subprocess.run(
+                ["diskutil", "info", str(vol)],
+                capture_output=True, text=True
+            )
+            info_text = info.stdout
+            # Only accept actual removable USB drives
+            is_removable = "Removable Media:          Yes" in info_text or "Removable Media:  Yes" in info_text
+            is_usb = "Protocol:                 USB" in info_text or "Bus Protocol:             USB" in info_text
+            is_internal = "Solid State:              Yes" in info_text and not is_usb
+            if (is_removable or is_usb) and not is_internal:
+                return str(vol)
     return None
 
 
@@ -450,15 +482,19 @@ async def run_generation(prompt: str) -> None:
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
 
         # ── Step 5: Upload STL to InsForge storage ────────────────────────
-        await push_event("insforge", "active", "Uploading STL to InsForge...", 78)
-        try:
-            stl_url = await asyncio.to_thread(upload_to_insforge_storage, stl_active_path)
-            if stl_url:
-                await push_event("insforge", "complete", "STL uploaded to InsForge", 88)
-            else:
-                await push_event("insforge", "error", "InsForge upload skipped/failed (non-fatal)", 88)
-        except Exception as e:
-            await push_event("insforge", "error", f"InsForge upload failed (non-fatal): {e}", 88)
+        await push_event("insforge", "active", "Uploading to cloud...", 78)
+        stl_size_mb = stl_active_path.stat().st_size / (1024 * 1024)
+        if stl_size_mb > 20:
+            await push_event("insforge", "complete", f"STL too large for cloud ({stl_size_mb:.0f} MB) — skipped", 88)
+        else:
+            try:
+                cloud_url = await asyncio.to_thread(upload_to_insforge_storage, stl_active_path)
+                if cloud_url:
+                    await push_event("insforge", "complete", "Saved to cloud", 88)
+                else:
+                    await push_event("insforge", "complete", "Cloud upload skipped", 88)
+            except Exception as e:
+                await push_event("insforge", "complete", f"Cloud upload skipped: {e}", 88)
 
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "model_ready"
@@ -718,6 +754,20 @@ async def api_slice(background_tasks: BackgroundTasks) -> JSONResponse:
 def api_usb_status() -> JSONResponse:
     path = _find_usb()
     return JSONResponse({"mounted": path is not None, "path": path or USB_MOUNT_PATH})
+
+
+@app.post("/api/copy-stl")
+def api_copy_stl() -> JSONResponse:
+    stl = OUTPUT_DIR / "model.stl"
+    if not stl.exists():
+        raise HTTPException(400, "No STL file — generate a model first")
+    usb = _find_usb()
+    if usb is None:
+        raise HTTPException(503, "No USB drive found — insert a USB drive and try again")
+    dest = Path(usb) / "conjure_model.stl"
+    shutil.copy2(str(stl), str(dest))
+    mb = dest.stat().st_size / (1024 * 1024)
+    return JSONResponse({"status": "ok", "path": str(dest), "size_mb": round(mb, 2)})
 
 
 @app.get("/api/state")

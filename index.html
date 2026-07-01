@@ -174,7 +174,7 @@
     flex-shrink:0;
   ">
     <div style="font-size:64px">🎙</div>
-    <div id="mic-label" style="font-size:12px;letter-spacing:3px;color:var(--dim)">HOLD TO SPEAK</div>
+    <div id="mic-label" style="font-size:13px;letter-spacing:3px;color:var(--dim)">HOLD TO SPEAK</div>
   </div>
 
   <div id="transcript-box" style="
@@ -336,15 +336,13 @@
       color:var(--green);font-family:monospace;
       font-size:20px;letter-spacing:3px;cursor:pointer;
     ">PRINT THIS</button>
-    <a href="/api/model/stl" download="model.stl" style="
+    <button id="btn-stl" onclick="copyStlToUsb()" style="
       flex:1;height:72px;
       background:transparent;
       border:2px solid var(--amber);border-left:none;border-right:1px solid var(--amber);
       color:var(--amber);font-family:monospace;
       font-size:16px;letter-spacing:2px;cursor:pointer;
-      display:flex;align-items:center;justify-content:center;
-      text-decoration:none;
-    ">↓ STL</a>
+    ">↓ USB STL</button>
     <button onclick="goToSpeak()" style="
       flex:1;height:72px;
       background:transparent;
@@ -450,8 +448,8 @@
   <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #1a3a1a;flex-shrink:0;background:#0a0e0a;">
     <div style="font-size:18px;letter-spacing:4px;color:#00ff41">LIBRARY</div>
     <div style="display:flex;gap:12px">
-      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;">← BACK</button>
-      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;">⌂ HOME</button>
+      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:44px;min-height:44px;">← BACK</button>
+      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:44px;min-height:44px;">⌂ HOME</button>
     </div>
   </div>
 
@@ -789,6 +787,39 @@ function showError(msg) {
   speak('Something went wrong. Please try again.');
 }
 
+/* ════════ COPY STL TO USB ════════ */
+async function copyStlToUsb() {
+  const btn = document.getElementById('btn-stl');
+  const orig = btn.textContent;
+  btn.textContent = 'COPYING...';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/copy-stl', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed');
+    btn.textContent = '✓ COPIED';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color = 'var(--green)';
+    speak('STL file copied to USB drive.');
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.borderColor = 'var(--amber)';
+      btn.style.color = 'var(--amber)';
+      btn.disabled = false;
+    }, 3000);
+  } catch (e) {
+    btn.textContent = '✗ ' + e.message.slice(0, 20);
+    btn.style.borderColor = 'var(--red)';
+    btn.style.color = 'var(--red)';
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.borderColor = 'var(--amber)';
+      btn.style.color = 'var(--amber)';
+      btn.disabled = false;
+    }, 3000);
+  }
+}
+
 /* ════════ RESET ════════ */
 function resetAll() {
   closeEvents();
@@ -847,10 +878,10 @@ async function loadLibrary() {
       card.innerHTML = `
         <div style="height:100px;background:#0a0e0a;border:1px solid #1a3a1a;display:flex;align-items:center;justify-content:center;font-size:28px;color:#1a3a1a;">◻</div>
         <div style="font-size:13px;color:#00ff41;line-height:1.5;word-break:break-word">${escapeHtml(String(prompt))}</div>
-        <div style="font-size:11px;color:#555;letter-spacing:1px">${escapeHtml(String(date).slice(0,16))}</div>
+        <div style="font-size:13px;color:#555;letter-spacing:1px">${escapeHtml(String(date).slice(0,16))}</div>
         <div style="display:flex;gap:8px;margin-top:4px">
-          <button style="flex:1;height:40px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;" onclick="selectModelFromLibrary(${JSON.stringify(id)})">VIEW</button>
-          <button style="flex:1;height:40px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;" onclick="printModelFromLibrary(${JSON.stringify(id)})">PRINT</button>
+          <button style="flex:1;height:44px;min-height:44px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:13px;letter-spacing:2px;cursor:pointer;" onclick="selectModelFromLibrary(${JSON.stringify(id)})">VIEW</button>
+          <button style="flex:1;height:44px;min-height:44px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;cursor:pointer;" onclick="printModelFromLibrary(${JSON.stringify(id)})">PRINT</button>
         </div>
       `;
       grid.appendChild(card);
