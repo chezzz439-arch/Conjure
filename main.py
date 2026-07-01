@@ -104,6 +104,16 @@ _DECO_NOISE = re.compile(
     re.IGNORECASE,
 )
 
+# A "with X" clause is treated as flat surface decoration only when it names an
+# actual surface treatment (pattern, texture, engraving, logo, stars…). Anything
+# else — "with shark fins on the sides", "with a handle" — is a structural
+# feature the user wants built as real 3D geometry.
+_SURFACE_DECO_RE = re.compile(
+    r"\b(?:patterns?|textures?|textured|engrav\w+|emboss\w+|etch\w+|designs?|motifs?"
+    r"|logos?|prints?|stars?|dots?|stripes?|geometric|floral|swirls?|filigree|inlays?)\b",
+    re.IGNORECASE,
+)
+
 # Structural descriptions for common objects so Meshy understands the form first
 _OBJECT_SHAPES = {
     # Furniture
@@ -182,17 +192,29 @@ def build_meshy_prompt(raw: str) -> str:
     else:
         parts.append(f"3D printable {base_object}")
 
-    # Decoration goes second — strip trailing filler phrases ("on it", "on the design", etc.)
+    # Decoration / added-feature clause. Two distinct cases:
+    #   • Surface decoration (pattern, texture, engraving, stars, logo…) — emboss
+    #     it flat and explicitly forbid shape changes.
+    #   • Structural feature ("with shark fins on the sides", "with a handle") —
+    #     the user wants real geometry, so ask for it as actual 3D form and keep
+    #     the location words. Skipped for stands/holders, whose "with X" usually
+    #     means the item being held (handled by the stand branch below).
     if decoration:
-        deco_clean = _DECO_NOISE.sub("", decoration).strip()
-        # Strip leading "with"
-        deco_clean = re.sub(r"^with\s+", "", deco_clean, flags=re.IGNORECASE).strip()
-        if deco_clean:
-            # Avoid doubling: "geometric patterns pattern" — only append " pattern" if not already there
-            suffix = "" if re.search(r"\bpatterns?\b", deco_clean, re.IGNORECASE) else " pattern"
+        deco_raw = re.sub(r"^\s*with\s+", "", decoration, flags=re.IGNORECASE).strip()
+        is_stand = bool(_STAND_RE.search(base_object))
+        if _SURFACE_DECO_RE.search(deco_raw):
+            deco_clean = _DECO_NOISE.sub("", deco_raw).strip()
+            if deco_clean:
+                # Avoid doubling: "geometric patterns pattern" — only append " pattern" if not already there
+                suffix = "" if re.search(r"\bpatterns?\b", deco_clean, re.IGNORECASE) else " pattern"
+                parts.append(
+                    f"{deco_clean}{suffix} embossed on the surface as decoration only, "
+                    f"do NOT change the overall shape of the object"
+                )
+        elif not is_stand and deco_raw:
             parts.append(
-                f"{deco_clean}{suffix} embossed on the surface as decoration only, "
-                f"do NOT change the overall shape of the object"
+                f"with {deco_raw}, modeled as actual raised 3D geometry that is part "
+                f"of the object, not a flat surface texture"
             )
 
     # For stands/holders: explicitly empty so nothing sits on top
