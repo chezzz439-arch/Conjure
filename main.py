@@ -43,6 +43,9 @@ OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
 DB_PATH              = BASE_DIR / "conjure.db"
 ELEVENLABS_API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "models").mkdir(exist_ok=True)
@@ -95,6 +98,7 @@ _OBJECT_SHAPES = {
     "cable organizer": "flat tray with slots or hooks for organizing cables",
 }
 
+
 def build_meshy_prompt(raw: str) -> str:
     cleaned = _FILLER.sub("", raw).strip().rstrip(".,!?")
     cleaned = re.sub(r"^(?:a|an|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
@@ -124,7 +128,6 @@ def build_meshy_prompt(raw: str) -> str:
 
     # Decoration goes second, explicitly as surface embellishment not the shape
     if decoration:
-        # e.g. "with a star on it" → "with a star embossed on the surface as decoration"
         deco_clean = re.sub(r"\s+on\s+(it|the\s+\w+)$", "", decoration, flags=re.IGNORECASE).strip()
         parts.append(f"{deco_clean} embossed on the surface as decoration, not as the overall shape")
 
@@ -140,6 +143,7 @@ def build_meshy_prompt(raw: str) -> str:
     parts.append("single solid object, clean manifold mesh, no other objects, isolated on empty background, suitable for FDM printing")
 
     return ", ".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # SQLite gallery
@@ -165,8 +169,8 @@ def init_db() -> None:
 
 
 def db_insert_model(prompt: str, task_id: str) -> int:
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with _db_lock:
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn = sqlite3.connect(str(DB_PATH))
         cur = conn.execute(
             "INSERT INTO models (prompt, meshy_task_id, created_at) VALUES (?, ?, ?)",
@@ -175,7 +179,9 @@ def db_insert_model(prompt: str, task_id: str) -> int:
         conn.commit()
         row_id = cur.lastrowid
         conn.close()
-        return row_id
+    # Mirror to Supabase — fire-and-forget, never blocks pipeline
+    _supa_fire(supabase_insert_model, prompt, task_id)
+    return row_id
 
 
 def db_update_model_paths(row_id: int, glb_path: str, stl_path: str) -> None:
@@ -187,6 +193,7 @@ def db_update_model_paths(row_id: int, glb_path: str, stl_path: str) -> None:
         )
         conn.commit()
         conn.close()
+    # Supabase update is fired by run_generation (needs task_id, not sqlite row_id)
 
 
 def db_list_models() -> list:
@@ -214,6 +221,118 @@ def db_get_model(row_id: int):
 
 # Initialize DB at startup
 init_db()
+
+
+# ---------------------------------------------------------------------------
+# Supabase integration — fire-and-forget; failures never block the pipeline
+# ---------------------------------------------------------------------------
+
+def _supa_fire(fn, *args, **kwargs) -> None:
+    """Run a Supabase function in a daemon thread — fire-and-forget."""
+    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
+
+
+def _supa_headers() -> dict:
+    return {
+        "apikey":        SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        "Content-Type":  "application/json",
+        "Prefer":        "return=representation",
+    }
+
+
+def supabase_insert_model(prompt: str, task_id: str) -> None:
+    """Insert a model row into the Supabase models table.
+
+    Schema (actual): id, prompt, created_at, meshy_task_id, glb_path, stl_path,
+                     glb_url, stl_url, status, device_id
+    """
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return
+    try:
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/models",
+            headers=_supa_headers(),
+            json={
+                "prompt":        prompt,
+                "meshy_task_id": task_id,
+                "glb_path":      None,
+                "stl_path":      None,
+                "glb_url":       None,
+                "stl_url":       None,
+                "status":        "generating",
+            },
+            timeout=10,
+        )
+        if r.status_code in (200, 201):
+            rows = r.json()
+            row = rows[0] if isinstance(rows, list) and rows else {}
+            log.info("[Supabase] model inserted — supa_id=%s task_id=%s", row.get("id"), task_id[:10])
+        else:
+            log.warning("[Supabase] insert model failed (%s): %s", r.status_code, r.text[:120])
+    except Exception as e:
+        log.warning("[Supabase] insert model error: %s", e)
+
+
+def supabase_update_model_paths(task_id: str, glb_path: str, stl_path: str) -> None:
+    """Update glb_path, stl_path, and status on the Supabase row matching meshy_task_id.
+
+    Uses meshy_task_id as the lookup key because sqlite_id is not in the remote schema.
+    """
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return
+    try:
+        headers = {**_supa_headers()}
+        headers.pop("Prefer", None)
+        r = requests.patch(
+            f"{SUPABASE_URL}/rest/v1/models",
+            headers=headers,
+            params={"meshy_task_id": f"eq.{task_id}"},
+            json={"glb_path": glb_path, "stl_path": stl_path, "status": "complete"},
+            timeout=10,
+        )
+        if r.status_code in (200, 204):
+            log.info("[Supabase] model paths updated — task_id=%s", task_id[:10])
+        else:
+            log.warning("[Supabase] update paths failed (%s): %s", r.status_code, r.text[:120])
+    except Exception as e:
+        log.warning("[Supabase] update paths error: %s", e)
+
+
+def supabase_log_event(step: str, status: str, message: str, progress: int, prompt: str) -> None:
+    """Append a pipeline event row to the Supabase events table. Never raises.
+
+    Schema (actual): id, created_at, event_type (NOT NULL), model_id, message, metadata
+    event_type = "{step}:{status}", extra fields stored as JSONB in metadata.
+    """
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return
+    try:
+        headers = {
+            "apikey":        SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            "Content-Type":  "application/json",
+        }
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/events",
+            headers=headers,
+            json={
+                "event_type": f"{step}:{status}",
+                "message":    message,
+                "metadata": {
+                    "step":     step,
+                    "status":   status,
+                    "progress": progress,
+                    "prompt":   prompt,
+                },
+            },
+            timeout=5,
+        )
+        if r.status_code not in (200, 201):
+            log.debug("[Supabase] log_event skipped (%s)", r.status_code)
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Pipeline state
@@ -248,6 +367,9 @@ async def push_event(step: str, status: str, message: str, progress: int = 0) ->
             q.put_nowait(event)
         except asyncio.QueueFull:
             pass
+    # Log every pipeline event to Supabase events table (fire-and-forget)
+    prompt = pipeline_state.get("prompt") or ""
+    _supa_fire(supabase_log_event, step, status, message, progress, prompt)
 
 
 def _clear_event_buffer() -> None:
@@ -281,10 +403,10 @@ def speak(text: str) -> None:
                 f.write(r.content)
             os.system(f"mpg123 -q {audio_path} &")
         else:
-            print(f"[TTS] ElevenLabs error {r.status_code}: {r.text[:100]}")
+            log.warning("[TTS] ElevenLabs error %s: %s", r.status_code, r.text[:100])
             _speak_fallback(text)
     except Exception as e:
-        print(f"[TTS] speak() failed: {e}")
+        log.warning("[TTS] speak() failed: %s", e)
         _speak_fallback(text)
 
 
@@ -297,7 +419,7 @@ def _speak_fallback(text: str) -> None:
         safe = text.replace('"', '\\"')
         os.system(f'espeak "{safe}" &')
     else:
-        print(f"[TTS] fallback: {text}")
+        log.info("[TTS] fallback: %s", text)
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +448,6 @@ def _find_usb():
                 capture_output=True, text=True
             )
             info_text = info.stdout
-            # Only accept actual removable USB drives
             is_removable = "Removable Media:          Yes" in info_text or "Removable Media:  Yes" in info_text
             is_usb = "Protocol:                 USB" in info_text or "Bus Protocol:             USB" in info_text
             is_internal = "Solid State:              Yes" in info_text and not is_usb
@@ -342,10 +463,8 @@ INSFORGE_BUCKET = os.getenv("INSFORGE_STORAGE_BUCKET_CONJURE", "conjure-models")
 
 
 def upload_to_insforge_storage(file_path: Path, bucket: str = INSFORGE_BUCKET):
-    # Multipart POST to the bucket's /objects collection; the server assigns a
-    # unique key (returned in JSON). Public read URL is /objects/{key}.
     if not INSFORGE_API_KEY:
-        print("[InsForge] storage: no key — skipping")
+        log.info("[InsForge] no key — skipping")
         return None
     try:
         with open(file_path, "rb") as f:
@@ -355,16 +474,16 @@ def upload_to_insforge_storage(file_path: Path, bucket: str = INSFORGE_BUCKET):
                 files={"file": (file_path.name, f, "application/octet-stream")},
                 timeout=30,
             )
-        print(f"[InsForge] storage: HTTP {r.status_code}")
+        log.info("[InsForge] storage: HTTP %s", r.status_code)
         if r.status_code in (200, 201):
             key = (r.json() or {}).get("key", file_path.name)
             url = f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket}/objects/{key}"
-            print(f"[InsForge] storage: uploaded — {url}")
+            log.info("[InsForge] uploaded — %s", url)
             return url
-        print(f"[InsForge] storage upload failed ({r.status_code}): {r.text[:100]}")
+        log.warning("[InsForge] upload failed (%s): %s", r.status_code, r.text[:100])
         return None
     except Exception as e:
-        print(f"[InsForge] storage error ({e})")
+        log.warning("[InsForge] error: %s", e)
         return None
 
 
@@ -377,13 +496,15 @@ async def run_generation(prompt: str) -> None:
         # ── Step 1: Create Meshy task ──────────────────────────────────────
         await push_event("create", "active", "Sending prompt to Meshy AI...", 2)
         threading.Thread(target=speak, args=("Got it. Conjuring your model now.",), daemon=True).start()
+        meshy_prompt = build_meshy_prompt(prompt)
+        log.info("[Meshy] prompt → %s", meshy_prompt)
         r = await asyncio.to_thread(
             requests.post,
             f"{MESHY_BASE}/v2/text-to-3d",
             headers=MESHY_HEADERS,
             json={
                 "mode": "preview",
-                "prompt": build_meshy_prompt(prompt),
+                "prompt": meshy_prompt,
                 "art_style": "realistic",
                 "negative_prompt": "low quality, low resolution, ugly, deformed, scene, environment, multiple objects, people, hands, text, labels",
             },
@@ -394,8 +515,9 @@ async def run_generation(prompt: str) -> None:
 
         task_id = r.json()["result"]
         pipeline_state["task_id"] = task_id
+        log.info("[Meshy] task created — %s", task_id)
 
-        # Insert DB row and create per-model directory
+        # Insert DB row (SQLite + Supabase) and create per-model directory
         row_id = db_insert_model(prompt, task_id)
         pipeline_state["model_id"] = row_id
         model_dir = OUTPUT_DIR / "models" / str(row_id)
@@ -455,6 +577,7 @@ async def run_generation(prompt: str) -> None:
 
         pipeline_state["glb_path"] = str(glb_active_path)
         glb_kb = len(glb_resp.content) // 1024
+        log.info("[Gen] GLB saved — %d KB", glb_kb)
         await push_event("download_glb", "complete", f"GLB saved — {glb_kb} KB", 65)
 
         # ── Step 4: STL (direct URL or convert from GLB) ─────────────────
@@ -470,6 +593,7 @@ async def run_generation(prompt: str) -> None:
             async with aiofiles.open(stl_active_path, "wb") as f:
                 await f.write(stl_resp.content)
             stl_kb = len(stl_resp.content) // 1024
+            log.info("[Gen] STL downloaded — %d KB", stl_kb)
             await push_event("download_stl", "complete", f"STL downloaded — {stl_kb} KB", 75)
         else:
             await push_event("download_stl", "active", "Converting GLB → STL via trimesh...", 68)
@@ -482,17 +606,20 @@ async def run_generation(prompt: str) -> None:
             await asyncio.to_thread(_convert_glb_to_stl)
             shutil.copy2(str(stl_model_path), str(stl_active_path))
             stl_kb = stl_model_path.stat().st_size // 1024
+            log.info("[Gen] STL converted — %d KB", stl_kb)
             await push_event("download_stl", "complete", f"STL converted — {stl_kb} KB", 75)
 
         pipeline_state["stl_path"] = str(stl_active_path)
 
-        # Persist final paths to DB
+        # Persist final paths to SQLite, then mirror to Supabase via meshy task_id
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
+        _supa_fire(supabase_update_model_paths, task_id, str(glb_model_path), str(stl_model_path))
 
         # ── Step 5: Upload STL to InsForge storage ────────────────────────
         await push_event("insforge", "active", "Uploading to cloud...", 78)
         stl_size_mb = stl_active_path.stat().st_size / (1024 * 1024)
         if stl_size_mb > 20:
+            log.info("[Gen] STL too large for cloud upload (%.1f MB) — skipping", stl_size_mb)
             await push_event("insforge", "complete", f"STL too large for cloud ({stl_size_mb:.0f} MB) — skipped", 88)
         else:
             try:
@@ -506,10 +633,12 @@ async def run_generation(prompt: str) -> None:
 
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "model_ready"
+        log.info("[Gen] complete — model_id=%s prompt=%r", row_id, prompt)
         await push_event("complete", "complete", "Model ready — tap PRINT THIS to slice", 100)
         threading.Thread(target=speak, args=("Your model is ready. Tap Print This to slice it.",), daemon=True).start()
 
     except Exception as exc:
+        log.error("[Gen] pipeline error: %s", exc)
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
@@ -535,6 +664,7 @@ async def run_slicing() -> None:
         if not stl_path.exists():
             raise Exception("model.stl not found — generate a model first")
         stl_kb = stl_path.stat().st_size // 1024
+        log.info("[Slice] STL loaded — %d KB", stl_kb)
         await push_event("load_stl", "complete", f"STL loaded — {stl_kb} KB", 12)
 
         # Clear any stale gcode so the size checks below are meaningful
@@ -565,9 +695,11 @@ async def run_slicing() -> None:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
                 if proc.returncode == 0 and gcode_path.exists() and gcode_path.stat().st_size > 5000:
                     gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
+                    log.info("[Slice] OrcaSlicer complete — %.1f MB", gcode_mb)
                     await push_event("slice", "complete", f"OrcaSlicer: gcode ready — {gcode_mb:.1f} MB", 60)
                     sliced = True
                 else:
+                    log.warning("[Slice] OrcaSlicer failed (rc=%s) — falling back to CuraEngine", proc.returncode)
                     await push_event("slice", "active", "OrcaSlicer failed — trying CuraEngine...", 22)
             except asyncio.TimeoutError:
                 if proc is not None:
@@ -575,19 +707,19 @@ async def run_slicing() -> None:
                         proc.kill()
                     except Exception:
                         pass
+                log.warning("[Slice] OrcaSlicer timed out — falling back to CuraEngine")
                 await push_event("slice", "active", "OrcaSlicer timed out — trying CuraEngine...", 22)
-            except Exception:
+            except Exception as e:
+                log.warning("[Slice] OrcaSlicer exception: %s", e)
                 await push_event("slice", "active", "OrcaSlicer error — trying CuraEngine...", 22)
         else:
+            log.info("[Slice] OrcaSlicer not found at %s — using CuraEngine", orca_path)
             await push_event("slice", "active", "OrcaSlicer not found — using CuraEngine...", 18)
 
         # ── Step 2b: Fallback to CuraEngine ───────────────────────────────
         if not sliced:
             if gcode_path.exists():
                 gcode_path.unlink()
-            # CuraEngine needs a real machine definition via -j (inherits
-            # fdmprinter) plus an explicit extruder train (-e0). fdmprinter/
-            # fdmextruder are resolved from CURA_ENGINE_SEARCH_PATH (set below).
             cura_cmd = [
                 cura_path, "slice",
                 "-j", str(cura_profile),
@@ -615,6 +747,7 @@ async def run_slicing() -> None:
                 if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
                     raise Exception("Gcode output empty — slicing failed")
                 gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
+                log.info("[Slice] CuraEngine complete — %.1f MB", gcode_mb)
                 await push_event("slice", "complete", f"CuraEngine: gcode ready — {gcode_mb:.1f} MB", 60)
                 sliced = True
             except asyncio.TimeoutError:
@@ -644,6 +777,7 @@ async def run_slicing() -> None:
                 f"USB drive not mounted — insert USB and ensure it mounts at "
                 f"{USB_MOUNT_PATH} or /mnt/usb"
             )
+        log.info("[Slice] USB found at %s", usb_path)
         await push_event("usb_check", "complete", f"USB found at {usb_path}", 72)
 
         # ── Step 4: Copy gcode to USB ─────────────────────────────────────
@@ -658,6 +792,7 @@ async def run_slicing() -> None:
         )
         await sync_proc.wait()
         await asyncio.sleep(1)
+        log.info("[Slice] gcode written to USB — %.1f MB", gcode_mb)
         await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.1f} MB", 92)
 
         # ── Done ──────────────────────────────────────────────────────────
@@ -666,6 +801,7 @@ async def run_slicing() -> None:
         threading.Thread(target=speak, args=("Done. Remove the USB drive and insert it into your printer.",), daemon=True).start()
 
     except Exception as exc:
+        log.error("[Slice] pipeline error: %s", exc)
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(exc)
         await push_event("error", "error", str(exc), 0)
@@ -675,7 +811,7 @@ async def run_slicing() -> None:
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Conjure Kiosk", version="2.0.0")
+app = FastAPI(title="Conjure Kiosk", version="2.1.0")
 
 
 @app.on_event("startup")
@@ -683,6 +819,7 @@ async def startup_event() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
     log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
+    log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -781,6 +918,7 @@ def api_state() -> JSONResponse:
 
 @app.get("/api/health")
 def api_health() -> JSONResponse:
+    # SQLite check
     try:
         models = db_list_models()
         db_ok = True
@@ -788,17 +926,36 @@ def api_health() -> JSONResponse:
     except Exception:
         db_ok = False
         model_count = 0
+    # Disk free
     disk = shutil.disk_usage(str(OUTPUT_DIR))
     disk_free_gb = round(disk.free / (1024 ** 3), 2)
+    # Supabase connectivity check (lightweight HEAD → GET with limit=0)
+    supa_ok = False
+    if SUPABASE_URL and SUPABASE_ANON_KEY:
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/models",
+                headers={
+                    "apikey":        SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                },
+                params={"limit": "1"},
+                timeout=5,
+            )
+            supa_ok = r.status_code in (200, 206)
+        except Exception:
+            supa_ok = False
     return JSONResponse({
-        "status": "ok",
-        "db": db_ok,
-        "model_count": model_count,
+        "status":       "ok",
+        "db":           db_ok,
+        "supabase":     supa_ok,
+        "model_count":  model_count,
         "disk_free_gb": disk_free_gb,
         "api_keys": {
-            "meshy":       bool(MESHY_API_KEY),
-            "elevenlabs":  bool(ELEVENLABS_API_KEY),
-            "insforge":    bool(INSFORGE_API_KEY),
+            "meshy":      bool(MESHY_API_KEY),
+            "elevenlabs": bool(ELEVENLABS_API_KEY),
+            "insforge":   bool(INSFORGE_API_KEY),
+            "supabase":   bool(SUPABASE_URL and SUPABASE_ANON_KEY),
         },
         "pipeline": pipeline_state["status"],
     })
@@ -935,4 +1092,4 @@ async def sse_events() -> StreamingResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
