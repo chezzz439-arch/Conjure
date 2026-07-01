@@ -2,557 +2,1395 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>CONJURE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conjure</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
 <style>
   :root {
-    --green: #00ff41;
-    --dim: #00aa2a;
-    --dark: #0a0e0a;
-    --panel: #0f140f;
-    --border: #1a3a1a;
-    --amber: #ffaa00;
-    --red: #ff4444;
-    --white: #ffffff;
-    --gray: #555555;
+    --bg:          #0d0d0d;
+    --surface:     #141414;
+    --surface-2:   #1a1a1a;
+    --border:      #262626;
+    --border-soft: #1f1f1f;
+    --text-1:      #ffffff;
+    --text-2:      #a0a0a0;
+    --text-3:      #555555;
+    --accent:      #6366f1;
+    --accent-dim:  #4f46e5;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --green:       #22c55e;
+    --green-dim:   #16a34a;
+    --amber:       #f59e0b;
+    --red:         #ef4444;
+    --radius-sm:   6px;
+    --radius-md:   10px;
+    --radius-lg:   16px;
   }
 
-  * {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    -webkit-tap-highlight-color: transparent;
-    -webkit-user-select: none;
-    user-select: none;
-  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
   html, body {
-    background: #0a0e0a;
-    color: #00ff41;
-    font-family: monospace;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
   }
 
   body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    font-size: 15px;
+    line-height: 1.6;
     display: flex;
     flex-direction: column;
   }
 
   .screen {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-top: 52px;
   }
 
-  button:active {
-    opacity: 0.6;
+  .screen.active { display: flex; }
+
+  #s-view { padding-top: 0; }
+  #s-library { justify-content: flex-start; padding-top: 52px; }
+  #s-engineer-generating {
+    justify-content: flex-start;
+    padding-top: 72px;
+    padding-bottom: 40px;
+    overflow-y: auto;
   }
 
-  /* Idle ring pulse */
-  @keyframes pulse-ring {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(0,255,65,0.4); }
-    50% { box-shadow: 0 0 0 16px rgba(0,255,65,0); }
+  button {
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    border: none;
+    outline: none;
+    transition: all 0.15s ease;
   }
-  #idle-ring { animation: pulse-ring 2s ease-in-out infinite; }
 
-  /* Step rows (shared by generating + slicing) */
-  .step-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 14px 0;
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ════════ TOP NAV ════════ */
+  #top-nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    background: rgba(13,13,13,0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border);
-  }
-  .step-icon {
-    font-size: 20px;
-    color: var(--gray);
-    width: 24px;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    z-index: 100;
     flex-shrink: 0;
-    margin-top: 2px;
   }
-  .step-body { flex: 1; }
-  .step-title { font-size: 16px; color: var(--white); }
-  .step-msg { font-size: 13px; color: var(--dim); margin-top: 4px; min-height: 18px; }
 
-  .spinner {
+  #nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-1);
+    letter-spacing: -0.3px;
+  }
+
+  #nav-status {
+    font-size: 13px;
+    color: var(--text-3);
+    letter-spacing: 0.2px;
+  }
+
+  #nav-library-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  #nav-library-btn:hover {
+    background: var(--surface-2);
+    color: var(--text-1);
+    border-color: var(--border-soft);
+  }
+
+  /* ════════ IDLE ════════ */
+  .idle-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 40px;
+    width: 100%;
+    max-width: 640px;
+    padding: 0 24px;
+  }
+
+  .idle-header {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .idle-header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.8px;
+    color: var(--text-1);
+    line-height: 1.2;
+  }
+
+  .idle-header p {
+    font-size: 16px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .mode-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .mode-card {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+  }
+
+  .mode-card:hover {
+    background: var(--surface-2);
+    border-color: #333;
+    transform: translateY(-1px);
+  }
+
+  .mode-card-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .speak-icon {
+    background: rgba(99, 102, 241, 0.12);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  .engineer-icon {
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+  }
+
+  .mode-card-content { flex: 1; }
+
+  .mode-card-content h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 4px;
+    letter-spacing: -0.2px;
+  }
+
+  .mode-card-content p {
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .mode-card-arrow {
+    font-size: 18px;
+    color: var(--text-3);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .mode-card:hover .mode-card-arrow {
+    transform: translateX(4px);
+    color: var(--text-2);
+  }
+
+  /* ════════ SPEAK ════════ */
+  .speak-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    width: 100%;
+    max-width: 560px;
+    padding: 0 24px;
+  }
+
+  .speak-header { text-align: center; }
+
+  .speak-header h2 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-1);
+    margin-bottom: 8px;
+  }
+
+  .speak-header p {
+    font-size: 15px;
+    color: var(--text-2);
+  }
+
+  .mic-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .mic-button {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    color: var(--text-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    transition: all 0.2s ease;
+  }
+
+  .mic-button:hover {
+    background: var(--surface-2);
+    border-color: var(--accent);
+    color: var(--text-1);
+  }
+
+  .mic-button.recording {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: var(--accent);
+    color: #818cf8;
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08), 0 0 0 16px rgba(99, 102, 241, 0.04);
+    animation: mic-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08), 0 0 0 16px rgba(99, 102, 241, 0.04); }
+    50% { box-shadow: 0 0 0 12px rgba(99, 102, 241, 0.06), 0 0 0 24px rgba(99, 102, 241, 0.02); }
+  }
+
+  .mic-hint {
+    font-size: 13px;
+    color: var(--text-3);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .mic-button.recording ~ .mic-hint { opacity: 1; }
+
+  .transcript-box {
+    width: 100%;
+    min-height: 80px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px 20px;
+  }
+
+  .transcript-placeholder {
+    color: var(--text-3);
+    font-size: 15px;
+  }
+
+  .transcript-text {
+    color: var(--text-1);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .btn-primary {
+    flex: 1;
+    background: var(--accent);
+    color: white;
+    padding: 12px 24px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+  }
+
+  .btn-primary:hover { background: var(--accent-dim); }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text-2);
+    padding: 12px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--surface-2);
+    color: var(--text-1);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-3);
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    border: none;
+  }
+
+  .btn-ghost:hover { color: var(--text-2); }
+
+  .back-btn { align-self: flex-start; }
+
+  /* ════════ PROGRESS (generating / slicing / engineering) ════════ */
+  .progress-container {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    width: 100%;
+    max-width: 480px;
+    padding: 0 24px;
+  }
+
+  .progress-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .progress-spinner {
     width: 20px;
     height: 20px;
     border: 2px solid var(--border);
-    border-top-color: var(--green);
+    border-top-color: var(--accent);
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    display: inline-block;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* USB-ready flash */
-  @keyframes usb-flash {
-    0%, 100% { border-color: var(--green); color: var(--green); }
-    50% { border-color: var(--dim); color: var(--dim); }
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
   }
 
-  /* Material toggle buttons (viewer) */
-  .mat-btn {
-    background: rgba(10,14,10,0.85);
-    border: 1px solid #1a3a1a;
-    color: #00aa2a;
-    font-family: monospace;
+  .progress-header h2 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: var(--text-1);
+  }
+
+  .progress-prompt {
+    font-size: 14px;
+    color: var(--text-2);
+    font-style: italic;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .steps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .step-item:last-child { border-bottom: none; }
+
+  .step-icon-wrap {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .step-icon {
+    font-size: 16px;
+    color: var(--text-3);
+    line-height: 1;
+  }
+
+  .step-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+  }
+
+  .step-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-2);
+  }
+
+  .step-msg {
+    font-size: 12px;
+    color: var(--text-3);
+    min-height: 16px;
+  }
+
+  .step-item.active .step-name { color: var(--text-1); }
+  .step-item.active .step-icon { color: var(--accent); }
+  .step-item.done .step-name { color: var(--text-2); }
+  .step-item.done .step-icon { color: var(--green); }
+  .step-item.error .step-icon { color: var(--red); }
+
+  .step-spinner {
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  .progress-track {
+    height: 3px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+
+  /* ════════ VIEW ════════ */
+  .view-overlay-top {
+    position: absolute;
+    top: 64px;
+    left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    pointer-events: none;
+  }
+
+  .view-prompt-pill {
+    background: rgba(13,13,13,0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
     font-size: 13px;
-    letter-spacing: 2px;
-    padding: 10px 16px;
-    cursor: pointer;
-    text-align: left;
-    min-width: 110px;
+    color: var(--text-2);
+    font-style: italic;
+    pointer-events: none;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .mat-btn.active {
-    border-color: #00ff41;
-    color: #00ff41;
-    background: rgba(0,255,65,0.08);
+  .material-toggle-group {
+    display: flex;
+    background: rgba(13,13,13,0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    pointer-events: all;
   }
+
+  .mat-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border-right: 1px solid var(--border);
+    transition: all 0.15s;
+  }
+
+  .mat-btn:last-child { border-right: none; }
+
+  .mat-btn:hover { color: var(--text-2); background: var(--surface); }
+
+  .mat-btn.active { color: var(--text-1); background: var(--surface-2); }
+
+  .view-overlay-bottom {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 20px 24px;
+    background: linear-gradient(to top, rgba(13,13,13,0.9) 0%, transparent 100%);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .view-hint {
+    font-size: 13px;
+    color: var(--text-3);
+  }
+
+  .view-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .view-btn-primary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent);
+    color: white;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+  }
+
+  .view-btn-primary:hover { background: var(--accent-dim); }
+
+  .view-btn-secondary {
+    background: rgba(13,13,13,0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .view-btn-secondary:hover {
+    background: var(--surface);
+    color: var(--text-1);
+  }
+
+  /* ════════ USB READY (slicing) ════════ */
+  .usb-ready {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    border-radius: var(--radius-md);
+  }
+
+  .usb-ready-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--green);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .usb-ready-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .usb-ready-text strong {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--green);
+  }
+
+  .usb-ready-text span {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  /* ════════ ERROR ════════ */
+  .error-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    max-width: 400px;
+    padding: 0 24px;
+    text-align: center;
+  }
+
+  .error-icon {
+    width: 64px;
+    height: 64px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--red);
+  }
+
+  .error-container h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-1);
+    letter-spacing: -0.4px;
+  }
+
+  .error-container p {
+    font-size: 15px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  /* ════════ LIBRARY ════════ */
+  .library-container {
+    width: 100%;
+    max-width: 900px;
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .library-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .library-header h2 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-1);
+    margin-bottom: 4px;
+  }
+
+  .library-header p {
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  .library-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+  }
+
+  .library-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: all 0.15s ease;
+  }
+
+  .library-card:hover {
+    border-color: #333;
+    transform: translateY(-2px);
+  }
+
+  .library-card-thumb {
+    height: 140px;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 40px;
+  }
+
+  .library-card-body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .library-card-prompt {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-1);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .library-card-date {
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .library-card-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .library-card-actions .btn-sm {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+  }
+
+  .btn-sm-primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+  }
+
+  .btn-sm-primary:hover { background: var(--accent-dim); }
+
+  .btn-sm-secondary {
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+  }
+
+  .btn-sm-secondary:hover {
+    background: var(--surface-2);
+    color: var(--text-1);
+  }
+
+  .library-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 60px 24px;
+    text-align: center;
+  }
+
+  .library-empty-icon {
+    width: 64px;
+    height: 64px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+  }
+
+  .library-empty h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+
+  .library-empty p {
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  /* ════════ ENGINEER INPUT ════════ */
+  .engineer-container {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    width: 100%;
+    max-width: 580px;
+    padding: 0 24px;
+  }
+
+  .engineer-header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .engineer-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    color: var(--green);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    width: fit-content;
+    letter-spacing: 0.3px;
+  }
+
+  .engineer-header h2 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-1);
+  }
+
+  .engineer-header p {
+    font-size: 15px;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .engineer-input-area {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .engineer-textarea {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: 15px;
+    padding: 16px 18px;
+    resize: vertical;
+    min-height: 120px;
+    line-height: 1.6;
+    transition: border-color 0.15s;
+    outline: none;
+  }
+
+  .engineer-textarea:focus { border-color: var(--accent); }
+
+  .engineer-textarea::placeholder { color: var(--text-3); }
+
+  .engineer-examples {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .examples-label {
+    font-size: 13px;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+
+  .example-pill {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+
+  .example-pill:hover {
+    background: var(--surface-2);
+    color: var(--text-1);
+    border-color: #333;
+  }
+
+  .engineer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* ════════ ENGINEER GENERATING PANELS ════════ */
+  #eg-progress-bar { background: var(--green); }
+
+  .engineer-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+  }
+
+  .engineer-panel-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 12px;
+  }
+
+  .specs-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .spec-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .spec-label {
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .spec-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-1);
+    font-family: monospace;
+  }
+
+  .scad-viewer {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--green);
+    background: var(--bg);
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre;
+    line-height: 1.5;
+  }
+
+  .analysis-line {
+    font-size: 13px;
+    font-family: monospace;
+    padding: 4px 0;
+    line-height: 1.5;
+  }
+
+  .analysis-ok { color: var(--green); }
+  .analysis-warn { color: var(--amber); }
+  .analysis-fail { color: var(--red); }
+  .analysis-info { color: var(--text-2); }
 </style>
 </head>
 <body>
 
-<!-- Persistent LIBRARY button — fixed top-right on every screen -->
-<div id="lib-btn" onclick="openLibrary()" style="
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 9999;
-  background: rgba(10,14,10,0.85);
-  border: 1px solid #1a3a1a;
-  color: #00aa2a;
-  font-family: monospace;
-  font-size: 13px;
-  letter-spacing: 2px;
-  padding: 10px 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 44px;
-  min-height: 44px;
-">
-  ⊟ LIBRARY
-</div>
+<!-- ════════ TOP NAV (persistent) ════════ -->
+<nav id="top-nav">
+  <div id="nav-logo">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#6366f1" stroke-width="1.5"/>
+      <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#6366f1" opacity="0.4"/>
+    </svg>
+    <span>Conjure</span>
+  </div>
+  <div id="nav-status"></div>
+  <button id="nav-library-btn" onclick="openLibrary()">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <rect x="2" y="2" width="5" height="5" rx="1"/>
+      <rect x="9" y="2" width="5" height="5" rx="1"/>
+      <rect x="2" y="9" width="5" height="5" rx="1"/>
+      <rect x="9" y="9" width="5" height="5" rx="1"/>
+    </svg>
+    Library
+  </button>
+</nav>
 
 <!-- ════════ SCREEN 1 — IDLE ════════ -->
-<div id="s-idle" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:32px;">
-
-  <div style="font-size:56px;font-weight:bold;letter-spacing:12px;color:#00ff41">CONJURE</div>
-  <div style="font-size:14px;letter-spacing:4px;color:#00aa2a">autonomous fabrication agent</div>
-
-  <div style="display:flex;gap:24px;margin-top:16px;flex-wrap:wrap;justify-content:center;">
-
-    <div onclick="goToSpeak()" style="border:2px solid #00ff41;padding:32px 40px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:200px;background:transparent;">
-      <div style="font-size:48px">🎙</div>
-      <div style="font-size:18px;letter-spacing:3px;color:#00ff41">SPEAK</div>
-      <div style="font-size:12px;color:#00aa2a;text-align:center;line-height:1.5">Describe any object.<br>Meshy AI generates it.</div>
+<div id="s-idle" class="screen">
+  <div class="idle-container">
+    <div class="idle-header">
+      <h1>What would you like to build?</h1>
+      <p>Describe any object and Conjure will generate a printable 3D model.</p>
     </div>
-
-    <div onclick="goToEngineer()" style="border:2px solid #00aa2a;padding:32px 40px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:200px;background:transparent;">
-      <div style="font-size:48px">⚙</div>
-      <div style="font-size:18px;letter-spacing:3px;color:#00aa2a">ENGINEER</div>
-      <div style="font-size:12px;color:#555;text-align:center;line-height:1.5">Describe a functional part.<br>AI researches and CADs it.</div>
+    <div class="mode-cards">
+      <div class="mode-card" onclick="goToSpeak()">
+        <div class="mode-card-icon speak-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </div>
+        <div class="mode-card-content">
+          <h3>Speak</h3>
+          <p>Hold to describe any object. Meshy AI generates a 3D model from your voice.</p>
+        </div>
+        <div class="mode-card-arrow">→</div>
+      </div>
+      <div class="mode-card" onclick="goToEngineer()">
+        <div class="mode-card-icon engineer-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/>
+          </svg>
+        </div>
+        <div class="mode-card-content">
+          <h3>Engineer</h3>
+          <p>Describe a functional part. The AI researches real specs and generates precise CAD geometry.</p>
+        </div>
+        <div class="mode-card-arrow">→</div>
+      </div>
     </div>
-
   </div>
-
-  <div style="font-size:12px;letter-spacing:3px;color:#333;margin-top:16px">TAP A MODE TO BEGIN</div>
-
 </div>
 
 <!-- ════════ SCREEN 2 — SPEAK ════════ -->
-<div id="s-speak" class="screen" style="flex-direction:column;align-items:center;justify-content:flex-start;padding-top:60px;gap:24px">
-
-  <div style="font-size:13px;letter-spacing:4px;color:var(--dim)">CONJURE</div>
-
-  <div id="mic-btn" style="
-    width:200px;height:200px;border-radius:50%;
-    border:3px solid var(--green);
-    display:flex;flex-direction:column;
-    align-items:center;justify-content:center;
-    cursor:pointer;gap:8px;
-    flex-shrink:0;
-  ">
-    <div style="font-size:64px">🎙</div>
-    <div id="mic-label" style="font-size:13px;letter-spacing:3px;color:var(--dim)">HOLD TO SPEAK</div>
+<div id="s-speak" class="screen">
+  <div class="speak-container">
+    <div class="speak-header">
+      <h2>Describe what you want to build</h2>
+      <p>Hold the button and speak clearly</p>
+    </div>
+    <div class="mic-area">
+      <button id="mic-btn" class="mic-button">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+        <span id="mic-label">Hold to speak</span>
+      </button>
+      <div id="mic-hint" class="mic-hint">Release when done speaking</div>
+    </div>
+    <div id="transcript-box" class="transcript-box">
+      <p id="transcript-placeholder" class="transcript-placeholder">Your words will appear here...</p>
+      <p id="transcript-text" class="transcript-text" style="display:none"></p>
+    </div>
+    <div id="action-btns" class="action-buttons" style="display:none">
+      <button class="btn-secondary" onclick="handleRedo()">Start over</button>
+      <button class="btn-primary" onclick="handleConfirm()">Generate model →</button>
+    </div>
+    <button class="btn-ghost back-btn" onclick="showScreen('s-idle')">← Back</button>
   </div>
-
-  <div id="transcript-box" style="
-    width:80%;max-width:600px;
-    min-height:80px;
-    background:var(--panel);
-    border:1px solid var(--border);
-    padding:16px;
-    font-size:18px;
-    color:var(--white);
-    line-height:1.5;
-  ">
-    <span id="transcript-placeholder" style="color:var(--gray);font-size:16px">your words will appear here...</span>
-    <span id="transcript-text" style="display:none"></span>
-  </div>
-
-  <div id="action-btns" style="display:none;width:80%;max-width:600px;gap:12px;flex-direction:row">
-    <button onclick="handleConfirm()" style="
-      flex:1;height:64px;
-      background:transparent;
-      border:2px solid var(--green);
-      color:var(--green);
-      font-family:monospace;font-size:18px;
-      letter-spacing:2px;cursor:pointer;
-    ">CONFIRM</button>
-    <button onclick="handleRedo()" style="
-      flex:1;height:64px;
-      background:transparent;
-      border:2px solid var(--gray);
-      color:var(--gray);
-      font-family:monospace;font-size:18px;
-      letter-spacing:2px;cursor:pointer;
-    ">REDO</button>
-  </div>
-
-  <button onclick="goToIdle()" style="
-    margin-top:auto;margin-bottom:24px;
-    background:transparent;border:none;
-    color:var(--gray);font-family:monospace;
-    font-size:14px;letter-spacing:2px;cursor:pointer;
-  ">← BACK</button>
-
 </div>
 
 <!-- ════════ SCREEN 3 — GENERATING ════════ -->
-<div id="s-generating" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px">
-
-  <div style="font-size:24px;letter-spacing:4px;color:var(--green)">CONJURING</div>
-
-  <div id="gen-prompt" style="
-    font-size:16px;color:var(--dim);
-    font-style:italic;text-align:center;
-    max-width:500px;line-height:1.6;
-  "></div>
-
-  <div style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0">
-    <div class="step-row" id="g-step-1">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Generating 3D model</div>
-        <div class="step-msg"></div>
+<div id="s-generating" class="screen">
+  <div class="progress-container">
+    <div class="progress-header">
+      <div class="progress-spinner"></div>
+      <h2>Generating your model</h2>
+    </div>
+    <div id="gen-prompt" class="progress-prompt"></div>
+    <div class="steps-list" id="steps-list-generate">
+      <div class="step-item" id="g-step-1">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info">
+          <span class="step-name">Generating 3D model</span>
+          <span class="step-msg"></span>
+        </div>
+      </div>
+      <div class="step-item" id="g-step-2">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info">
+          <span class="step-name">Processing geometry</span>
+          <span class="step-msg"></span>
+        </div>
+      </div>
+      <div class="step-item" id="g-step-3">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info">
+          <span class="step-name">Downloading model</span>
+          <span class="step-msg"></span>
+        </div>
+      </div>
+      <div class="step-item" id="g-step-4">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info">
+          <span class="step-name">Saving to cloud</span>
+          <span class="step-msg"></span>
+        </div>
+      </div>
+      <div class="step-item" id="g-step-5">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info">
+          <span class="step-name">Complete</span>
+          <span class="step-msg"></span>
+        </div>
       </div>
     </div>
-    <div class="step-row" id="g-step-2">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Processing geometry</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
-    <div class="step-row" id="g-step-3">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Downloading model</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
-    <div class="step-row" id="g-step-4">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Saving to cloud</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
-    <div class="step-row" id="g-step-5">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Complete</div>
-        <div class="step-msg"></div>
-      </div>
+    <div class="progress-track">
+      <div class="progress-bar" id="gen-progress-bar"></div>
     </div>
   </div>
-
-  <div style="width:100%;max-width:500px;height:4px;background:var(--panel);border-radius:2px">
-    <div id="gen-progress-bar" style="height:4px;background:var(--green);border-radius:2px;width:0%;transition:width 0.3s"></div>
-  </div>
-
 </div>
 
 <!-- ════════ SCREEN 4 — VIEW MODEL ════════ -->
-<div id="s-view" class="screen" style="position:absolute;overflow:hidden">
+<div id="s-view" class="screen" style="position:relative;overflow:hidden;">
+  <div id="three-container" style="position:absolute;top:0;left:0;width:100%;height:100%;"></div>
 
-  <div id="three-container" style="position:absolute;top:0;left:0;width:100%;height:100%"></div>
-
-  <div style="
-    position:absolute;top:0;left:0;right:0;
-    display:flex;justify-content:space-between;align-items:center;
-    padding:16px 24px;
-    background:linear-gradient(to bottom, rgba(10,14,10,0.8), transparent);
-    pointer-events:none;
-  ">
-    <div style="display:flex;align-items:center;gap:12px;pointer-events:all">
-      <span style="font-size:13px;letter-spacing:3px;color:var(--dim)">CONJURE</span>
-      <button onclick="openLibrary()" style="
-        background: transparent;
-        border: 1px solid #1a3a1a;
-        color: #00aa2a;
-        font-family: monospace;
-        font-size: 12px;
-        letter-spacing: 2px;
-        padding: 6px 12px;
-        cursor: pointer;
-        pointer-events: all;
-      ">⊟ LIBRARY</button>
+  <div class="view-overlay-top">
+    <div class="view-prompt-pill" id="view-prompt"></div>
+    <div class="material-toggle-group">
+      <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')">Solid</button>
+      <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">Edges</button>
+      <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">Wire</button>
     </div>
-    <div id="view-prompt" style="font-size:13px;color:var(--dim);font-style:italic"></div>
   </div>
 
-  <div id="material-toggles" style="
-    position:absolute;
-    top:56px;
-    right:16px;
-    display:flex;
-    flex-direction:column;
-    gap:8px;
-    z-index:10;
-  ">
-    <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')">
-      ● SOLID
-    </button>
-    <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')">
-      ⊞ GRID
-    </button>
-    <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')">
-      ≡ WIRE
-    </button>
+  <div class="view-overlay-bottom">
+    <div class="view-hint">Drag to rotate · Scroll to zoom</div>
+    <div class="view-actions">
+      <button class="view-btn-secondary" onclick="goToSpeak()">Start over</button>
+      <button class="view-btn-primary" id="btn-print" onclick="handlePrint()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M4 6V2h8v4"/>
+          <path d="M4 12H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-2"/>
+          <rect x="4" y="10" width="8" height="5" rx="1"/>
+        </svg>
+        Prepare for printing
+      </button>
+    </div>
   </div>
-
-  <div style="
-    position:absolute;bottom:0;left:0;right:0;
-    display:flex;gap:0;
-    background:linear-gradient(to top, rgba(10,14,10,0.95), transparent);
-    padding:24px;
-  ">
-    <button id="btn-print" onclick="handlePrint()" style="
-      flex:1;height:72px;
-      background:transparent;
-      border:2px solid var(--green);border-right:1px solid var(--green);
-      color:var(--green);font-family:monospace;
-      font-size:20px;letter-spacing:3px;cursor:pointer;
-    ">PRINT THIS</button>
-    <button id="btn-stl" onclick="copyStlToUsb()" style="
-      flex:1;height:72px;
-      background:transparent;
-      border:2px solid var(--amber);border-left:none;border-right:1px solid var(--amber);
-      color:var(--amber);font-family:monospace;
-      font-size:16px;letter-spacing:2px;cursor:pointer;
-    ">↓ USB STL</button>
-    <button onclick="goToSpeak()" style="
-      flex:1;height:72px;
-      background:transparent;
-      border:2px solid var(--gray);border-left:1px solid var(--gray);
-      color:var(--gray);font-family:monospace;
-      font-size:20px;letter-spacing:3px;cursor:pointer;
-    ">REDO</button>
-  </div>
-
 </div>
 
 <!-- ════════ SCREEN 5 — SLICING ════════ -->
-<div id="s-slicing" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px">
-
-  <div style="font-size:24px;letter-spacing:4px;color:var(--green)">PREPARING PRINT</div>
-
-  <div id="slice-steps" style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0">
-    <div class="step-row" id="s-step-1">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Loading model</div>
-        <div class="step-msg"></div>
+<div id="s-slicing" class="screen">
+  <div class="progress-container">
+    <div class="progress-header">
+      <div class="progress-spinner"></div>
+      <h2>Preparing for printing</h2>
+    </div>
+    <div class="steps-list">
+      <div class="step-item" id="s-step-1">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Loading model</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="s-step-2">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Slicing for Neptune 4 Pro</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="s-step-3">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Checking USB drive</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="s-step-4">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Copying to USB</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="s-step-5">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Ready to print</span><span class="step-msg"></span></div>
       </div>
     </div>
-    <div class="step-row" id="s-step-2">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Slicing for Neptune 4 Pro</div>
-        <div class="step-msg"></div>
+    <div class="progress-track">
+      <div class="progress-bar" id="slice-progress-bar"></div>
+    </div>
+    <div id="usb-ready-msg" class="usb-ready" style="display:none;">
+      <div class="usb-ready-icon">✓</div>
+      <div class="usb-ready-text">
+        <strong>USB ready</strong>
+        <span>Remove the drive and insert it into your printer</span>
       </div>
     </div>
-    <div class="step-row" id="s-step-3">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Checking USB drive</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
-    <div class="step-row" id="s-step-4">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Copying to USB</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
-    <div class="step-row" id="s-step-5">
-      <div class="step-icon">○</div>
-      <div class="step-body">
-        <div class="step-title">Ready to print</div>
-        <div class="step-msg"></div>
-      </div>
-    </div>
+    <button id="btn-start-over" class="btn-primary" onclick="startOver()" style="display:none;width:100%;">Start over</button>
   </div>
-
-  <div id="slice-progress-wrap" style="width:100%;max-width:500px;height:4px;background:var(--panel);border-radius:2px">
-    <div id="slice-progress-bar" style="height:4px;background:var(--green);border-radius:2px;width:0%;transition:width 0.3s"></div>
-  </div>
-
-  <div id="usb-ready" style="
-    display:none;
-    flex-direction:column;align-items:center;gap:28px;
-    text-align:center;
-    border:4px solid var(--green);
-    padding:48px 40px;
-    width:100%;max-width:500px;
-    animation:usb-flash 1.4s ease-in-out infinite;
-  ">
-    <div style="font-size:26px;font-weight:bold;letter-spacing:3px;line-height:1.5">
-      REMOVE USB<br>INSERT INTO PRINTER
-    </div>
-    <button onclick="resetAll()" style="
-      width:240px;height:64px;
-      background:transparent;
-      border:2px solid var(--gray);
-      color:var(--gray);font-family:monospace;
-      font-size:18px;letter-spacing:2px;cursor:pointer;
-    ">START OVER</button>
-  </div>
-
 </div>
 
 <!-- ════════ SCREEN 6 — ERROR ════════ -->
-<div id="s-error" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px;text-align:center">
-  <div style="font-size:64px;color:var(--red)">✗</div>
-  <div style="font-size:22px;letter-spacing:3px;color:var(--red)">SOMETHING WENT WRONG</div>
-  <div id="error-msg" style="font-size:15px;color:var(--gray);max-width:480px;line-height:1.6"></div>
-  <button onclick="resetAll()" style="
-    width:280px;height:64px;
-    background:transparent;
-    border:2px solid var(--red);
-    color:var(--red);font-family:monospace;
-    font-size:18px;letter-spacing:2px;cursor:pointer;
-  ">START OVER</button>
+<div id="s-error" class="screen">
+  <div class="error-container">
+    <div class="error-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+    </div>
+    <h2>Something went wrong</h2>
+    <p id="error-msg">An unexpected error occurred.</p>
+    <button class="btn-primary" onclick="startOver()" style="width:200px;">Try again</button>
+  </div>
 </div>
 
 <!-- ════════ SCREEN 7 — LIBRARY ════════ -->
-<div id="s-library" class="screen" style="
-  flex-direction: column;
-  align-items: stretch;
-  padding: 0;
-  overflow: hidden;
-">
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #1a3a1a;flex-shrink:0;background:#0a0e0a;">
-    <div style="font-size:18px;letter-spacing:4px;color:#00ff41">LIBRARY</div>
-    <div style="display:flex;gap:12px;">
-      <button onclick="closeLibrary()" style="background:transparent;border:1px solid #1a3a1a;color:#00aa2a;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;min-width:80px;">← BACK</button>
-      <button onclick="goHome()" style="background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:13px;letter-spacing:2px;padding:8px 16px;cursor:pointer;height:40px;min-width:80px;">⌂ HOME</button>
+<div id="s-library" class="screen">
+  <div class="library-container">
+    <div class="library-header">
+      <div>
+        <h2>Library</h2>
+        <p>Your previously generated models</p>
+      </div>
+      <button class="btn-ghost" onclick="closeLibrary()">← Back</button>
     </div>
-  </div>
-
-  <div id="library-grid" style="
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-    align-content: start;
-  "></div>
-
-  <div id="library-empty" style="
-    display: none;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 16px;
-    color: #555;
-  ">
-    <div style="font-size: 48px">◻</div>
-    <div style="font-size: 16px; letter-spacing: 2px">NO MODELS YET</div>
-    <div style="font-size: 14px; color: #333">Generate something first</div>
+    <div id="library-grid" class="library-grid"></div>
+    <div id="library-empty" class="library-empty" style="display:none;">
+      <div class="library-empty-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+        </svg>
+      </div>
+      <h3>No models yet</h3>
+      <p>Generate something to see it here</p>
+      <button class="btn-primary" onclick="closeLibrary()" style="flex:none;">Create your first model</button>
+    </div>
   </div>
 </div>
 
-<!-- ════════ SCREEN 8 — ENGINEER ════════ -->
-<div id="s-engineer" class="screen" style="flex-direction:column;align-items:center;padding-top:60px;gap:24px;">
-
-  <div style="font-size:13px;letter-spacing:4px;color:#00aa2a">⚙ ENGINEER MODE</div>
-
-  <div style="font-size:14px;color:#555;letter-spacing:2px;text-align:center;max-width:500px;line-height:1.6;">
-    Describe a functional part. The agent researches real engineering specs and generates precise CAD geometry.
+<!-- ════════ SCREEN 8 — ENGINEER INPUT ════════ -->
+<div id="s-engineer" class="screen">
+  <div class="engineer-container">
+    <div class="engineer-header">
+      <div class="engineer-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
+        </svg>
+        Engineer Mode
+      </div>
+      <h2>Describe a functional part</h2>
+      <p>The AI will research real engineering specifications and generate precise parametric CAD geometry.</p>
+    </div>
+    <div class="engineer-input-area">
+      <textarea
+        id="engineer-input"
+        class="engineer-textarea"
+        placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
+        rows="4"
+      ></textarea>
+      <div class="engineer-examples">
+        <span class="examples-label">Try:</span>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">pipe bracket for 2 inch PVC</button>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">desk cable management clip</button>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">monitor stand riser</button>
+      </div>
+    </div>
+    <div class="engineer-actions">
+      <button class="btn-ghost" onclick="showScreen('s-idle')">← Back</button>
+      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;padding: 12px 28px;">
+        Start engineering →
+      </button>
+    </div>
   </div>
-
-  <textarea
-    id="engineer-input"
-    placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two bolt holes"
-    style="width:80%;max-width:600px;height:120px;background:#0f140f;border:1px solid #1a3a1a;color:#ffffff;font-family:monospace;font-size:16px;padding:16px;resize:none;line-height:1.6;"
-  ></textarea>
-
-  <div style="display:flex;gap:12px;width:80%;max-width:600px;">
-    <button onclick="handleEngineerConfirm()" style="flex:1;height:64px;background:transparent;border:2px solid #00aa2a;color:#00aa2a;font-family:monospace;font-size:18px;letter-spacing:2px;cursor:pointer;">ENGINEER IT</button>
-    <button onclick="showScreen('s-idle')" style="flex:1;height:64px;background:transparent;border:2px solid #555;color:#555;font-family:monospace;font-size:18px;letter-spacing:2px;cursor:pointer;">← BACK</button>
-  </div>
-
 </div>
 
 <!-- ════════ SCREEN 9 — ENGINEER GENERATING ════════ -->
-<div id="s-engineer-generating" class="screen" style="flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px;overflow-y:auto;">
+<div id="s-engineer-generating" class="screen">
+  <div class="progress-container">
+    <div class="progress-header">
+      <div class="progress-spinner" style="border-top-color: var(--green);"></div>
+      <h2>Engineering your part</h2>
+    </div>
+    <div id="engineer-gen-prompt" class="progress-prompt"></div>
+    <div class="steps-list">
+      <div class="step-item" id="eg-step-0">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Kite AI — agent auth</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-1">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">You.com — web research</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-2">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Tavily — deep research</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-3">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Nebius — CAD generation</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-4">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">OpenSCAD — render STL</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-5">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">CuraEngine — slice gcode</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-6">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Moonraker — dispatch</span><span class="step-msg"></span></div>
+      </div>
+      <div class="step-item" id="eg-step-7">
+        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-info"><span class="step-name">Nebius — structural review</span><span class="step-msg"></span></div>
+      </div>
+    </div>
+    <div class="progress-track">
+      <div class="progress-bar" id="eg-progress-bar"></div>
+    </div>
 
-  <div style="font-size:24px;letter-spacing:4px;color:#00aa2a">ENGINEERING</div>
-  <div id="engineer-gen-prompt" style="font-size:14px;color:#555;font-style:italic;text-align:center;max-width:500px;line-height:1.6;"></div>
+    <div id="eg-specs-panel" class="engineer-panel" style="display:none;">
+      <div class="engineer-panel-label">Retrieved specs</div>
+      <div class="specs-grid">
+        <div class="spec-item"><span class="spec-label">OD</span><span class="spec-value" id="eg-sv-od">—</span></div>
+        <div class="spec-item"><span class="spec-label">Tensile</span><span class="spec-value" id="eg-sv-tensile">—</span></div>
+        <div class="spec-item"><span class="spec-label">Safety</span><span class="spec-value" id="eg-sv-safety">—</span></div>
+        <div class="spec-item"><span class="spec-label">Wall</span><span class="spec-value" id="eg-sv-wall">—</span></div>
+      </div>
+    </div>
 
-  <div style="width:100%;max-width:500px;display:flex;flex-direction:column;gap:0;">
-    <div class="step-row" id="eg-step-0"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Kite AI — agent auth</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-1"><div class="step-icon">○</div><div class="step-body"><div class="step-title">You.com — web research</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-2"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Tavily — deep research</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-3"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Nebius — CAD generation</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-4"><div class="step-icon">○</div><div class="step-body"><div class="step-title">OpenSCAD — render STL</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-5"><div class="step-icon">○</div><div class="step-body"><div class="step-title">CuraEngine — slice gcode</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-6"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Moonraker — dispatch</div><div class="step-msg"></div></div></div>
-    <div class="step-row" id="eg-step-7"><div class="step-icon">○</div><div class="step-body"><div class="step-title">Nebius — structural review</div><div class="step-msg"></div></div></div>
-  </div>
+    <div id="eg-scad-panel" class="engineer-panel" style="display:none;">
+      <div class="engineer-panel-label">Generated SCAD</div>
+      <div class="scad-viewer" id="eg-scad-code"></div>
+    </div>
 
-  <div style="width:100%;max-width:500px;height:4px;background:#0f140f;border-radius:2px;">
-    <div id="eg-progress-bar" style="height:4px;background:#00aa2a;border-radius:2px;width:0%;transition:width 0.3s;"></div>
-  </div>
-
-  <div id="eg-specs-panel" style="display:none;width:100%;max-width:500px;background:#0f140f;border:1px solid #1a3a1a;padding:14px;">
-    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:10px;">RETRIEVED SPECS</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;">
-      <div><span style="color:#555">OD: </span><span id="eg-sv-od" style="color:#00aa2a">—</span></div>
-      <div><span style="color:#555">Tensile: </span><span id="eg-sv-tensile" style="color:#00aa2a">—</span></div>
-      <div><span style="color:#555">Safety: </span><span id="eg-sv-safety" style="color:#00aa2a">—</span></div>
-      <div><span style="color:#555">Wall: </span><span id="eg-sv-wall" style="color:#00aa2a">—</span></div>
+    <div id="eg-analysis-panel" class="engineer-panel" style="display:none;">
+      <div class="engineer-panel-label">Structural review</div>
+      <div id="eg-analysis-content"></div>
     </div>
   </div>
-
-  <div id="eg-scad-panel" style="display:none;width:100%;max-width:500px;">
-    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:8px;">GENERATED SCAD</div>
-    <div id="eg-scad-code" style="font-family:monospace;font-size:11px;color:#00aa2a;background:#050a05;padding:12px;max-height:150px;overflow-y:auto;white-space:pre;"></div>
-  </div>
-
-  <div id="eg-analysis-panel" style="display:none;width:100%;max-width:500px;background:#0f140f;border:1px solid #1a3a1a;padding:14px;">
-    <div style="font-size:10px;letter-spacing:3px;color:#555;margin-bottom:10px;">STRUCTURAL REVIEW</div>
-    <div id="eg-analysis-content" style="font-family:monospace;font-size:12px;line-height:1.8;"></div>
-  </div>
-
 </div>
 
 <script>
@@ -568,12 +1406,26 @@ function showScreen(id) {
   currentScreen = document.getElementById(id);
   currentScreen.style.display = 'flex';
 
-  // Hide the persistent library button on the view + library screens
-  // (view has its own library button; library is already open).
+  // Legacy persistent library button (replaced by the top-nav button). The
+  // null-guard keeps this safe now that the floating button no longer exists.
   const libBtn = document.getElementById('lib-btn');
   if (libBtn) {
     libBtn.style.display = (id === 's-view' || id === 's-library') ? 'none' : 'flex';
   }
+
+  const screenNames = {
+    's-idle': '',
+    's-speak': 'Voice mode',
+    's-generating': 'Generating...',
+    's-view': '3D viewer',
+    's-slicing': 'Preparing print',
+    's-error': 'Error',
+    's-library': 'Library',
+    's-engineer': 'Engineer mode',
+    's-engineer-generating': 'Engineering...',
+  };
+  const navStatus = document.getElementById('nav-status');
+  if (navStatus) navStatus.textContent = screenNames[id] || '';
 }
 
 /* ════════ GLOBALS ════════ */
@@ -626,9 +1478,14 @@ function closeEvents() {
 
 /* ════════ SPEECH RECOGNITION ════════ */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const speechSupported = !!SR;
 let recognition = null;
-let isListening = false;
-let transcript = '';
+let isListening = false;    // user intent — is the mic button being held?
+let recognizing = false;    // engine reality — is the SR engine actually running?
+let restartTimer = null;
+let transcript = '';        // committed (finalized) words — the source of truth for CONFIRM
+let interimText = '';       // in-flight words not yet finalized by the engine
+const DEFAULT_PLACEHOLDER = 'Your words will appear here...';
 
 if (SR) {
   recognition = new SR();
@@ -636,53 +1493,116 @@ if (SR) {
   recognition.interimResults = true;
   recognition.lang = 'en-US';
 
+  recognition.onstart = () => { recognizing = true; };
+
   recognition.onresult = (e) => {
-    let final = '';
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) final += e.results[i][0].transcript;
-      else interim += e.results[i][0].transcript;
+      const chunk = e.results[i][0].transcript;
+      if (e.results[i].isFinal) transcript += chunk;
+      else interim += chunk;
     }
-    transcript += final;
-    const display = transcript + interim;
-    if (display.trim()) {
-      document.getElementById('transcript-placeholder').style.display = 'none';
-      document.getElementById('transcript-text').style.display = 'inline';
-      document.getElementById('transcript-text').textContent = display;
-      document.getElementById('action-btns').style.display = 'flex';
+    interimText = interim;
+    renderTranscript();
+  };
+
+  recognition.onerror = (e) => {
+    const err = e && e.error;
+    // 'no-speech' and 'aborted' are expected during push-to-talk — don't tear
+    // the session down over them; onend will restart if the button is still held.
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      isListening = false;
+      updateMicUI(false);
+      showSpeechMessage('Microphone blocked. Allow mic access in your browser, then hold to speak.');
     }
   };
 
-  recognition.onerror = () => stopListening();
-  recognition.onend = () => { if (isListening) { try { recognition.start(); } catch (e) {} } };
+  recognition.onend = () => {
+    recognizing = false;
+    // Chrome ends the session on silence / ~60s. If the user is still holding,
+    // restart — but debounced, so we never call start() mid-teardown (which
+    // throws "recognition has already started" and silently stalls the mic).
+    if (isListening) {
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(safeStart, 150);
+    }
+  };
+}
+
+function safeStart() {
+  if (!recognition || recognizing) return;
+  try { recognition.start(); } catch (e) { /* still winding down; onstart/onend settle it */ }
+}
+
+function renderTranscript() {
+  const ph = document.getElementById('transcript-placeholder');
+  const tx = document.getElementById('transcript-text');
+  const btns = document.getElementById('action-btns');
+  const full = transcript + interimText;
+  if (full.trim()) {
+    if (ph) ph.style.display = 'none';
+    if (tx) { tx.style.display = 'inline'; tx.textContent = full; }
+    if (btns) btns.style.display = 'flex';
+  } else {
+    if (ph) ph.style.display = 'inline';
+    if (tx) { tx.style.display = 'none'; tx.textContent = ''; }
+    if (btns) btns.style.display = 'none';
+  }
+}
+
+function updateMicUI(listening) {
+  const btn = document.getElementById('mic-btn');
+  const label = document.getElementById('mic-label');
+  if (btn) btn.classList.toggle('recording', listening);
+  if (label) label.textContent = listening ? 'Listening...' : 'Hold to speak';
+}
+
+function showSpeechMessage(msg) {
+  const ph = document.getElementById('transcript-placeholder');
+  const tx = document.getElementById('transcript-text');
+  if (ph) { ph.style.display = 'inline'; ph.textContent = msg; }
+  if (tx) tx.style.display = 'none';
 }
 
 function startListening() {
-  if (!recognition || isListening) return;
+  if (!speechSupported) {
+    showSpeechMessage('Speech input is not available in this browser — try Chrome.');
+    return;
+  }
+  if (isListening) return;
   isListening = true;
   transcript = '';
-  document.getElementById('transcript-placeholder').style.display = 'inline';
+  interimText = '';
+  clearTimeout(restartTimer);
+  const ph = document.getElementById('transcript-placeholder');
+  if (ph) { ph.style.display = 'inline'; ph.textContent = DEFAULT_PLACEHOLDER; }
   document.getElementById('transcript-text').style.display = 'none';
   document.getElementById('transcript-text').textContent = '';
   document.getElementById('action-btns').style.display = 'none';
-  document.getElementById('mic-btn').style.borderColor = 'var(--amber)';
-  document.getElementById('mic-label').textContent = 'LISTENING...';
-  document.getElementById('mic-label').style.color = 'var(--amber)';
-  try { recognition.start(); } catch (e) {}
+  updateMicUI(true);
+  safeStart();
 }
 
 function stopListening() {
   if (!recognition || !isListening) return;
   isListening = false;
+  clearTimeout(restartTimer);
+  // Fold any in-flight interim text into the committed transcript so the last
+  // words spoken aren't lost if the engine never finalized them before release.
+  if (interimText.trim()) {
+    transcript += interimText;
+    interimText = '';
+    renderTranscript();
+  }
   try { recognition.stop(); } catch (e) {}
-  document.getElementById('mic-btn').style.borderColor = 'var(--green)';
-  document.getElementById('mic-label').textContent = 'HOLD TO SPEAK';
-  document.getElementById('mic-label').style.color = 'var(--dim)';
+  updateMicUI(false);
 }
 
 function handleRedo() {
   transcript = '';
-  document.getElementById('transcript-placeholder').style.display = 'inline';
+  interimText = '';
+  const ph = document.getElementById('transcript-placeholder');
+  if (ph) { ph.style.display = 'inline'; ph.textContent = DEFAULT_PLACEHOLDER; }
   document.getElementById('transcript-text').style.display = 'none';
   document.getElementById('transcript-text').textContent = '';
   document.getElementById('action-btns').style.display = 'none';
@@ -695,25 +1615,33 @@ micBtn.addEventListener('mouseup', stopListening);
 micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopListening(); }, { passive: false });
 micBtn.addEventListener('mouseleave', () => { if (isListening) stopListening(); });
 micBtn.addEventListener('touchcancel', () => { if (isListening) stopListening(); });
+// Safety net: releasing the pointer or losing focus anywhere ends the session,
+// so the mic can never get stuck in LISTENING if release happens off-button.
+document.addEventListener('mouseup', () => { if (isListening) stopListening(); });
+window.addEventListener('blur', () => { if (isListening) stopListening(); });
 
 /* ════════ STEP HELPERS ════════ */
 function setStep(id, state, msg) {
   const row = document.getElementById(id);
   if (!row) return;
-  const icon = row.querySelector('.step-icon');
+  row.className = 'step-item ' + state;
+
+  // The marker is either the pending/done/error glyph (.step-icon) or the
+  // active spinner (.step-spinner). Look up whichever is present so repeated
+  // setStep(id,'active') calls (SSE + polling re-assert the same step) never
+  // dereference null. Colors are driven by the .step-item.<state> CSS rules.
+  const marker = row.querySelector('.step-icon') || row.querySelector('.step-spinner');
   const msgEl = row.querySelector('.step-msg');
-  if (state === 'active') {
-    icon.innerHTML = '<div class="spinner"></div>';
-    icon.style.color = 'var(--amber)';
-  } else if (state === 'done') {
-    icon.innerHTML = '✓';
-    icon.style.color = 'var(--green)';
-  } else if (state === 'error') {
-    icon.innerHTML = '✗';
-    icon.style.color = 'var(--red)';
-  } else {
-    icon.innerHTML = '○';
-    icon.style.color = 'var(--gray)';
+  if (marker) {
+    if (state === 'active') {
+      marker.outerHTML = '<div class="step-spinner"></div>';
+    } else if (state === 'done') {
+      marker.outerHTML = '<div class="step-icon">✓</div>';
+    } else if (state === 'error') {
+      marker.outerHTML = '<div class="step-icon">✗</div>';
+    } else {
+      marker.outerHTML = '<div class="step-icon">○</div>';
+    }
   }
   if (msg && msgEl) msgEl.textContent = msg;
 }
@@ -734,9 +1662,10 @@ function setSliceProgress(pct) {
 function resetSliceSteps() {
   ['s-step-1', 's-step-2', 's-step-3', 's-step-4', 's-step-5'].forEach(id => setStep(id, 'pending', ''));
   setSliceProgress(0);
-  document.getElementById('slice-steps').style.display = 'flex';
-  document.getElementById('slice-progress-wrap').style.display = 'block';
-  document.getElementById('usb-ready').style.display = 'none';
+  const usb = document.getElementById('usb-ready-msg');
+  if (usb) usb.style.display = 'none';
+  const btn = document.getElementById('btn-start-over');
+  if (btn) btn.style.display = 'none';
 }
 
 /* ════════ SSE EVENT MAPPERS ════════ */
@@ -851,9 +1780,10 @@ function handlePrint() {
 }
 
 function showUsbReady() {
-  document.getElementById('slice-steps').style.display = 'none';
-  document.getElementById('slice-progress-wrap').style.display = 'none';
-  document.getElementById('usb-ready').style.display = 'flex';
+  const usb = document.getElementById('usb-ready-msg');
+  if (usb) usb.style.display = 'flex';
+  const btn = document.getElementById('btn-start-over');
+  if (btn) btn.style.display = 'block';
 }
 
 /* ════════ ERROR ════════ */
@@ -934,7 +1864,7 @@ async function loadLibrary() {
   const empty = document.getElementById('library-empty');
   if (!grid) { console.error('library-grid element not found'); return; }
 
-  grid.innerHTML = '<div style="color:#555;font-size:14px;letter-spacing:2px;padding:20px;text-align:center">LOADING...</div>';
+  grid.innerHTML = '<div style="color:var(--text-3);font-size:14px;padding:20px;text-align:center">Loading...</div>';
   if (empty) empty.style.display = 'none';
   grid.style.display = 'block';
 
@@ -950,14 +1880,7 @@ async function loadLibrary() {
 
     if (!models || models.length === 0) {
       grid.style.display = 'none';
-      if (empty) {
-        empty.style.display = 'flex';
-        empty.innerHTML = `
-          <div style="font-size:48px;color:#1a3a1a">◻</div>
-          <div style="font-size:16px;color:#555;letter-spacing:2px;margin-top:16px">NO MODELS YET</div>
-          <div style="font-size:13px;color:#333;margin-top:8px">Generate something first</div>
-        `;
-      }
+      if (empty) empty.style.display = 'flex';
       return;
     }
 
@@ -970,28 +1893,28 @@ async function loadLibrary() {
       const hasGlb = m.glb_path && m.glb_path.length > 0;
 
       const card = document.createElement('div');
-      card.style.cssText = 'background:#0f140f;border:1px solid #1a3a1a;padding:16px;display:flex;flex-direction:column;gap:10px;';
-
+      card.className = 'library-card';
       card.innerHTML = `
-        <div style="height:100px;background:#0a0e0a;border:1px solid #1a3a1a;display:flex;align-items:center;justify-content:center;font-size:32px;color:#1a3a1a;">${hasGlb ? '◼' : '◻'}</div>
-        <div style="font-size:13px;color:#00ff41;line-height:1.5;word-break:break-word;min-height:36px;">${escapeHtml(prompt)}</div>
-        <div style="font-size:11px;color:#555;letter-spacing:1px;">${escapeHtml(date)}</div>
-        <div style="display:flex;gap:8px;margin-top:4px;">
-          <button onclick="selectModelFromLibrary(${JSON.stringify(id)})" style="flex:1;height:44px;background:transparent;border:1px solid #00ff41;color:#00ff41;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;">VIEW</button>
-          <button onclick="printModelFromLibrary(${JSON.stringify(id)})" style="flex:1;height:44px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;letter-spacing:2px;cursor:pointer;">PRINT</button>
+        <div class="library-card-thumb">${hasGlb ? '◼' : '◻'}</div>
+        <div class="library-card-body">
+          <div class="library-card-prompt">${escapeHtml(prompt)}</div>
+          <div class="library-card-date">${escapeHtml(date)}</div>
+          <div class="library-card-actions">
+            <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})">View</button>
+            <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})">Print</button>
+          </div>
         </div>
       `;
-
       grid.appendChild(card);
     });
 
   } catch(e) {
     console.error('Library load error:', e);
     grid.innerHTML = `
-      <div style="color:#ff4444;font-size:14px;padding:20px;text-align:center">
+      <div style="color:var(--red);font-size:14px;padding:20px;text-align:center">
         Failed to load library<br>
-        <span style="font-size:12px;color:#555;margin-top:8px;display:block">${escapeHtml(e.message)}</span>
-        <button onclick="loadLibrary()" style="margin-top:12px;background:transparent;border:1px solid #555;color:#555;font-family:monospace;font-size:12px;padding:8px 16px;cursor:pointer;">RETRY</button>
+        <span style="font-size:12px;color:var(--text-3);margin-top:8px;display:block">${escapeHtml(e.message)}</span>
+        <button onclick="loadLibrary()" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:12px;padding:8px 16px;border-radius:var(--radius-sm);cursor:pointer;">Retry</button>
       </div>
     `;
   }
@@ -1163,10 +2086,10 @@ function updateEngineerScreen(data) {
       const lines = data.nebius_analysis.split('\n').filter(l => l.trim());
       ac.innerHTML = lines.map(line => {
         line = line.trim();
-        if (line.startsWith('OK:')) return '<div style="color:#00ff41">' + escapeHtml(line) + '</div>';
-        if (line.startsWith('WARN:')) return '<div style="color:#ffaa00">' + escapeHtml(line) + '</div>';
-        if (line.startsWith('FAIL:')) return '<div style="color:#ff4444">' + escapeHtml(line) + '</div>';
-        return '<div style="color:#555">' + escapeHtml(line) + '</div>';
+        if (line.startsWith('OK:')) return '<div class="analysis-line analysis-ok">' + escapeHtml(line) + '</div>';
+        if (line.startsWith('WARN:')) return '<div class="analysis-line analysis-warn">' + escapeHtml(line) + '</div>';
+        if (line.startsWith('FAIL:')) return '<div class="analysis-line analysis-fail">' + escapeHtml(line) + '</div>';
+        return '<div class="analysis-line analysis-info">' + escapeHtml(line) + '</div>';
       }).join('');
     }
   }
@@ -1209,7 +2132,7 @@ function initViewer() {
   if (!container) { console.error('three-container not found'); return; }
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0e0a);
+  scene.background = new THREE.Color(0x0d0d0d);
 
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
   camera.position.set(0, 0, zoomLevel);
@@ -1227,7 +2150,7 @@ function initViewer() {
   const l2 = new THREE.DirectionalLight(0xffffff, 2);
   l2.position.set(-5, -2, -5);
   scene.add(l2);
-  const l3 = new THREE.DirectionalLight(0x00ff41, 1.5);
+  const l3 = new THREE.DirectionalLight(0x6366f1, 1.5);
   l3.position.set(0, 10, 0);
   scene.add(l3);
 
@@ -1462,7 +2385,7 @@ function setMaterial(mode) {
       edgeMesh2.scale.multiplyScalar(1.004);
       node.parent && node.parent.add(edgeMesh2);
 
-      if (scene) scene.fog = new THREE.FogExp2(0x0a0e0a, 0.06);
+      if (scene) scene.fog = new THREE.FogExp2(0x0d0d0d, 0.06);
 
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
