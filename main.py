@@ -982,8 +982,15 @@ def supabase_status() -> JSONResponse:
         client = get_supabase_client()
         if not client:
             return JSONResponse({"connected": False, "reason": "Client init failed"})
-        buckets = client.storage.list_buckets()
-        bucket_names = [b.name for b in buckets]
+
+        # anon key cannot call list_buckets() — probe the bucket directly instead
+        bucket_ok = False
+        bucket_reason = None
+        try:
+            client.storage.from_(SUPABASE_BUCKET).list("", {"limit": 1})
+            bucket_ok = True
+        except Exception as be:
+            bucket_reason = str(be)[:120]
 
         model_count = None
         try:
@@ -995,8 +1002,8 @@ def supabase_status() -> JSONResponse:
         return JSONResponse({
             "connected": True,
             "bucket": SUPABASE_BUCKET,
-            "bucket_exists": SUPABASE_BUCKET in bucket_names,
-            "all_buckets": bucket_names,
+            "bucket_exists": bucket_ok,
+            "bucket_note": None if bucket_ok else bucket_reason,
             "supabase_url": SUPABASE_URL,
             "model_count_in_supabase": model_count,
         })
