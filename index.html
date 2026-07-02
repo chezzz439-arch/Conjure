@@ -16,7 +16,8 @@
     --border-soft: #1f1f1f;
     --text-1:      #ffffff;
     --text-2:      #a0a0a0;
-    --text-3:      #555555;
+    --text-3:      #808080;
+    --text-faint:  #555555;
     --accent:      #6366f1;
     --accent-dim:  #4f46e5;
     --accent-glow: rgba(99, 102, 241, 0.15);
@@ -62,7 +63,7 @@
 
   #s-view { padding-top: 0; }
   #s-idle { justify-content: flex-start; align-items: stretch; padding-top: 52px; overflow-y: auto; }
-  #s-speak, #s-engineer { justify-content: center; padding-top: 52px; overflow-y: auto; }
+  #s-speak, #s-engineer { justify-content: flex-start; align-items: stretch; padding-top: 52px; overflow-y: auto; }
   #s-library { justify-content: flex-start; padding-top: 52px; }
   #s-engineer-generating {
     justify-content: flex-start;
@@ -87,6 +88,38 @@
   }
 
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ════════ FOCUS (keyboard / switch access) ════════ */
+  /* The global `outline: none` above strips focus rings; restore a visible one
+     for keyboard users without affecting pointer/touch interaction. */
+  button:focus-visible,
+  a:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ════════ REDUCED MOTION ════════ */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* Loading spinners convey active state, not decoration — keep them turning,
+       just calmer. The recording pulse is decorative, so silence it. */
+    .progress-spinner,
+    .step-spinner {
+      animation: spin 1.2s linear infinite !important;
+    }
+    .mic-button.recording,
+    .mic-inline.recording {
+      animation: none !important;
+    }
+  }
 
   /* ════════ TOP NAV ════════ */
   #top-nav {
@@ -150,6 +183,31 @@
   #nav-library-btn:hover {
     background: var(--surface-2);
     color: var(--text-1);
+    border-color: var(--border-soft);
+  }
+
+  #voice-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-right: 8px;
+  }
+
+  #voice-toggle-btn:hover {
+    background: var(--surface-2);
+    color: var(--text-1);
+  }
+
+  #voice-toggle-btn.muted {
+    color: var(--text-3);
     border-color: var(--border-soft);
   }
 
@@ -602,13 +660,13 @@
   .speak-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     background: rgba(99, 102, 241, 0.1);
     border: 1px solid rgba(99, 102, 241, 0.25);
     color: #a5b4fc;
-    padding: 4px 12px;
+    padding: 6px 14px;
     border-radius: 20px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.3px;
   }
@@ -624,15 +682,15 @@
   .speak-header { text-align: center; }
 
   .speak-header h2 {
-    font-size: 26px;
+    font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.8px;
     color: var(--text-1);
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
 
   .speak-header p {
-    font-size: 15px;
+    font-size: 17px;
     color: var(--text-2);
   }
 
@@ -719,11 +777,15 @@
     flex: 1;
     background: var(--accent);
     color: white;
-    padding: 12px 24px;
+    padding: 0 32px;
+    height: 54px;
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .btn-primary:hover { background: var(--accent-dim); }
@@ -745,14 +807,17 @@
 
   .btn-ghost {
     background: transparent;
-    color: var(--text-3);
-    padding: 8px 16px;
+    color: var(--text-2);
+    padding: 0 16px;
+    height: 54px;
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-size: 16px;
     border: none;
+    display: inline-flex;
+    align-items: center;
   }
 
-  .btn-ghost:hover { color: var(--text-2); }
+  .btn-ghost:hover { color: var(--text-1); }
 
   .back-btn { align-self: flex-start; }
 
@@ -776,11 +841,11 @@
     border-radius: var(--radius-md);
     color: var(--text-1);
     font-family: inherit;
-    font-size: 16px;
-    line-height: 1.6;
-    padding: 16px 60px 16px 18px;
+    font-size: 18px;
+    line-height: 1.65;
+    padding: 20px 72px 20px 22px;
     resize: none;
-    min-height: 96px;
+    min-height: 200px;
     outline: none;
     transition: border-color 0.15s;
   }
@@ -790,10 +855,10 @@
 
   .mic-inline {
     position: absolute;
-    right: 12px;
-    bottom: 12px;
-    width: 40px;
-    height: 40px;
+    right: 14px;
+    bottom: 14px;
+    width: 52px;
+    height: 52px;
     border-radius: 50%;
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -817,7 +882,7 @@
   }
 
   .mic-caption {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-3);
     padding-left: 2px;
   }
@@ -835,19 +900,22 @@
   /* ════════ TWO-COLUMN MODE LAYOUT (compose + info aside) ════════ */
   .compose-layout {
     display: grid;
-    grid-template-columns: 1.4fr 1fr;
-    gap: 32px;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 48px;
     width: 100%;
-    max-width: 980px;
-    padding: 40px 24px;
-    align-items: start;
+    max-width: 1280px;
+    min-height: calc(100vh - 52px);
+    padding: 52px 48px;
+    align-items: stretch;
+    margin: 0 auto;
   }
 
   .compose-main {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 28px;
     align-items: stretch;
+    justify-content: center;
   }
 
   .compose-main > .speak-badge { align-self: flex-start; }
@@ -858,38 +926,39 @@
   .compose-aside {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
+    justify-content: center;
   }
 
   .aside-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 20px;
+    padding: 28px;
   }
 
   .aside-title {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.6px;
     text-transform: uppercase;
     color: var(--text-3);
-    margin-bottom: 14px;
+    margin-bottom: 18px;
   }
 
   .aside-list {
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 14px;
   }
 
   .aside-list li {
     position: relative;
-    padding-left: 22px;
-    font-size: 14px;
+    padding-left: 24px;
+    font-size: 15px;
     color: var(--text-2);
-    line-height: 1.5;
+    line-height: 1.55;
   }
 
   .aside-list li::before {
@@ -903,34 +972,34 @@
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
   }
 
   .aside-steps li {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 14px;
+    gap: 14px;
+    font-size: 15px;
     color: var(--text-2);
   }
 
   .aside-steps li span {
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
     flex-shrink: 0;
     background: var(--accent-glow);
     border: 1px solid rgba(99, 102, 241, 0.3);
     color: #a5b4fc;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
-  @media (max-width: 820px) {
-    .compose-layout { grid-template-columns: 1fr; max-width: 560px; }
+  @media (max-width: 900px) {
+    .compose-layout { grid-template-columns: 1fr; max-width: 640px; padding: 40px 32px; }
     .compose-aside { display: none; }
   }
 
@@ -1350,7 +1419,7 @@
 
   .library-card-actions .btn-sm {
     flex: 1;
-    padding: 8px 12px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
     font-size: 13px;
     font-weight: 500;
@@ -1427,27 +1496,27 @@
   .engineer-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     background: rgba(34, 197, 94, 0.1);
     border: 1px solid rgba(34, 197, 94, 0.2);
     color: var(--green);
-    padding: 4px 12px;
+    padding: 6px 14px;
     border-radius: 20px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     width: fit-content;
     letter-spacing: 0.3px;
   }
 
   .engineer-header h2 {
-    font-size: 26px;
+    font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.8px;
     color: var(--text-1);
   }
 
   .engineer-header p {
-    font-size: 15px;
+    font-size: 17px;
     color: var(--text-2);
     line-height: 1.6;
   }
@@ -1465,11 +1534,11 @@
     border-radius: var(--radius-md);
     color: var(--text-1);
     font-family: inherit;
-    font-size: 15px;
-    padding: 16px 18px;
+    font-size: 18px;
+    padding: 20px 22px;
     resize: vertical;
-    min-height: 120px;
-    line-height: 1.6;
+    min-height: 200px;
+    line-height: 1.65;
     transition: border-color 0.15s;
     outline: none;
   }
@@ -1486,7 +1555,7 @@
   }
 
   .examples-label {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-3);
     flex-shrink: 0;
   }
@@ -1495,9 +1564,9 @@
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text-2);
-    padding: 5px 12px;
+    padding: 10px 18px;
     border-radius: 20px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 400;
     cursor: pointer;
     transition: all 0.15s;
@@ -1607,6 +1676,21 @@
         <path d="M9 21v-6h6v6"/>
       </svg>
       Home
+    </button>
+    <button id="voice-toggle-btn" onclick="toggleVoice()" title="Toggle voice">
+      <svg id="voice-icon-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+      </svg>
+      <svg id="voice-icon-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="display:none">
+        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-.29 1.29"/>
+        <path d="M19 10v2a7 7 0 0 1-.34 2.16"/>
+        <path d="M15 9.34V5a3 3 0 0 0-5.94-.6"/>
+        <path d="M9 9v3a3 3 0 0 0 4.6 2.55"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="1" y1="1" x2="23" y2="23"/>
+      </svg>
     </button>
     <button id="nav-library-btn" onclick="openLibrary()" title="Browse every model you've generated">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1782,7 +1866,7 @@
         <textarea
           id="prompt-input"
           class="prompt-input"
-          rows="3"
+          rows="5"
           placeholder="e.g. a low-poly fox figurine with a bushy tail"
           spellcheck="true"
           data-gramm="false"
@@ -2020,7 +2104,7 @@
         id="engineer-input"
         class="engineer-textarea"
         placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
-        rows="4"
+        rows="5"
       ></textarea>
       <div class="engineer-examples">
         <span class="examples-label">Try:</span>
@@ -2031,7 +2115,7 @@
     </div>
     <div class="engineer-actions">
       <button class="btn-ghost" onclick="showScreen('s-idle')" title="Return to the home page">← Back</button>
-      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;padding: 12px 28px;" title="Research specs, generate parametric CAD, and prepare the part">
+      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;" title="Research specs, generate parametric CAD, and prepare the part">
         Start engineering →
       </button>
     </div>
@@ -2171,14 +2255,96 @@ let evtSource = null;
 let idleTimer = null;
 
 /* ════════ TTS ════════ */
-function speak(text) {
+let voiceEnabled = true;
+
+async function loadVoiceSetting() {
   try {
-    fetch('/api/speak', {
+    const r = await fetch('/api/settings/voice');
+    const data = await r.json();
+    voiceEnabled = data.enabled;
+    updateVoiceIcon();
+  } catch(e) {
+    console.log('Could not load voice setting:', e);
+  }
+}
+
+async function toggleVoice() {
+  voiceEnabled = !voiceEnabled;
+  updateVoiceIcon();
+  try {
+    await fetch('/api/settings/voice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: voiceEnabled })
+    });
+  } catch(e) {
+    console.log('Could not save voice setting:', e);
+  }
+}
+
+function updateVoiceIcon() {
+  const onIcon = document.getElementById('voice-icon-on');
+  const offIcon = document.getElementById('voice-icon-off');
+  const btn = document.getElementById('voice-toggle-btn');
+  if (!onIcon || !offIcon || !btn) return;
+  if (voiceEnabled) {
+    onIcon.style.display = 'block';
+    offIcon.style.display = 'none';
+    btn.classList.remove('muted');
+    btn.title = 'Voice on — click to mute';
+  } else {
+    onIcon.style.display = 'none';
+    offIcon.style.display = 'block';
+    btn.classList.add('muted');
+    btn.title = 'Voice off — click to enable';
+  }
+}
+
+async function speak(text) {
+  if (!voiceEnabled) return;
+  try {
+    const r = await fetch('/api/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text })
     });
-  } catch (e) {}
+    const data = await r.json();
+    if (!data.ok && data.message) {
+      showVoiceStatusMessage(data.message);
+    }
+  } catch (e) {
+    console.log('[TTS] speak error:', e);
+  }
+}
+
+function showVoiceStatusMessage(message) {
+  let el = document.getElementById('voice-status-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'voice-status-toast';
+    el.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(13,13,13,0.9);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      z-index: 300;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    `;
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.style.opacity = '1';
+  clearTimeout(el._hideTimer);
+  el._hideTimer = setTimeout(() => { el.style.opacity = '0'; }, 3000);
 }
 
 /* ════════ NAVIGATION ════════ */
@@ -3169,6 +3335,10 @@ document.addEventListener('touchstart', resetIdle, { passive: true });
 document.addEventListener('mousedown', resetIdle);
 
 /* ════════ BOOT ════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  loadVoiceSetting();
+});
+
 window.addEventListener('load', () => {
   fetch('/api/state')
     .then(r => r.json())

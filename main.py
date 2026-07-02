@@ -45,7 +45,9 @@ USB_MOUNT_PATH       = os.getenv("USB_MOUNT_PATH", "/media/usb")
 OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
 DB_PATH              = BASE_DIR / "conjure.db"
 ELEVENLABS_API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+# Default voice: Sarah (premade) — Rachel (21m00Tcm4TlvDq8ikWAM) became a
+# library voice, which free-tier API keys can no longer use (HTTP 402).
+ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
@@ -356,12 +358,18 @@ def save_model_to_supabase(
     stl_path: Path,
     glb_url: str | None,
     stl_url: str | None
-) -> None:
+) -> int | None:
+    """Insert a model row in Supabase and return the Supabase-assigned id.
+
+    Returns None on failure or when Supabase is not configured. Callers that
+    log events against this model MUST use the returned Supabase id — the
+    local SQLite id is a different sequence and violates events_model_id_fkey.
+    """
     try:
         client = get_supabase_client()
         if not client:
-            return
-        client.table("models").insert({
+            return None
+        res = client.table("models").insert({
             "prompt": prompt,
             "meshy_task_id": task_id,
             "glb_path": str(glb_path),
@@ -370,9 +378,12 @@ def save_model_to_supabase(
             "stl_url": stl_url,
             "status": "complete",
         }).execute()
-        log.info("[Supabase] Model record inserted for prompt: %s", prompt[:50])
+        supabase_id = res.data[0]["id"] if res.data else None
+        log.info("[Supabase] Model record inserted (supabase id %s) for prompt: %s", supabase_id, prompt[:50])
+        return supabase_id
     except Exception as e:
         log.warning("[Supabase] Model record insert failed: %s", e)
+        return None
 
 
 def log_supabase_event(
@@ -436,49 +447,58 @@ def _clear_event_buffer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ElevenLabs TTS — non-blocking fire-and-forget
+# ElevenLabs TTS — returns a status dict so the frontend can show real errors
 # ---------------------------------------------------------------------------
-def speak(text: str) -> None:
+def speak(text: str) -> dict:
+    """
+    Attempts to speak text via ElevenLabs. Returns a dict describing what happened
+    so the frontend can show the real status instead of assuming success.
+    """
     if not ELEVENLABS_API_KEY:
-        _speak_fallback(text)
-        return
+        print(f"[TTS] No ElevenLabs key — skipping: {text}")
+        return {"ok": False, "reason": "no_key", "message": "Voice not configured"}
     try:
         r = requests.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
             headers={
                 "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json",
+                "Content-Type": "application/json"
             },
             json={
                 "text": text,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                # eleven_monolingual_v1 was deprecated and removed from the
+                # free tier (ElevenLabs 401 model_deprecated_free_tier).
+                "model_id": "eleven_flash_v2_5",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
             },
-            timeout=15,
+            timeout=15
         )
         if r.status_code == 200:
             audio_path = "/tmp/conjure_speech.mp3"
             with open(audio_path, "wb") as f:
                 f.write(r.content)
-            os.system(f"mpg123 -q {audio_path} &")
+            os.system(f"(mpg123 -q {audio_path} 2>/dev/null || afplay {audio_path}) &")
+            return {"ok": True, "reason": None, "message": None}
+        elif r.status_code == 401:
+            # ElevenLabs reports exhausted free credits as a 401 with a
+            # quota_exceeded detail body — distinguish that from a bad key.
+            body = r.text.lower()
+            if "quota" in body or "credit" in body:
+                print(f"[TTS] ElevenLabs 401 — out of credits: {r.text[:200]}")
+                return {"ok": False, "reason": "quota_exceeded", "message": "Sorry, cannot use voice at this moment"}
+            print(f"[TTS] ElevenLabs 401 — invalid or expired key")
+            return {"ok": False, "reason": "invalid_key", "message": "Voice unavailable — invalid API key"}
+        elif r.status_code == 429:
+            print(f"[TTS] ElevenLabs 429 — rate limited or out of credits")
+            return {"ok": False, "reason": "quota_exceeded", "message": "Sorry, cannot use voice at this moment"}
         else:
-            log.warning("[TTS] ElevenLabs error %s: %s", r.status_code, r.text[:100])
-            _speak_fallback(text)
+            print(f"[TTS] ElevenLabs error {r.status_code}: {r.text[:200]}")
+            reason = "quota_exceeded" if "credit" in r.text.lower() or "quota" in r.text.lower() else "unknown"
+            msg = "Sorry, cannot use voice at this moment" if reason == "quota_exceeded" else "Voice temporarily unavailable"
+            return {"ok": False, "reason": reason, "message": msg}
     except Exception as e:
-        log.warning("[TTS] speak() failed: %s", e)
-        _speak_fallback(text)
-
-
-def _speak_fallback(text: str) -> None:
-    import platform
-    if platform.system() == "Darwin":
-        safe = text.replace('"', '\\"')
-        os.system(f'say "{safe}" &')
-    elif shutil.which("espeak"):
-        safe = text.replace('"', '\\"')
-        os.system(f'espeak "{safe}" &')
-    else:
-        log.info("[TTS] fallback: %s", text)
+        print(f"[TTS] speak() failed: {e}")
+        return {"ok": False, "reason": "network_error", "message": "Voice temporarily unavailable"}
 
 
 # ---------------------------------------------------------------------------
@@ -701,7 +721,7 @@ async def run_generation(prompt: str) -> None:
                 glb_url_supa = upload_to_supabase(_glb_path_for_backup, folder="glb")
                 stl_url_supa = upload_to_supabase(_stl_path_for_backup, folder="stl")
 
-                save_model_to_supabase(
+                supabase_model_id = save_model_to_supabase(
                     prompt=_prompt_for_backup,
                     task_id=_task_id_for_backup,
                     glb_path=_glb_path_for_backup,
@@ -710,12 +730,15 @@ async def run_generation(prompt: str) -> None:
                     stl_url=stl_url_supa
                 )
 
+                # events.model_id has an FK to the Supabase models table, so it
+                # must be the Supabase id (or NULL) — never the local SQLite id.
                 log_supabase_event(
                     "model_generated",
-                    model_id=_model_id_for_backup,
+                    model_id=supabase_model_id,
                     message=_prompt_for_backup,
                     metadata={
                         "task_id": _task_id_for_backup,
+                        "local_model_id": _model_id_for_backup,
                         "glb_url": glb_url_supa,
                         "stl_url": stl_url_supa
                     }
@@ -1126,16 +1149,40 @@ async def api_reset() -> JSONResponse:
 # TTS endpoint — lets frontend trigger speech from browser
 # ---------------------------------------------------------------------------
 
+# In-memory voice switch. Seeded from VOICE_ENABLED so the env var still sets
+# the boot default, but the kiosk toggle wins after that.
+_voice_setting = {"enabled": os.getenv("VOICE_ENABLED", "true").lower() == "true"}
+
+
+@app.get("/api/settings/voice")
+def get_voice_setting() -> JSONResponse:
+    return JSONResponse({"enabled": _voice_setting["enabled"]})
+
+
+@app.post("/api/settings/voice")
+async def set_voice_setting(body: dict) -> JSONResponse:
+    enabled = bool(body.get("enabled", True))
+    _voice_setting["enabled"] = enabled
+    return JSONResponse({"ok": True, "enabled": enabled})
+
+
 class SpeakRequest(BaseModel):
     text: str
 
 
 @app.post("/api/speak")
-async def api_speak(req: SpeakRequest) -> JSONResponse:
+def api_speak(req: SpeakRequest) -> JSONResponse:
+    # Sync (non-async) on purpose: speak() blocks on the ElevenLabs HTTP call,
+    # so FastAPI must run this in its threadpool instead of the event loop —
+    # otherwise every TTS call would freeze /events (SSE) for up to 15s.
     if not req.text.strip():
-        return JSONResponse({"ok": False, "error": "no text"})
-    threading.Thread(target=speak, args=(req.text.strip(),), daemon=True).start()
-    return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False, "reason": "empty_text", "message": None})
+
+    if not _voice_setting["enabled"]:
+        return JSONResponse({"ok": False, "reason": "disabled", "message": None})
+
+    result = speak(req.text.strip())
+    return JSONResponse(result)
 
 
 # ---------------------------------------------------------------------------
@@ -1209,10 +1256,12 @@ def select_model(model_id: int) -> JSONResponse:
         pipeline_state["status"] = "model_ready"
         pipeline_state["active_model_id"] = model_id
 
+        # model_id here is the local SQLite id — not valid against the Supabase
+        # models FK, so it rides in metadata and the FK column stays NULL.
         threading.Thread(
             target=log_supabase_event,
             args=("model_selected",),
-            kwargs={"model_id": model_id, "message": model.get("prompt", "")},
+            kwargs={"message": model.get("prompt", ""), "metadata": {"local_model_id": model_id}},
             daemon=True
         ).start()
 
@@ -1628,33 +1677,34 @@ def run_engineer_pipeline(intent: str) -> None:
     engineer_log(f"Step 5 — CuraEngine slice (binary: {CURAENGINE_PATH})", "info")
     gcode_path = OUTPUT_DIR / "model.gcode"
     profile_path = BASE_DIR / "profiles" / "neptune4pro.json"
-    try:
-        cura_env = {**os.environ, "CURA_ENGINE_SEARCH_PATH": CURA_RESOURCES_PATH}
-        result = subprocess.run(
-            [
-                CURAENGINE_PATH, "slice",
-                "-j", str(profile_path),
-                "-l", str(stl_path),
-                "-o", str(gcode_path),
-                "-s", "layer_height=0.2",
-                "-s", "infill_sparse_density=20",
-                "-s", "support_enable=false",
-            ],
-            capture_output=True,
-            timeout=180,
-            cwd=str(BASE_DIR),
-            env=cura_env,
-        )
-        if result.returncode != 0:
-            raise Exception(result.stderr.decode("utf-8", errors="replace")[:500])
-        if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
-            raise Exception("Gcode too small — slice likely failed")
-        gcode_kb = gcode_path.stat().st_size / 1024
-        engineer_log(f"Gcode sliced: {gcode_kb:.1f}KB", "success")
-    except Exception as e:
-        engineer_log(f"CuraEngine failed: {e}", "error")
-        engineer_set_status("ERROR")
-        return
+    if not Path(CURAENGINE_PATH).exists():
+        engineer_log(f"CuraEngine not found at {CURAENGINE_PATH} — skipping slice (deploy to Orange Pi for full pipeline)", "warning")
+    else:
+        try:
+            cura_env = {**os.environ, "CURA_ENGINE_SEARCH_PATH": CURA_RESOURCES_PATH}
+            result = subprocess.run(
+                [
+                    CURAENGINE_PATH, "slice",
+                    "-j", str(profile_path),
+                    "-l", str(stl_path),
+                    "-o", str(gcode_path),
+                    "-s", "layer_height=0.2",
+                    "-s", "infill_sparse_density=20",
+                    "-s", "support_enable=false",
+                ],
+                capture_output=True,
+                timeout=180,
+                cwd=str(BASE_DIR),
+                env=cura_env,
+            )
+            if result.returncode != 0:
+                raise Exception(result.stderr.decode("utf-8", errors="replace")[:500])
+            if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
+                raise Exception("Gcode too small — slice likely failed")
+            gcode_kb = gcode_path.stat().st_size / 1024
+            engineer_log(f"Gcode sliced: {gcode_kb:.1f}KB", "success")
+        except Exception as e:
+            engineer_log(f"CuraEngine failed: {e} — skipping slice", "warning")
 
     try:
         model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
@@ -1696,7 +1746,13 @@ def run_engineer_pipeline(intent: str) -> None:
         try:
             stl_url = upload_to_supabase(stl_path, folder="engineer/stl")
             if stl_url and model_id:
-                log_supabase_event("engineer_model_generated", model_id=model_id, message=intent)
+                # model_id is the local SQLite id; engineer models have no row in
+                # the Supabase models table, so it goes in metadata (FK stays NULL).
+                log_supabase_event(
+                    "engineer_model_generated",
+                    message=intent,
+                    metadata={"local_model_id": model_id, "stl_url": stl_url},
+                )
         except Exception as e:
             print(f"[Supabase] Engineer backup error: {e}")
 
