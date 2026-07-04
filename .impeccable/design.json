@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-03T00:00:00Z",
+  "title": "Design System: Conjure Kiosk",
+  "extensions": {
+    "colorMeta": {
+      "jade": { "role": "primary", "displayName": "Jade (Conjured Geometry)", "canonical": "oklch(.79 .17 158)", "tonalRamp": ["#06170e", "#0a2f1d", "#0f4a2e", "#166b41", "#1e8a52", "#2fae6d", "#45d38a", "#7be3ab", "#b8f1d4"] },
+      "green-graphite": { "role": "neutral", "displayName": "Green Graphite", "canonical": "oklch(.18 .014 170)", "tonalRamp": ["#0b110e", "#0f1713", "#16211c", "#1c2a23", "#223029", "#2a3a32", "#3a4f45", "#54695e", "#8ba094"] },
+      "paper": { "role": "neutral", "displayName": "Warm Paper", "canonical": "oklch(.96 .006 120)", "tonalRamp": ["#2a3a32", "#3f4f47", "#5c6f65", "#8ba094", "#b7c4ba", "#d4ddd6", "#e6ebe3", "#f2f5ef", "#fbfcf9"] },
+      "amber": { "role": "tertiary", "displayName": "Review Amber", "canonical": "oklch(.76 .12 70)", "tonalRamp": ["#3a2810", "#5c4018", "#7e5a22", "#a8792f", "#c68f3f", "#e0a458", "#e8bd82", "#efd3ab", "#f6e8d4"] },
+      "red": { "role": "tertiary", "displayName": "Fault Red", "canonical": "oklch(.63 .17 27)", "tonalRamp": ["#3a1512", "#5c211b", "#7e2d24", "#a83c30", "#c64d3f", "#e5604f", "#ec8578", "#f2aaa1", "#f8cfca"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Idle-screen invitation only; one per screen." },
+      "headline": { "displayName": "Headline", "purpose": "Screen titles." },
+      "title": { "displayName": "Title", "purpose": "Mode-panel and card headings." },
+      "body": { "displayName": "Body", "purpose": "Prose and descriptions, capped ~58ch." },
+      "label": { "displayName": "Mono Label", "purpose": "Mode kickers and machine field labels — IBM Plex Mono, 0.08em tracking." },
+      "mono-data": { "displayName": "Mono Data", "purpose": "Live machine output: step messages, timings, SCAD, flow rail." }
+    },
+    "shadows": [
+      { "name": "mic-pulse", "value": "0 0 0 6px rgba(69,211,138,0.16), 0 0 0 14px rgba(69,211,138,0.06)", "purpose": "The only glow in the system — active push-to-talk listening. Silenced under prefers-reduced-motion." },
+      { "name": "viewer-scrim", "value": "linear-gradient(to top, rgba(11,17,14,0.95) 0%, rgba(11,17,14,0.5) 55%, transparent 100%)", "purpose": "Legibility gradient behind the 3D-viewer action bar; not an elevation shadow." }
+    ],
+    "motion": [
+      { "name": "state-transition", "value": "background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease", "purpose": "Default for hover/active color changes. Scoped to paint properties — never transition: all." },
+      { "name": "keycap-press", "value": "transform 0.08s ease", "purpose": "Primary/secondary button depress on :active (translateY(2px), bottom edge 3px→1px)." },
+      { "name": "spin", "value": "spin 1.2s linear infinite", "purpose": "Progress spinners; kept turning under reduced-motion because they signal active state." }
+    ],
+    "breakpoints": [
+      { "name": "narrow", "value": "600px", "purpose": "Tiny-screen: stack action rows, full-width buttons, full-width material toggle." },
+      { "name": "compact", "value": "860px", "purpose": "Idle mode-panels collapse to a single column." },
+      { "name": "compose", "value": "900px", "purpose": "Speak/Engineer two-column compose layouts collapse; info aside hidden." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button (Keycap)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The struck-by-a-finger primary action; jade cap with a machined bottom edge that presses on :active.",
+      "html": "<button class=\"ds-btn-primary\">Generate model &rarr;</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 54px; padding: 0 28px; background: var(--accent, #45d38a); color: var(--accent-ink, #06170e); font-family: Archivo, system-ui, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 0.01em; border: none; border-bottom: 3px solid var(--accent-edge, #1e8a52); border-radius: 3px; cursor: pointer; transition: background-color 0.15s ease, transform 0.08s ease; } .ds-btn-primary:hover { background: var(--accent-hi, #55dd97); } .ds-btn-primary:active { transform: translateY(2px); border-bottom-width: 1px; background: var(--accent-dim, #2fae6d); } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, #45d38a); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Quiet keycap for lower-stakes actions; surface fill, same press language.",
+      "html": "<button class=\"ds-btn-secondary\">View library</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 12px 22px; background: var(--surface, #16211c); color: var(--text-2, #b7c4ba); font-family: Archivo, system-ui, sans-serif; font-size: 14px; font-weight: 500; border: 1px solid var(--border, #2a3a32); border-bottom-width: 3px; border-radius: 3px; cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease; } .ds-btn-secondary:hover { background: var(--surface-2, #1c2a23); color: var(--text-1, #f2f5ef); } .ds-btn-secondary:active { transform: translateY(2px); border-bottom-width: 1px; }"
+    },
+    {
+      "name": "Example Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Tap-to-fill example prompt; transparent mono pill, min 48px touch target.",
+      "html": "<button class=\"ds-chip\">a hexagonal plant pot</button>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; min-height: 48px; padding: 10px 18px; background: transparent; color: var(--text-2, #b7c4ba); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 13px; border: 1px solid var(--border, #2a3a32); border-radius: 3px; cursor: pointer; transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; } .ds-chip:hover { background: var(--surface, #16211c); color: var(--text-1, #f2f5ef); border-color: var(--text-faint, #5c6f65); }"
+    },
+    {
+      "name": "Mode Panel (Lit Door)",
+      "kind": "card",
+      "refersTo": "mode-panel",
+      "description": "Idle-screen mode chooser; the Make panel is jade-edged, the Engineer panel plain graphite. Never an identical grid.",
+      "html": "<button class=\"ds-panel ds-panel-make\"><span class=\"ds-kicker\">MAKE &middot; voice or keyboard</span><span class=\"ds-panel-title\">Speak or type</span><span class=\"ds-panel-desc\">Any object you can describe. AI sculpts the mesh.</span></button>",
+      "css": ".ds-panel { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; text-align: left; min-height: 240px; padding: 30px 30px 24px; background: var(--surface, #16211c); border: 1px solid var(--border, #2a3a32); border-bottom-width: 4px; border-radius: 6px; cursor: pointer; } .ds-panel-make { border-color: rgba(69,211,138,0.35); border-bottom-color: var(--accent-edge, #1e8a52); } .ds-panel:active { transform: translateY(2px); border-bottom-width: 2px; } .ds-panel-make:hover { background: var(--surface-hi, #17261f); } .ds-kicker { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; letter-spacing: 0.08em; color: var(--accent, #45d38a); } .ds-panel-title { font-family: Archivo, system-ui, sans-serif; font-size: 27px; font-weight: 700; letter-spacing: -0.015em; color: var(--text-1, #f2f5ef); } .ds-panel-desc { font-size: 15px; line-height: 1.55; color: var(--text-2, #b7c4ba); max-width: 40ch; }"
+    },
+    {
+      "name": "Prompt Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Recessed well; border shifts to jade on focus, no glow. Always aria-labelled.",
+      "html": "<textarea class=\"ds-input\" aria-label=\"Describe what you want to build\" placeholder=\"e.g. a low-poly fox figurine with a bushy tail\"></textarea>",
+      "css": ".ds-input { width: 100%; min-height: 200px; padding: 20px 22px; background: var(--bg-deep, #0b110e); color: var(--text-1, #f2f5ef); font-family: Archivo, system-ui, sans-serif; font-size: 16.5px; line-height: 1.7; border: 1px solid var(--border, #2a3a32); border-radius: 4px; resize: none; outline: none; transition: border-color 0.15s ease; } .ds-input::placeholder { color: var(--text-3, #8ba094); } .ds-input:focus { border-color: var(--accent, #45d38a); }"
+    },
+    {
+      "name": "Material Toggle",
+      "kind": "nav",
+      "refersTo": "material-toggle-active",
+      "description": "Segmented Solid/Edges/Wire control over the 3D viewer; active segment fills jade.",
+      "html": "<div class=\"ds-toggle\"><button class=\"ds-seg ds-seg-active\">Solid</button><button class=\"ds-seg\">Edges</button><button class=\"ds-seg\">Wire</button></div>",
+      "css": ".ds-toggle { display: inline-flex; background: rgba(11,17,14,0.88); border: 1px solid var(--border, #2a3a32); border-radius: 3px; overflow: hidden; } .ds-seg { min-height: 48px; padding: 12px 24px; background: transparent; color: var(--text-3, #8ba094); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 13px; font-weight: 500; border: none; border-right: 1px solid var(--border, #2a3a32); cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease; } .ds-seg:last-child { border-right: none; } .ds-seg:hover { color: var(--text-2, #b7c4ba); background: var(--surface, #16211c); } .ds-seg-active { background: var(--accent, #45d38a); color: var(--accent-ink, #06170e); }"
+    },
+    {
+      "name": "Build-Log Step",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "One stage in the generation build log; hexagon glyph, Archivo name, live mono message. Parent list is aria-live=polite.",
+      "html": "<div class=\"ds-step\"><span class=\"ds-step-glyph\">&#x2B21;</span><span class=\"ds-step-info\"><span class=\"ds-step-name\">Nebius &mdash; CAD generation</span><span class=\"ds-step-msg\">writing parametric OpenSCAD&hellip;</span></span></div>",
+      "css": ".ds-step { display: flex; align-items: flex-start; gap: 14px; padding: 4px 0; } .ds-step-glyph { color: var(--accent, #45d38a); font-size: 16px; line-height: 1.3; } .ds-step-info { display: flex; flex-direction: column; gap: 2px; } .ds-step-name { font-family: Archivo, system-ui, sans-serif; font-size: 15px; color: var(--text-1, #f2f5ef); } .ds-step-msg { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 13px; color: var(--text-3, #8ba094); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Machine Enamel",
+    "overview": "Conjure is the enamelled housing of a fabrication machine, not an app. The whole surface is a deep green-cast graphite that exists so the conjured 3D object, rendered bright and rotating, is the most alive thing on screen. The accent is not chosen; it is taken — the jade green is the exact color the Three.js viewer renders the mesh, so the UI wears the color of the thing it makes. Type splits along one honest line: Archivo carries everything a person reads, IBM Plex Mono carries everything the machine says.",
+    "keyCharacteristics": [
+      "One dark green-graphite surface, one jade accent lifted from the rendered geometry.",
+      "Two-font honesty: Archivo speaks to the human, IBM Plex Mono reports the machine.",
+      "Physical, tactile controls — keycap buttons that visibly depress under a finger.",
+      "Kiosk-first legibility: >=48px touch targets, >=4.5:1 body contrast, no hover-only affordances.",
+      "Flat by default; depth comes from tonal layering and one machined bottom edge, never drop shadows."
+    ],
+    "rules": [
+      { "name": "The Borrowed-Accent Rule", "body": "The jade accent is defined once as the render color of the generated mesh. If the viewer's model color changes, the UI accent changes with it. Jade is a readout, not a brand choice.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Green is the machine; paper is the human. A jade or mono element is the machine reporting its work. An Archivo, paper-colored element is the product speaking to the person. Never blur the two.", "section": "colors" },
+      { "name": "The Machine-Speaks-Mono Rule", "body": "Anything the machine emits about its own process is IBM Plex Mono. Anything the product says to the user is Archivo. The font is the speaker label.", "section": "typography" },
+      { "name": "The One-Kicker Rule", "body": "The small mono all-caps label is permitted only where it names a mode or a machine field. It is forbidden as a decorative eyebrow above every section.", "section": "typography" },
+      { "name": "The Flat-Enclosure Rule", "body": "Surfaces are flat at rest. The only permitted depth cues are tonal (a lighter surface) and physical (the keycap bottom edge). Drop shadows and glows are forbidden except the mic's active-listening pulse.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do derive the accent from the rendered geometry. Jade (#45d38a) is the viewer's model color; keep them locked.",
+      "Do keep the surface dark green-graphite (#0f1713) so the rotating object is the brightest thing on screen.",
+      "Do use Archivo for the human and IBM Plex Mono for the machine, every time.",
+      "Do make primary actions physical keycaps with a bottom edge and a real :active press.",
+      "Do hold >=48px touch targets and >=4.5:1 body contrast; the user is a standing stranger at arm's length.",
+      "Do convey depth by tonal layering (Deep -> Graphite -> Surface -> Raised).",
+      "Do name every machine stage in the build log and wrap it in aria-live."
+    ],
+    "donts": [
+      "Don't ship dense CAD chrome — toolbars, gizmos, property inspectors, modal dialogs.",
+      "Don't use gimmicky AI-toy aesthetics: rainbow gradients, cartoon mascots, playful rounded-everything, and never gradient text.",
+      "Don't slip into generic SaaS-landing clichés: cream backgrounds, tracked eyebrows on every section, hero-metric blocks, identical icon-card grids.",
+      "Don't recreate cluttered maker-forum density — cramped panels, competing status widgets, low-contrast gray-on-gray.",
+      "Don't add drop shadows or glassmorphism. The only glow permitted is the mic's active-listening pulse.",
+      "Don't use Sage Faint (#5c6f65, 3.4:1) for anything a user must read — decorative and large-text only.",
+      "Don't encode meaning in color alone: amber/red review states always carry text or an icon.",
+      "Don't rely on hover to reveal function or state — there is no hover on the kiosk."
+    ]
+  }
+}

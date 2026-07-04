@@ -16,6 +16,7 @@ import requests
 import aiofiles
 from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -307,6 +308,38 @@ def db_get_model(row_id: int):
         ).fetchone()
         conn.close()
         return dict(row) if row else None
+
+
+def db_delete_model(row_id: int):
+    """Delete a model row. Returns (row, orphaned_paths): the deleted row as a
+    dict plus the file paths no surviving row still references, or (None, [])
+    when the id doesn't exist. Engineer runs share output paths, so a file is
+    only reported orphaned once its last referencing row is gone."""
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, prompt, created_at, meshy_task_id, glb_path, stl_path FROM models WHERE id=?",
+            (row_id,),
+        ).fetchone()
+        if row is None:
+            conn.close()
+            return None, []
+        conn.execute("DELETE FROM models WHERE id=?", (row_id,))
+        conn.commit()
+        orphaned = []
+        for key in ("glb_path", "stl_path"):
+            p = row[key]
+            if not p:
+                continue
+            (refs,) = conn.execute(
+                "SELECT COUNT(*) FROM models WHERE glb_path=? OR stl_path=?",
+                (p, p),
+            ).fetchone()
+            if refs == 0 and p not in orphaned:
+                orphaned.append(p)
+        conn.close()
+    return dict(row), orphaned
 
 
 # Initialize DB at startup
@@ -944,6 +977,13 @@ async def run_slicing() -> None:
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Conjure Kiosk", version="2.2.0")
 
+# Self-hosted web fonts (Archivo + IBM Plex Mono) so the kiosk renders correct
+# type with no network dependency at boot.
+app.mount("/fonts", StaticFiles(directory=str(BASE_DIR / "fonts")), name="fonts")
+
+# Self-hosted three.js r128 + GLTF/STL loaders — the 3D viewer must work offline.
+app.mount("/vendor", StaticFiles(directory=str(BASE_DIR / "vendor")), name="vendor")
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
@@ -1153,6 +1193,10 @@ async def api_reset() -> JSONResponse:
 # the boot default, but the kiosk toggle wins after that.
 _voice_setting = {"enabled": os.getenv("VOICE_ENABLED", "true").lower() == "true"}
 
+# VOICE_ENABLED=false is a hard kill switch: while set, no API call — not
+# even a stale cached page hitting /api/settings/voice — can re-enable sound.
+VOICE_HARD_DISABLED = os.getenv("VOICE_ENABLED", "true").lower() != "true"
+
 
 @app.get("/api/settings/voice")
 def get_voice_setting() -> JSONResponse:
@@ -1161,7 +1205,7 @@ def get_voice_setting() -> JSONResponse:
 
 @app.post("/api/settings/voice")
 async def set_voice_setting(body: dict) -> JSONResponse:
-    enabled = bool(body.get("enabled", True))
+    enabled = bool(body.get("enabled", True)) and not VOICE_HARD_DISABLED
     _voice_setting["enabled"] = enabled
     return JSONResponse({"ok": True, "enabled": enabled})
 
@@ -1178,7 +1222,7 @@ def api_speak(req: SpeakRequest) -> JSONResponse:
     if not req.text.strip():
         return JSONResponse({"ok": False, "reason": "empty_text", "message": None})
 
-    if not _voice_setting["enabled"]:
+    if VOICE_HARD_DISABLED or not _voice_setting["enabled"]:
         return JSONResponse({"ok": False, "reason": "disabled", "message": None})
 
     result = speak(req.text.strip())
@@ -1269,6 +1313,54 @@ def select_model(model_id: int) -> JSONResponse:
             "ok": True,
             "model_id": model_id,
             "prompt": model.get("prompt")
+        })
+
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.delete("/api/models/{model_id}")
+def delete_model(model_id: int) -> JSONResponse:
+    try:
+        row, orphaned_paths = db_delete_model(model_id)
+        if row is None:
+            return JSONResponse(
+                {"ok": False, "error": f"Model {model_id} not found"},
+                status_code=404
+            )
+
+        # Remove the model's files — but never the live working copies in
+        # OUTPUT_DIR (model.glb / model.stl) that the viewer and slicer use.
+        working_copies = {
+            (OUTPUT_DIR / "model.glb").resolve(),
+            (OUTPUT_DIR / "model.stl").resolve(),
+        }
+        deleted_files = []
+        for p in orphaned_paths:
+            path = Path(p)
+            try:
+                if path.exists() and path.resolve() not in working_copies:
+                    path.unlink()
+                    deleted_files.append(str(path))
+            except Exception as e:
+                log.warning("[Delete] Could not remove %s: %s", p, e)
+
+        if pipeline_state.get("active_model_id") == model_id:
+            pipeline_state["active_model_id"] = None
+
+        # Local SQLite id — not valid against the Supabase models FK, so it
+        # rides in metadata (same pattern as model_selected).
+        threading.Thread(
+            target=log_supabase_event,
+            args=("model_deleted",),
+            kwargs={"message": row.get("prompt", ""), "metadata": {"local_model_id": model_id}},
+            daemon=True
+        ).start()
+
+        return JSONResponse({
+            "ok": True,
+            "model_id": model_id,
+            "deleted_files": deleted_files
         })
 
     except Exception as e:

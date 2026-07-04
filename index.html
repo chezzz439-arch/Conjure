@@ -4,33 +4,65 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Conjure</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<!-- Three.js r128 + loaders self-hosted (served from /vendor by main.py) —
+     the kiosk must boot and render with no network. -->
+<script src="/vendor/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/STLLoader.js"></script>
+<!-- Fonts are self-hosted (served from /fonts by main.py) so the kiosk boots
+     with correct type even with no network. Archivo ships as one variable file. -->
 <style>
+  /* ════════ SELF-HOSTED FONTS ════════ */
+  @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400 800; font-display: swap; src: url('/fonts/archivo.woff2') format('woff2'); }
+  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400.woff2') format('woff2'); }
+  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500.woff2') format('woff2'); }
+  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/ibm-plex-mono-600.woff2') format('woff2'); }
+
+  /* ─────────────────────────────────────────────────────────────
+     CONJURE — machine-enamel design system
+     Deep green-cast graphite (the dark exists so the conjured
+     object is the brightest thing on screen), jade accent taken
+     from the rendered geometry itself, warm paper ink, and mono
+     for anything the machine says. Composed in OKLCH, shipped as
+     hex for kiosk-Chromium safety.
+     ───────────────────────────────────────────────────────────── */
   :root {
-    --bg:          #0d0d0d;
-    --surface:     #141414;
-    --surface-2:   #1a1a1a;
-    --border:      #262626;
-    --border-soft: #1f1f1f;
-    --text-1:      #ffffff;
-    --text-2:      #a0a0a0;
-    --text-3:      #808080;
-    --text-faint:  #555555;
-    --accent:      #6366f1;
-    --accent-dim:  #4f46e5;
-    --accent-glow: rgba(99, 102, 241, 0.15);
-    --green:       #22c55e;
-    --green-dim:   #16a34a;
-    --amber:       #f59e0b;
-    --red:         #ef4444;
-    --radius-sm:   6px;
-    --radius-md:   10px;
-    --radius-lg:   16px;
+    --bg:          #0f1713;   /* oklch(.18 .014 170) green graphite */
+    --bg-deep:     #0b110e;
+    --surface:     #16211c;
+    --surface-2:   #1c2a23;
+    --border:      #2a3a32;
+    --border-soft: #223029;
+    --text-1:      #f2f5ef;   /* warm paper */
+    --text-2:      #b7c4ba;
+    --text-3:      #8ba094;
+    --text-faint:  #5c6f65;
+    --accent:      #45d38a;   /* jade — the color of conjured geometry */
+    --accent-hi:   #55dd97;   /* jade, lifted — primary button hover */
+    --accent-dim:  #2fae6d;
+    --accent-edge: #1e8a52;   /* keycap bottom edge */
+    --accent-ink:  #06170e;   /* text on jade */
+    --surface-hi:  #17261f;   /* green-lifted surface — accented panel hover */
+    --accent-glow: rgba(69, 211, 138, 0.13);
+    --green:       #45d38a;   /* success shares the jade family */
+    --green-dim:   #2fae6d;
+    --amber:       #e0a458;
+    --red:         #e5604f;
+    --font-ui:     'Archivo', -apple-system, system-ui, sans-serif;
+    --font-mono:   'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --radius-sm:   3px;       /* machined, not pillowy */
+    --radius-md:   4px;
+    --radius-lg:   6px;
+    --nav-h:       60px;      /* top placard height */
+    --tap:         48px;      /* minimum touch target — small screens */
+    --edge:        clamp(20px, 4vw, 32px); /* breathing room to screen edges */
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* Jade fingerprints: text selection and the input caret carry the accent. */
+  ::selection { background: rgba(69, 211, 138, 0.28); color: var(--text-1); }
+  textarea, input { caret-color: var(--accent); }
 
   html, body {
     width: 100vw;
@@ -39,13 +71,36 @@
   }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-family: var(--font-ui);
     background: var(--bg);
     color: var(--text-1);
     font-size: 15px;
     line-height: 1.6;
     display: flex;
     flex-direction: column;
+  }
+
+  /* Layer lines — the faint horizontal striation of an FDM print,
+     laid across the whole canvas instead of decorative glow blobs. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      180deg,
+      transparent 0 7px,
+      rgba(242, 245, 239, 0.014) 7px 8px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Entrance beat: display none→flex restarts the animation, so every
+     screen change gets one short settle. Content is visible at frame 0
+     of any failure — this decorates arrival, it never gates visibility. */
+  @keyframes screen-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
   }
 
   .screen {
@@ -55,16 +110,20 @@
     display: none;
     flex-direction: column;
     align-items: center;
+    animation: screen-in 0.32s cubic-bezier(0.25, 1, 0.5, 1);
     justify-content: center;
-    padding-top: 52px;
+    padding-top: var(--nav-h);
+    z-index: 2;
   }
 
   .screen.active { display: flex; }
 
   #s-view { padding-top: 0; }
-  #s-idle { justify-content: flex-start; align-items: stretch; padding-top: 52px; overflow-y: auto; }
-  #s-speak, #s-engineer { justify-content: flex-start; align-items: stretch; padding-top: 52px; overflow-y: auto; }
-  #s-library { justify-content: flex-start; padding-top: 52px; }
+  /* flex-start + margin:auto on .landing centers when short but stays
+     scrollable when tall (justify-content:center clips the top). */
+  #s-idle { justify-content: flex-start; align-items: center; padding-top: var(--nav-h); overflow-y: auto; }
+  #s-speak, #s-engineer { justify-content: flex-start; align-items: stretch; padding-top: var(--nav-h); overflow-y: auto; }
+  #s-library { justify-content: flex-start; padding-top: var(--nav-h); }
   #s-engineer-generating {
     justify-content: flex-start;
     padding-top: 72px;
@@ -79,7 +138,7 @@
     font-weight: 500;
     border: none;
     outline: none;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
   }
 
   button:disabled {
@@ -90,8 +149,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ════════ FOCUS (keyboard / switch access) ════════ */
-  /* The global `outline: none` above strips focus rings; restore a visible one
-     for keyboard users without affecting pointer/touch interaction. */
   button:focus-visible,
   a:focus-visible,
   textarea:focus-visible,
@@ -109,31 +166,28 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
-    /* Loading spinners convey active state, not decoration — keep them turning,
+    /* Spinners convey active state, not decoration — keep them turning,
        just calmer. The recording pulse is decorative, so silence it. */
     .progress-spinner,
     .step-spinner {
       animation: spin 1.2s linear infinite !important;
     }
-    .mic-button.recording,
     .mic-inline.recording {
       animation: none !important;
     }
   }
 
-  /* ════════ TOP NAV ════════ */
+  /* ════════ TOP NAV — solid machine placard, no glass ════════ */
   #top-nav {
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: 52px;
-    background: rgba(13,13,13,0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
+    height: var(--nav-h);
+    background: var(--bg-deep);
+    border-bottom: 1px solid var(--border-soft);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 24px;
+    padding: 0 var(--edge);
     z-index: 100;
     flex-shrink: 0;
   }
@@ -142,21 +196,22 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 700;
     color: var(--text-1);
-    letter-spacing: -0.3px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     cursor: pointer;
-    opacity: 0.95;
-    transition: opacity 0.15s ease;
   }
 
-  #nav-logo:hover { opacity: 1; }
+  #nav-logo:hover { color: var(--accent); }
 
   #nav-status {
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-3);
-    letter-spacing: 0.2px;
+    letter-spacing: 0.06em;
+    text-transform: lowercase;
   }
 
   .nav-actions {
@@ -170,465 +225,303 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--surface);
+    background: transparent;
     border: 1px solid var(--border);
     color: var(--text-2);
-    padding: 7px 14px;
+    padding: 10px 18px;
     border-radius: var(--radius-sm);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
+    min-height: var(--tap);
   }
 
   #nav-home-btn:hover,
   #nav-library-btn:hover {
-    background: var(--surface-2);
+    background: var(--surface);
     color: var(--text-1);
-    border-color: var(--border-soft);
+    border-color: var(--text-faint);
   }
 
-  #voice-toggle-btn {
-    display: flex;
+  #nav-home-btn:active,
+  #nav-library-btn:active { background: var(--surface-2); }
+
+  /* ════════ BUTTONS — keycap primary, quiet secondary ════════ */
+  /* Primary actions read like a physical key: jade cap, darker
+     bottom edge, and a real press on :active. Built for fingers. */
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 0 28px;
+    height: 54px;
+    border-radius: var(--radius-sm);
+    font-size: 16px;
+    font-weight: 700;
+    border: none;
+    border-bottom: 3px solid var(--accent-edge);
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all 0.15s;
-    margin-right: 8px;
+    letter-spacing: 0.01em;
   }
 
-  #voice-toggle-btn:hover {
+  .btn-primary:hover { background: var(--accent-hi); }
+
+  .btn-primary:active {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
+    background: var(--accent-dim);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text-2);
+    padding: 12px 22px;
+    min-height: var(--tap);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-bottom-width: 3px;
+  }
+
+  .btn-secondary:hover {
     background: var(--surface-2);
     color: var(--text-1);
   }
 
-  #voice-toggle-btn.muted {
-    color: var(--text-3);
-    border-color: var(--border-soft);
+  .btn-secondary:active {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
   }
 
-  /* ════════ IDLE ════════ */
-  .idle-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 36px;
-    width: 100%;
-    max-width: 760px;
-    padding: 0 24px;
-  }
-
-  .idle-header {
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .idle-header h1 {
-    font-size: 32px;
-    font-weight: 700;
-    letter-spacing: -0.8px;
-    color: var(--text-1);
-    line-height: 1.2;
-  }
-
-  .idle-header p {
-    font-size: 16px;
+  .btn-ghost {
+    background: transparent;
     color: var(--text-2);
-    line-height: 1.6;
+    padding: 0 16px;
+    height: 54px;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    border: none;
+    display: inline-flex;
+    align-items: center;
   }
 
-  .mode-cards {
+  .btn-ghost:hover { color: var(--text-1); }
+
+  .back-btn { align-self: flex-start; }
+
+  /* ════════ IDLE — kiosk orientation surface, not a funnel ════════ */
+  .landing {
+    width: 100%;
+    max-width: 1180px;
+    margin: auto;
+    padding: 28px var(--edge) var(--edge);
+    display: flex;
+    flex-direction: column;
+    /* rhythm: tight from invite to panels (one thought), open before the rail */
+    gap: 34px;
+  }
+
+  .invite {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 920px;
+  }
+
+  .invite h1 {
+    font-size: 62px;
+    line-height: 1.06;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+    text-wrap: balance;
+  }
+
+  .invite h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+
+  .invite p {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--text-2);
+    max-width: 58ch;
+  }
+
+  /* Two mode panels — the primary tap targets, deliberately
+     asymmetric: Make is the lit jade door, Engineer the graphite one. */
+  .mode-panels {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    /* Make is the door most people walk through — give it the floor space */
+    grid-template-columns: 1.45fr 1fr;
+    gap: 18px;
     width: 100%;
   }
 
-  .mode-card {
+  .mode-panel {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 16px;
-    padding: 24px;
+    gap: 12px;
+    text-align: left;
+    padding: 30px 30px 24px;
+    min-height: 240px;
+    border-radius: var(--radius-lg);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    cursor: pointer;
-    transition: all 0.15s ease;
-    text-align: left;
-    height: 100%;
+    border-bottom-width: 4px;
+    overflow: hidden;
   }
 
-  .mode-card:hover {
-    background: var(--surface-2);
-    border-color: #333;
-    transform: translateY(-2px);
+  .mode-panel:active {
+    transform: translateY(2px);
+    border-bottom-width: 2px;
   }
 
-  .mode-card-footer {
+  .panel-make {
+    background: var(--surface);
+    border-color: rgba(69, 211, 138, 0.35);
+    border-bottom-color: var(--accent-edge);
+    padding: 38px 38px 28px;
+    min-height: 280px;
+  }
+
+  .panel-make .panel-title { font-size: 36px; letter-spacing: -0.02em; }
+  .panel-make .panel-desc  { font-size: 16px; max-width: 46ch; }
+  .panel-make .panel-go    { font-size: 16px; }
+
+  .panel-make:hover { background: var(--surface-hi); }
+  .panel-eng:hover  { background: var(--surface-2); }
+
+  .panel-tag {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+  }
+
+  .panel-make .panel-tag { color: var(--accent); }
+
+  .panel-title {
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    color: var(--text-1);
+    line-height: 1.15;
+  }
+
+  .panel-desc {
+    font-size: 15px;
+    color: var(--text-2);
+    line-height: 1.55;
+    max-width: 40ch;
+  }
+
+  .panel-foot {
+    margin-top: auto;
+    padding-top: 16px;
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    width: 100%;
+    gap: 12px;
+    border-top: 1px solid var(--border-soft);
+    font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-3);
-    letter-spacing: 0.2px;
+    letter-spacing: 0.02em;
   }
 
-  @media (max-width: 640px) {
-    .mode-cards { grid-template-columns: 1fr; }
+  .panel-go {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    white-space: nowrap;
   }
 
-  /* ════════ LANDING PAGE ════════ */
-  .landing {
-    width: 100%;
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 0 24px 56px;
-  }
+  .panel-eng .panel-go { color: var(--text-1); }
 
-  .hero {
-    position: relative;
-    text-align: center;
-    padding: 72px 0 60px;
+  /* Flow rail — the four verbs as one line, not four cards. */
+  .flow-rail {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 22px;
-  }
-
-  .hero::before {
-    content: '';
-    position: absolute;
-    top: 48px;
-    left: 50%;
-    width: 760px;
-    height: 380px;
-    transform: translateX(-50%);
-    background: radial-gradient(closest-side, var(--accent-glow), transparent);
-    filter: blur(44px);
-    z-index: -1;
-    pointer-events: none;
-  }
-
-  .hero-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    color: #a5b4fc;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 500;
-  }
-
-  .hero-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent);
-  }
-
-  .hero-title {
-    font-size: 52px;
-    line-height: 1.08;
-    font-weight: 800;
-    letter-spacing: -1.5px;
-    color: var(--text-1);
-    max-width: 820px;
-  }
-
-  .hero-sub {
-    font-size: 18px;
-    line-height: 1.6;
-    color: var(--text-2);
-    max-width: 640px;
-  }
-
-  .hero-cta {
-    display: flex;
-    gap: 12px;
+    align-items: baseline;
     flex-wrap: wrap;
-    justify-content: center;
-    margin-top: 8px;
-  }
-
-  .hero-btn {
-    height: 48px;
-    padding: 0 24px;
-    display: inline-flex;
-    align-items: center;
-    font-size: 15px;
-    flex: 0 0 auto;
-    border-radius: var(--radius-md);
-  }
-
-  .section {
-    padding: 56px 0;
-    border-top: 1px solid var(--border-soft);
-  }
-
-  .section-head {
-    text-align: center;
-    max-width: 640px;
-    margin: 0 auto 40px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .section-eyebrow {
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: #a5b4fc;
-  }
-
-  .section-title {
-    font-size: 30px;
-    font-weight: 700;
-    letter-spacing: -0.6px;
-    color: var(--text-1);
-  }
-
-  .section-lead {
-    font-size: 16px;
+    gap: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 14px;
     color: var(--text-2);
-    line-height: 1.6;
   }
 
-  .steps-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-  }
+  .flow-step { display: inline-flex; align-items: baseline; gap: 14px; }
 
-  .step-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .step-num {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    background: var(--accent-glow);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    color: #a5b4fc;
-    font-weight: 700;
-    font-size: 15px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .step-card h3 {
-    font-size: 17px;
+  .flow-step b {
     font-weight: 600;
     color: var(--text-1);
   }
 
-  .step-card p {
-    font-size: 14px;
-    color: var(--text-2);
-    line-height: 1.6;
-  }
-
-  .mode-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-
-  .feature-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 28px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    align-items: flex-start;
-  }
-
-  .feature-card h3 {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text-1);
-    letter-spacing: -0.3px;
-  }
-
-  .feature-desc {
-    font-size: 15px;
-    color: var(--text-2);
-    line-height: 1.6;
-  }
-
-  .feature-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    width: 100%;
-  }
-
-  .feature-list li {
-    position: relative;
-    padding-left: 24px;
-    font-size: 14px;
-    color: var(--text-2);
-  }
-
-  .feature-list li::before {
-    content: '✓';
-    position: absolute;
-    left: 0;
-    color: var(--green);
-    font-weight: 700;
-  }
-
-  .card-cta {
-    margin-top: 6px;
-    height: 46px;
-    padding: 0 22px;
-    display: inline-flex;
-    align-items: center;
-    flex: 0 0 auto;
-    font-size: 14px;
-    border-radius: var(--radius-md);
-  }
-
-  .features-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-  }
-
-  .mini-feature {
-    background: var(--surface);
-    border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md);
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .mini-icon {
-    width: 38px;
-    height: 38px;
-    border-radius: 9px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #a5b4fc;
-  }
-
-  .mini-feature h4 {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-1);
-  }
-
-  .mini-feature p {
-    font-size: 13px;
-    color: var(--text-2);
-    line-height: 1.5;
-  }
-
-  .site-footer {
-    border-top: 1px solid var(--border-soft);
-    padding: 32px 0 8px;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .site-footer > div:first-child {
-    font-size: 14px;
-    color: var(--text-2);
-    font-weight: 500;
-  }
-
-  .footer-note {
-    font-size: 13px;
+  .flow-step small {
+    font-size: 12.5px;
     color: var(--text-3);
   }
+
+  .flow-arrow { color: var(--accent); font-weight: 600; }
+
+  .idle-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .toolchain {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+  }
+
+  .toolchain span { color: var(--text-faint); }
 
   @media (max-width: 860px) {
-    .hero-title { font-size: 38px; }
-    .steps-grid { grid-template-columns: repeat(2, 1fr); }
-    .mode-grid { grid-template-columns: 1fr; }
-    .features-grid { grid-template-columns: 1fr; }
+    .invite h1 { font-size: 34px; }
+    .mode-panels { grid-template-columns: 1fr; }
+    .mode-panel { min-height: 180px; }
+    .panel-make { padding: 30px 30px 24px; min-height: 200px; }
+    .panel-make .panel-title { font-size: 28px; }
+    .idle-foot { flex-direction: column; align-items: stretch; }
+    .idle-foot .btn-secondary { width: 100%; }
   }
 
-  .mode-card-icon {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-md);
-    display: flex;
+  /* ════════ MODE TAG (speak / engineer screens) ════════ */
+  .speak-badge,
+  .engineer-badge {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .speak-icon {
-    background: rgba(99, 102, 241, 0.12);
-    color: #818cf8;
-    border: 1px solid rgba(99, 102, 241, 0.2);
-  }
-
-  .engineer-icon {
-    background: rgba(34, 197, 94, 0.1);
-    color: #4ade80;
-    border: 1px solid rgba(34, 197, 94, 0.2);
-  }
-
-  .mode-card-content { flex: 1; }
-
-  .mode-card-content h3 {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-1);
-    margin-bottom: 4px;
-    letter-spacing: -0.2px;
-  }
-
-  .mode-card-content p {
-    font-size: 14px;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid var(--border);
     color: var(--text-2);
-    line-height: 1.5;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    width: fit-content;
   }
 
-  .mode-card-arrow {
-    font-size: 18px;
-    color: var(--text-3);
-    flex-shrink: 0;
-    transition: transform 0.15s ease;
-  }
-
-  .mode-card:hover .mode-card-arrow {
-    transform: translateX(4px);
-    color: var(--text-2);
-  }
+  .speak-badge svg { color: var(--accent); }
+  .engineer-badge svg { color: var(--accent); }
 
   /* ════════ SPEAK ════════ */
   .speak-container {
@@ -640,35 +533,6 @@
     width: 100%;
     max-width: 560px;
     padding: 0 24px;
-  }
-
-  /* Soft accent glow behind the composer so the screen doesn't read as empty. */
-  .speak-container::before {
-    content: '';
-    position: absolute;
-    top: 46%;
-    left: 50%;
-    width: 540px;
-    height: 360px;
-    transform: translate(-50%, -50%);
-    background: radial-gradient(closest-side, var(--accent-glow), transparent);
-    filter: blur(30px);
-    z-index: -1;
-    pointer-events: none;
-  }
-
-  .speak-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    color: #a5b4fc;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
   }
 
   .prompt-suggestions {
@@ -684,142 +548,16 @@
   .speak-header h2 {
     font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.8px;
+    letter-spacing: -0.02em;
     color: var(--text-1);
     margin-bottom: 10px;
+    text-wrap: balance;
   }
 
   .speak-header p {
     font-size: 17px;
     color: var(--text-2);
   }
-
-  .mic-area {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .mic-button {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    color: var(--text-2);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-    transition: all 0.2s ease;
-  }
-
-  .mic-button:hover {
-    background: var(--surface-2);
-    border-color: var(--accent);
-    color: var(--text-1);
-  }
-
-  .mic-button.recording {
-    background: rgba(99, 102, 241, 0.12);
-    border-color: var(--accent);
-    color: #818cf8;
-    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08), 0 0 0 16px rgba(99, 102, 241, 0.04);
-    animation: mic-pulse 1.5s ease-in-out infinite;
-  }
-
-  @keyframes mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08), 0 0 0 16px rgba(99, 102, 241, 0.04); }
-    50% { box-shadow: 0 0 0 12px rgba(99, 102, 241, 0.06), 0 0 0 24px rgba(99, 102, 241, 0.02); }
-  }
-
-  .mic-hint {
-    font-size: 13px;
-    color: var(--text-3);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .mic-button.recording ~ .mic-hint { opacity: 1; }
-
-  .transcript-box {
-    width: 100%;
-    min-height: 80px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 16px 20px;
-  }
-
-  .transcript-placeholder {
-    color: var(--text-3);
-    font-size: 15px;
-  }
-
-  .transcript-text {
-    color: var(--text-1);
-    font-size: 15px;
-    line-height: 1.6;
-  }
-
-  .action-buttons {
-    display: flex;
-    gap: 12px;
-    width: 100%;
-  }
-
-  .btn-primary {
-    flex: 1;
-    background: var(--accent);
-    color: white;
-    padding: 0 32px;
-    height: 54px;
-    border-radius: var(--radius-sm);
-    font-size: 16px;
-    font-weight: 600;
-    border: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .btn-primary:hover { background: var(--accent-dim); }
-
-  .btn-secondary {
-    background: var(--surface);
-    color: var(--text-2);
-    padding: 12px 20px;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    font-weight: 500;
-    border: 1px solid var(--border);
-  }
-
-  .btn-secondary:hover {
-    background: var(--surface-2);
-    color: var(--text-1);
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: var(--text-2);
-    padding: 0 16px;
-    height: 54px;
-    border-radius: var(--radius-sm);
-    font-size: 16px;
-    border: none;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .btn-ghost:hover { color: var(--text-1); }
-
-  .back-btn { align-self: flex-start; }
 
   /* ════════ PROMPT COMPOSER (type + voice) ════════ */
   .compose-group {
@@ -834,16 +572,17 @@
     width: 100%;
   }
 
+  /* What you type is an instruction to a machine — set it in mono. */
   .prompt-input {
     width: 100%;
-    background: var(--surface);
+    background: var(--bg-deep);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     color: var(--text-1);
-    font-family: inherit;
-    font-size: 18px;
-    line-height: 1.65;
-    padding: 20px 72px 20px 22px;
+    font-family: var(--font-mono);
+    font-size: 16.5px;
+    line-height: 1.7;
+    padding: 20px 76px 20px 22px;
     resize: none;
     min-height: 200px;
     outline: none;
@@ -857,16 +596,16 @@
     position: absolute;
     right: 14px;
     bottom: 14px;
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
+    width: 54px;
+    height: 54px;
+    border-radius: var(--radius-md);
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text-2);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
   }
 
   .mic-inline:hover {
@@ -875,14 +614,20 @@
   }
 
   .mic-inline.recording {
-    background: rgba(99, 102, 241, 0.15);
+    background: var(--accent);
     border-color: var(--accent);
-    color: #818cf8;
+    color: var(--accent-ink);
     animation: mic-pulse 1.5s ease-in-out infinite;
   }
 
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 6px rgba(69, 211, 138, 0.16), 0 0 0 14px rgba(69, 211, 138, 0.06); }
+    50% { box-shadow: 0 0 0 10px rgba(69, 211, 138, 0.10), 0 0 0 20px rgba(69, 211, 138, 0.03); }
+  }
+
   .mic-caption {
-    font-size: 14px;
+    font-family: var(--font-mono);
+    font-size: 13px;
     color: var(--text-3);
     padding-left: 2px;
   }
@@ -897,6 +642,36 @@
 
   .speak-actions .btn-primary { flex: 0 0 auto; }
 
+  .examples-label {
+    font-size: 14px;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+
+  .example-pill {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    min-height: var(--tap);
+    display: inline-flex;
+    align-items: center;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .example-pill:hover {
+    background: var(--surface);
+    color: var(--text-1);
+    border-color: var(--text-faint);
+  }
+
+  .example-pill:active { background: var(--surface-2); }
+
   /* ════════ TWO-COLUMN MODE LAYOUT (compose + info aside) ════════ */
   .compose-layout {
     display: grid;
@@ -904,8 +679,8 @@
     gap: 48px;
     width: 100%;
     max-width: 1280px;
-    min-height: calc(100vh - 52px);
-    padding: 52px 48px;
+    min-height: calc(100vh - var(--nav-h));
+    padding: 48px clamp(20px, 4vw, 48px);
     align-items: stretch;
     margin: 0 auto;
   }
@@ -921,58 +696,60 @@
   .compose-main > .speak-badge { align-self: flex-start; }
   .compose-main .speak-header,
   .compose-main .engineer-header { text-align: left; }
-  .compose-main .speak-container::before { display: none; }
 
   .compose-aside {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 18px;
     justify-content: center;
   }
 
   .aside-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: 1px solid var(--border-soft);
     border-radius: var(--radius-lg);
-    padding: 28px;
+    padding: 24px 26px;
   }
 
+  /* Human-voice heading, not a tracked eyebrow — One-Kicker Rule applies. */
   .aside-title {
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: 16px;
     font-weight: 600;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: var(--text-3);
-    margin-bottom: 18px;
+    letter-spacing: -0.01em;
+    color: var(--text-2);
+    margin-bottom: 14px;
   }
 
   .aside-list {
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 13px;
   }
 
   .aside-list li {
     position: relative;
-    padding-left: 24px;
+    padding-left: 22px;
     font-size: 15px;
     color: var(--text-2);
     line-height: 1.55;
   }
 
   .aside-list li::before {
-    content: '→';
+    content: '⬡';
     position: absolute;
     left: 0;
-    color: #a5b4fc;
+    top: 1px;
+    color: var(--accent);
+    font-size: 13px;
   }
 
   .aside-steps {
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
   }
 
   .aside-steps li {
@@ -984,32 +761,33 @@
   }
 
   .aside-steps li span {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
-    background: var(--accent-glow);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    color: #a5b4fc;
-    font-size: 13px;
-    font-weight: 700;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
   @media (max-width: 900px) {
-    .compose-layout { grid-template-columns: 1fr; max-width: 640px; padding: 40px 32px; }
+    .compose-layout { grid-template-columns: 1fr; max-width: 640px; padding: 40px var(--edge); }
     .compose-aside { display: none; }
   }
 
-  /* ════════ PROGRESS (generating / slicing / engineering) ════════ */
+  /* ════════ PROGRESS — a build log, not a spinner ════════ */
   .progress-container {
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: 30px;
     width: 100%;
-    max-width: 480px;
+    max-width: 640px;
     padding: 0 24px;
   }
 
@@ -1029,20 +807,30 @@
     flex-shrink: 0;
   }
 
+  .progress-eta {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
   .progress-header h2 {
-    font-size: 22px;
+    font-size: 32px;
     font-weight: 700;
-    letter-spacing: -0.4px;
+    letter-spacing: -0.01em;
     color: var(--text-1);
   }
 
+  /* The job ticket — what the human asked for, echoed back in mono. */
   .progress-prompt {
-    font-size: 14px;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
     color: var(--text-2);
-    font-style: italic;
-    padding: 12px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    line-height: 1.6;
+    padding: 13px 16px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
   }
 
@@ -1056,7 +844,7 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 12px 0;
+    padding: 13px 0;
     border-bottom: 1px solid var(--border-soft);
   }
 
@@ -1072,8 +860,8 @@
   }
 
   .step-icon {
-    font-size: 16px;
-    color: var(--text-3);
+    font-size: 15px;
+    color: var(--text-faint);
     line-height: 1;
   }
 
@@ -1085,68 +873,139 @@
   }
 
   .step-name {
-    font-size: 14px;
+    font-family: var(--font-mono);
+    font-size: 15px;
     font-weight: 500;
-    color: var(--text-2);
+    color: var(--text-3);
+    letter-spacing: 0.01em;
   }
 
   .step-msg {
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 13px;
     color: var(--text-3);
     min-height: 16px;
   }
 
-  .step-item.active .step-name { color: var(--text-1); }
+  .step-item.active .step-name { color: var(--text-1); font-weight: 600; }
+  .step-item.active .step-msg  { color: var(--text-2); }
   .step-item.active .step-icon { color: var(--accent); }
   .step-item.done .step-name { color: var(--text-2); }
-  .step-item.done .step-icon { color: var(--green); }
+  .step-item.done .step-icon {
+    color: var(--green);
+    /* layer locked in — one quick settle when the step lands */
+    animation: step-lock 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  @keyframes step-lock {
+    from { transform: scale(0.5); }
+    60%  { transform: scale(1.15); }
+    to   { transform: scale(1); }
+  }
   .step-item.error .step-icon { color: var(--red); }
+  .step-item.error .step-name { color: var(--red); }
 
   .step-spinner {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     border: 1.5px solid var(--border);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
 
+  /* Extrusion-line progress: jade bead with a bright print head. */
   .progress-track {
-    height: 3px;
+    height: 8px;
     background: var(--surface-2);
-    border-radius: 2px;
+    border-radius: 0;
     overflow: hidden;
   }
 
   .progress-bar {
+    position: relative;
     height: 100%;
-    background: var(--accent);
-    border-radius: 2px;
+    background: var(--accent-dim);
     width: 0%;
     transition: width 0.4s ease;
   }
 
+  .progress-bar::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 14px;
+    height: 100%;
+    background: var(--accent);
+    /* the print head runs hot — the one emissive glow in the system */
+    box-shadow: 0 0 10px rgba(69, 211, 138, 0.7);
+  }
+
+  .error-actions {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+  }
+
+  .error-actions .btn-primary,
+  .error-actions .btn-ghost { min-width: 170px; }
+
   /* ════════ VIEW ════════ */
+  /* Completion toast — the one earned celebration: a jade keycap that
+     drops in when the model lands, then gets out of the way. */
+  .model-ready {
+    position: absolute;
+    top: calc(var(--nav-h) + 28px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-14px);
+    opacity: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px 26px;
+    background: var(--surface);
+    border: 1px solid rgba(69, 211, 138, 0.5);
+    border-bottom: 3px solid var(--accent-edge);
+    border-radius: var(--radius-md);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text-1);
+    z-index: 10;
+    transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  .model-ready.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .model-ready .hex {
+    color: var(--accent);
+    font-size: 21px;
+    line-height: 1;
+  }
+
   .view-overlay-top {
     position: absolute;
-    top: 64px;
+    top: calc(var(--nav-h) + 12px);
     left: 0; right: 0;
     display: flex;
     align-items: center;
-    padding: 20px 32px;
+    padding: 20px var(--edge);
     pointer-events: none;
   }
 
   .view-prompt-pill {
-    background: rgba(20,20,20,0.72);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(11, 17, 14, 0.85);
     border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 9px 18px;
-    font-size: 14px;
+    border-radius: var(--radius-sm);
+    padding: 9px 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
     color: var(--text-2);
-    font-style: italic;
     pointer-events: none;
     max-width: 440px;
     overflow: hidden;
@@ -1157,8 +1016,8 @@
   .view-overlay-bottom {
     position: absolute;
     bottom: 0; left: 0; right: 0;
-    padding: 28px 32px;
-    background: linear-gradient(to top, rgba(13,13,13,0.94) 0%, rgba(13,13,13,0.45) 55%, transparent 100%);
+    padding: 28px var(--edge) var(--edge);
+    background: linear-gradient(to top, rgba(11, 17, 14, 0.95) 0%, rgba(11, 17, 14, 0.5) 55%, transparent 100%);
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
@@ -1176,11 +1035,9 @@
   .material-toggle-group {
     display: inline-flex;
     width: fit-content;
-    background: rgba(20,20,20,0.8);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(11, 17, 14, 0.88);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     overflow: hidden;
   }
 
@@ -1188,21 +1045,24 @@
     background: transparent;
     border: none;
     color: var(--text-3);
-    padding: 11px 22px;
-    font-size: 14px;
+    min-height: var(--tap);
+    padding: 12px 24px;
+    font-family: var(--font-mono);
+    font-size: 13px;
     font-weight: 500;
     border-right: 1px solid var(--border);
-    transition: all 0.15s;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   .mat-btn:last-child { border-right: none; }
 
   .mat-btn:hover { color: var(--text-2); background: var(--surface); }
 
-  .mat-btn.active { color: var(--text-1); background: var(--surface-2); }
+  .mat-btn.active { color: var(--accent-ink); background: var(--accent); }
 
   .view-hint {
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-3);
     padding-left: 4px;
   }
@@ -1219,29 +1079,32 @@
     align-items: center;
     gap: 9px;
     background: var(--accent);
-    color: white;
-    height: 52px;
-    padding: 0 30px;
-    border-radius: var(--radius-md);
+    color: var(--accent-ink);
+    height: 54px;
+    padding: 0 28px;
+    border-radius: var(--radius-sm);
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
     border: none;
-    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.25);
+    border-bottom: 3px solid var(--accent-edge);
   }
 
-  .view-btn-primary:hover { background: var(--accent-dim); }
+  .view-btn-primary:hover { background: var(--accent-hi); }
+
+  .view-btn-primary:active {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
+  }
 
   .view-btn-secondary {
     display: inline-flex;
     align-items: center;
-    background: rgba(20,20,20,0.75);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(11, 17, 14, 0.85);
     border: 1px solid var(--border);
     color: var(--text-2);
-    height: 52px;
-    padding: 0 26px;
-    border-radius: var(--radius-md);
+    height: 54px;
+    padding: 0 24px;
+    border-radius: var(--radius-sm);
     font-size: 15px;
     font-weight: 500;
   }
@@ -1257,8 +1120,8 @@
     align-items: center;
     gap: 16px;
     padding: 16px 20px;
-    background: rgba(34, 197, 94, 0.08);
-    border: 1px solid rgba(34, 197, 94, 0.2);
+    background: rgba(69, 211, 138, 0.08);
+    border: 1px solid rgba(69, 211, 138, 0.3);
     border-radius: var(--radius-md);
   }
 
@@ -1266,8 +1129,8 @@
     width: 36px;
     height: 36px;
     background: var(--green);
-    color: white;
-    border-radius: 50%;
+    color: var(--accent-ink);
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1300,16 +1163,16 @@
     align-items: center;
     gap: 20px;
     max-width: 400px;
-    padding: 0 24px;
+    padding: 0 var(--edge);
     text-align: center;
   }
 
   .error-icon {
     width: 64px;
     height: 64px;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.2);
-    border-radius: 50%;
+    background: rgba(229, 96, 79, 0.1);
+    border: 1px solid rgba(229, 96, 79, 0.3);
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1320,7 +1183,7 @@
     font-size: 22px;
     font-weight: 700;
     color: var(--text-1);
-    letter-spacing: -0.4px;
+    letter-spacing: -0.01em;
   }
 
   .error-container p {
@@ -1333,7 +1196,7 @@
   .library-container {
     width: 100%;
     max-width: 900px;
-    padding: 32px 24px;
+    padding: 32px var(--edge);
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -1350,7 +1213,7 @@
   .library-header h2 {
     font-size: 24px;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.01em;
     color: var(--text-1);
     margin-bottom: 4px;
   }
@@ -1371,22 +1234,20 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s ease;
   }
 
-  .library-card:hover {
-    border-color: #333;
-    transform: translateY(-2px);
-  }
+  .library-card:hover { border-color: var(--text-faint); }
 
   .library-card-thumb {
-    height: 140px;
-    background: var(--surface-2);
+    height: 120px;
+    background: var(--bg-deep);
+    border-bottom: 1px solid var(--border-soft);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-3);
-    font-size: 40px;
+    color: var(--accent-dim);
+    font-size: 34px;
   }
 
   .library-card-body {
@@ -1408,7 +1269,8 @@
   }
 
   .library-card-date {
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
     color: var(--text-3);
   }
 
@@ -1424,15 +1286,17 @@
     font-size: 13px;
     font-weight: 500;
     text-align: center;
+    min-height: var(--tap);
   }
 
   .btn-sm-primary {
     background: var(--accent);
-    color: white;
+    color: var(--accent-ink);
     border: none;
+    font-weight: 600;
   }
 
-  .btn-sm-primary:hover { background: var(--accent-dim); }
+  .btn-sm-primary:hover { background: var(--accent-hi); }
 
   .btn-sm-secondary {
     background: transparent;
@@ -1443,6 +1307,19 @@
   .btn-sm-secondary:hover {
     background: var(--surface-2);
     color: var(--text-1);
+  }
+
+  .btn-sm-danger {
+    background: transparent;
+    color: var(--text-3);
+    border: 1px solid var(--border);
+  }
+
+  .btn-sm-danger:hover,
+  .btn-sm-danger.armed {
+    background: rgba(229, 96, 79, 0.1);
+    color: var(--red);
+    border-color: var(--red);
   }
 
   .library-empty {
@@ -1457,9 +1334,9 @@
   .library-empty-icon {
     width: 64px;
     height: 64px;
-    background: var(--surface-2);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 50%;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1493,26 +1370,12 @@
     gap: 12px;
   }
 
-  .engineer-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid rgba(34, 197, 94, 0.2);
-    color: var(--green);
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    width: fit-content;
-    letter-spacing: 0.3px;
-  }
-
   .engineer-header h2 {
     font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.8px;
+    letter-spacing: -0.02em;
     color: var(--text-1);
+    text-wrap: balance;
   }
 
   .engineer-header p {
@@ -1529,16 +1392,16 @@
 
   .engineer-textarea {
     width: 100%;
-    background: var(--surface);
+    background: var(--bg-deep);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     color: var(--text-1);
-    font-family: inherit;
-    font-size: 18px;
+    font-family: var(--font-mono);
+    font-size: 16.5px;
     padding: 20px 22px;
     resize: vertical;
     min-height: 200px;
-    line-height: 1.65;
+    line-height: 1.7;
     transition: border-color 0.15s;
     outline: none;
   }
@@ -1554,31 +1417,6 @@
     flex-wrap: wrap;
   }
 
-  .examples-label {
-    font-size: 14px;
-    color: var(--text-3);
-    flex-shrink: 0;
-  }
-
-  .example-pill {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    padding: 10px 18px;
-    border-radius: 20px;
-    font-size: 14px;
-    font-weight: 400;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
-  }
-
-  .example-pill:hover {
-    background: var(--surface-2);
-    color: var(--text-1);
-    border-color: #333;
-  }
-
   .engineer-actions {
     display: flex;
     align-items: center;
@@ -1586,7 +1424,7 @@
   }
 
   /* ════════ ENGINEER GENERATING PANELS ════════ */
-  #eg-progress-bar { background: var(--green); }
+  #eg-progress-bar { background: var(--accent-dim); }
 
   .engineer-panel {
     background: var(--surface);
@@ -1596,9 +1434,10 @@
   }
 
   .engineer-panel-label {
+    font-family: var(--font-mono);
     font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-3);
     margin-bottom: 12px;
@@ -1617,24 +1456,25 @@
   }
 
   .spec-label {
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-3);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.05em;
   }
 
   .spec-value {
     font-size: 15px;
     font-weight: 600;
-    color: var(--text-1);
-    font-family: monospace;
+    color: var(--accent);
+    font-family: var(--font-mono);
   }
 
   .scad-viewer {
-    font-family: monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-    color: var(--green);
-    background: var(--bg);
+    color: var(--accent);
+    background: var(--bg-deep);
     padding: 12px;
     border-radius: var(--radius-sm);
     max-height: 160px;
@@ -1645,7 +1485,7 @@
 
   .analysis-line {
     font-size: 13px;
-    font-family: monospace;
+    font-family: var(--font-mono);
     padding: 4px 0;
     line-height: 1.5;
   }
@@ -1654,6 +1494,31 @@
   .analysis-warn { color: var(--amber); }
   .analysis-fail { color: var(--red); }
   .analysis-info { color: var(--text-2); }
+
+  /* ════════ TINY SCREENS — declared last so it wins the cascade.
+     Every clickable full-width, clear of the edges. ════════ */
+  @media (max-width: 600px) {
+    .invite h1 { font-size: 28px; }
+    .invite p { font-size: 15px; }
+    .speak-actions { flex-direction: column; align-items: stretch; }
+    .speak-actions .btn-primary,
+    .speak-actions .btn-ghost { width: 100%; flex: none; }
+    .example-pill { flex: 1 1 auto; justify-content: center; }
+    .view-overlay-bottom { flex-direction: column; align-items: stretch; gap: 14px; }
+    .view-bottom-left, .view-actions { width: 100%; }
+    .view-actions { flex-direction: column; }
+    .view-btn-primary, .view-btn-secondary { width: 100%; justify-content: center; }
+    .material-toggle-group { width: 100%; display: flex; }
+    .mat-btn { flex: 1; }
+    #nav-status { display: none; }
+    /* Engineer screen: match the stacking the other screens get, so its
+       action row is robust on genuinely sub-500px hardware (the kiosk is
+       fixed 1080p, but keep the small-screen behaviour consistent). */
+    .engineer-header h2 { font-size: 28px; }
+    .engineer-actions { flex-direction: column; align-items: stretch; gap: 12px; }
+    .engineer-actions .btn-primary,
+    .engineer-actions .btn-ghost { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -1662,8 +1527,8 @@
 <nav id="top-nav">
   <div id="nav-logo" onclick="goHome()" title="Home">
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#6366f1" stroke-width="1.5"/>
-      <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#6366f1" opacity="0.4"/>
+      <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#45d38a" stroke-width="1.5"/>
+      <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#45d38a" opacity="0.4"/>
     </svg>
     <span>Conjure</span>
   </div>
@@ -1677,21 +1542,6 @@
       </svg>
       Home
     </button>
-    <button id="voice-toggle-btn" onclick="toggleVoice()" title="Toggle voice">
-      <svg id="voice-icon-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-      </svg>
-      <svg id="voice-icon-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="display:none">
-        <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-.29 1.29"/>
-        <path d="M19 10v2a7 7 0 0 1-.34 2.16"/>
-        <path d="M15 9.34V5a3 3 0 0 0-5.94-.6"/>
-        <path d="M9 9v3a3 3 0 0 0 4.6 2.55"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="1" y1="1" x2="23" y2="23"/>
-      </svg>
-    </button>
     <button id="nav-library-btn" onclick="openLibrary()" title="Browse every model you've generated">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="2" y="2" width="5" height="5" rx="1"/>
@@ -1704,143 +1554,51 @@
   </div>
 </nav>
 
+<!-- All screens live inside one main landmark. It carries no position/size
+     styling so the absolutely-positioned .screen children still size to the
+     viewport (their containing block is unchanged). -->
+<main>
+
 <!-- ════════ SCREEN 1 — IDLE ════════ -->
 <div id="s-idle" class="screen">
   <div class="landing">
 
-    <!-- ── HERO ── -->
-    <section class="hero">
-      <div class="hero-badge"><span class="hero-dot"></span> AI voice &amp; text to 3D printing</div>
-      <h1 class="hero-title">Describe it out loud.<br>Conjure prints it in 3D.</h1>
-      <p class="hero-sub">Conjure turns a spoken or typed description into a real, 3D‑printable model. Generate it with AI, inspect it in an interactive 3D viewer, then slice it and send it straight to your printer — no CAD skills required.</p>
-      <div class="hero-cta">
-        <button class="btn-primary hero-btn" onclick="goToSpeak()" title="Describe an object by voice or text and let Meshy AI build a 3D model">Start creating →</button>
-        <button class="btn-secondary hero-btn" onclick="goToEngineer()" title="Describe a functional part; the AI researches real specs and generates precise CAD">Engineer a part</button>
-        <button class="btn-ghost hero-btn" onclick="openLibrary()" title="Browse the models you've already generated">View library</button>
-      </div>
+    <section class="invite">
+      <h1>Describe it out loud.<br>Walk away with a <em>real object</em>.</h1>
+      <p>No CAD, no menus. Tell Conjure what you want. It builds the 3D model, shows you every step, and writes a print‑ready file to USB.</p>
     </section>
 
-    <!-- ── HOW IT WORKS ── -->
-    <section class="section">
-      <div class="section-head">
-        <span class="section-eyebrow">How it works</span>
-        <h2 class="section-title">Four steps from idea to object</h2>
-        <p class="section-lead">You never open modeling software. Conjure handles the geometry, the preview, and the print prep for you.</p>
-      </div>
-      <div class="steps-grid">
-        <div class="step-card">
-          <div class="step-num">1</div>
-          <h3>Describe</h3>
-          <p>Type it, or hold the mic and say what you want — “a hexagonal plant pot,” “a wall bracket for a 2‑inch pipe.”</p>
-        </div>
-        <div class="step-card">
-          <div class="step-num">2</div>
-          <h3>Generate</h3>
-          <p>AI builds the 3D model. Speak or type uses Meshy for creative shapes; Engineer researches specs and writes parametric CAD.</p>
-        </div>
-        <div class="step-card">
-          <div class="step-num">3</div>
-          <h3>Inspect</h3>
-          <p>Rotate, zoom, and switch between solid, edges, and wireframe views to check the model before you commit.</p>
-        </div>
-        <div class="step-card">
-          <div class="step-num">4</div>
-          <h3>Print</h3>
-          <p>Conjure slices the model for your printer and exports the file to USB — or dispatches it straight to the machine.</p>
-        </div>
-      </div>
-    </section>
+    <div class="mode-panels">
+      <button class="mode-panel panel-make" onclick="goToSpeak()" title="Describe an object by voice or text and let Meshy AI build a 3D model">
+        <span class="panel-tag">MAKE · say it or type it</span>
+        <span class="panel-title">Speak or type</span>
+        <span class="panel-desc">Any object you can describe: a low‑poly fox, a hexagonal plant pot, a dragon keychain. AI sculpts the mesh.</span>
+        <span class="panel-foot">
+          <span>creative shapes · ~2 min</span>
+          <span class="panel-go">Start →</span>
+        </span>
+      </button>
+      <button class="mode-panel panel-eng" onclick="goToEngineer()" title="Describe a functional part; the AI researches real specs and generates precise CAD">
+        <span class="panel-tag">ENGINEER · built to measure</span>
+        <span class="panel-title">Engineer a part</span>
+        <span class="panel-desc">Brackets, mounts, clips and enclosures, built from real‑world dimensions and parametric OpenSCAD, reviewed for strength.</span>
+        <span class="panel-foot">
+          <span>exact mm · functional parts</span>
+          <span class="panel-go">Open →</span>
+        </span>
+      </button>
+    </div>
 
-    <!-- ── TWO MODES ── -->
-    <section class="section">
-      <div class="section-head">
-        <span class="section-eyebrow">Two ways to build</span>
-        <h2 class="section-title">Pick the workflow that fits</h2>
-        <p class="section-lead">A creative object or a functional part — Conjure has a mode tuned for each.</p>
-      </div>
-      <div class="mode-grid">
-        <div class="feature-card">
-          <div class="mode-card-icon speak-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="23"/>
-              <line x1="8" y1="23" x2="16" y2="23"/>
-            </svg>
-          </div>
-          <h3>Speak or type</h3>
-          <p class="feature-desc">Describe any object by voice or text and Meshy AI generates a printable 3D mesh. Best for figurines, décor, gifts, and quick prototypes.</p>
-          <ul class="feature-list">
-            <li>Voice or keyboard input</li>
-            <li>Creative, organic shapes</li>
-            <li>Ready in a couple of minutes</li>
-          </ul>
-          <button class="btn-primary card-cta" onclick="goToSpeak()" title="Open the Speak or type screen">Start with Speak or type →</button>
-        </div>
-        <div class="feature-card">
-          <div class="mode-card-icon engineer-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/>
-            </svg>
-          </div>
-          <h3>Engineer</h3>
-          <p class="feature-desc">Describe a functional part. The AI researches real dimensions and material specs, generates precise parametric CAD, and prepares it for print.</p>
-          <ul class="feature-list">
-            <li>Researched, real‑world dimensions</li>
-            <li>Parametric OpenSCAD geometry</li>
-            <li>Best for brackets, mounts, clips, enclosures</li>
-          </ul>
-          <button class="btn-secondary card-cta" onclick="goToEngineer()" title="Open the Engineer screen">Start with Engineer →</button>
-        </div>
-      </div>
-    </section>
+    <div class="flow-rail" aria-label="How it works">
+      <span class="flow-step"><b>describe</b> <span class="flow-arrow">→</span></span>
+      <span class="flow-step"><b>generate</b> <small>AI builds the model</small> <span class="flow-arrow">→</span></span>
+      <span class="flow-step"><b>inspect</b> <small>rotate &amp; zoom in 3D</small> <span class="flow-arrow">→</span></span>
+      <span class="flow-step"><b>print</b> <small>sliced &amp; written to USB</small></span>
+    </div>
 
-    <!-- ── FEATURES ── -->
-    <section class="section">
-      <div class="section-head">
-        <span class="section-eyebrow">What you get</span>
-        <h2 class="section-title">Everything from words to a finished print</h2>
-      </div>
-      <div class="features-grid">
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
-          <h4>Voice or text input</h4>
-          <p>Speak naturally or type — whichever is faster for you.</p>
-        </div>
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
-          <h4>Interactive 3D preview</h4>
-          <p>Drag to rotate and scroll to zoom before you print anything.</p>
-        </div>
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
-          <h4>Solid, edges &amp; wire views</h4>
-          <p>Switch material modes to inspect surfaces and geometry.</p>
-        </div>
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg></div>
-          <h4>Print‑ready export</h4>
-          <p>Slices to gcode and writes to USB, or sends to the printer.</p>
-        </div>
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
-          <h4>Model library</h4>
-          <p>Everything you make is saved so you can revisit or reprint it.</p>
-        </div>
-        <div class="mini-feature">
-          <div class="mini-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5L13 3z"/></svg></div>
-          <h4>No CAD skills needed</h4>
-          <p>The AI does the modeling — you just describe the result.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── FOOTER ── -->
-    <footer class="site-footer">
-      <div>Conjure · autonomous 3D fabrication</div>
-      <div class="footer-note">Powered by Meshy AI, OpenSCAD &amp; CuraEngine · prints on your local Neptune 4 Pro</div>
+    <footer class="idle-foot">
+      <div class="toolchain">MESHY · OPENSCAD · CURAENGINE <span>→</span> NEPTUNE 4 PRO</div>
+      <button class="btn-secondary" onclick="openLibrary()" title="Browse the models you've already generated">View library</button>
     </footer>
 
   </div>
@@ -1867,6 +1625,7 @@
           id="prompt-input"
           class="prompt-input"
           rows="5"
+          aria-label="Describe what you want to build"
           placeholder="e.g. a low-poly fox figurine with a bushy tail"
           spellcheck="true"
           data-gramm="false"
@@ -1874,7 +1633,7 @@
           data-enable-grammarly="false"
           oninput="onPromptInput()"
         ></textarea>
-        <button id="mic-btn" class="mic-inline" type="button" title="Hold to speak">
+        <button id="mic-btn" class="mic-inline" type="button" aria-label="Hold to speak" title="Hold to speak">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -1890,30 +1649,21 @@
       <button class="example-pill" onclick="useExample(this)">a low-poly fox figurine</button>
       <button class="example-pill" onclick="useExample(this)">a hexagonal plant pot</button>
       <button class="example-pill" onclick="useExample(this)">a desktop phone stand</button>
-      <button class="example-pill" onclick="useExample(this)">a dragon keychain</button>
     </div>
     <div class="speak-actions">
       <button class="btn-ghost" onclick="goToIdle()" title="Return to the home page">← Back</button>
-      <button id="btn-generate" class="btn-primary" onclick="handleConfirm()" disabled title="Send your description to the AI and build the 3D model">Generate model →</button>
+      <button id="btn-generate" class="btn-primary" onclick="handleConfirm()" disabled title="Send your description to the AI and build the 3D model">Generate model</button>
     </div>
     </div>
     <aside class="compose-aside">
       <div class="aside-card">
         <div class="aside-title">Tips for better results</div>
         <ul class="aside-list">
-          <li>Name the object first — “a mug,” “a phone stand.”</li>
-          <li>Add size, style or detail — “tall,” “hexagonal,” “low‑poly.”</li>
+          <li>Name the object first: “a mug,” “a phone stand.”</li>
+          <li>Add size, style or detail: “tall,” “hexagonal,” “low‑poly.”</li>
           <li>Describe one object at a time.</li>
           <li>Say it's for 3D printing if it should be solid.</li>
         </ul>
-      </div>
-      <div class="aside-card">
-        <div class="aside-title">What happens next</div>
-        <ol class="aside-steps">
-          <li><span>1</span> AI generates your 3D model</li>
-          <li><span>2</span> Inspect it in the 3D viewer</li>
-          <li><span>3</span> Slice &amp; send to the printer</li>
-        </ol>
       </div>
     </aside>
   </div>
@@ -1925,39 +1675,40 @@
     <div class="progress-header">
       <div class="progress-spinner"></div>
       <h2>Generating your model</h2>
+      <span class="progress-eta">usually ~2 min</span>
     </div>
     <div id="gen-prompt" class="progress-prompt"></div>
-    <div class="steps-list" id="steps-list-generate">
+    <div class="steps-list" id="steps-list-generate" role="status" aria-live="polite">
       <div class="step-item" id="g-step-1">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Generating 3D model</span>
           <span class="step-msg"></span>
         </div>
       </div>
       <div class="step-item" id="g-step-2">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Processing geometry</span>
           <span class="step-msg"></span>
         </div>
       </div>
       <div class="step-item" id="g-step-3">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Downloading model</span>
           <span class="step-msg"></span>
         </div>
       </div>
       <div class="step-item" id="g-step-4">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Saving to cloud</span>
           <span class="step-msg"></span>
         </div>
       </div>
       <div class="step-item" id="g-step-5">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Complete</span>
           <span class="step-msg"></span>
@@ -1971,8 +1722,9 @@
 </div>
 
 <!-- ════════ SCREEN 4 — VIEW MODEL ════════ -->
-<div id="s-view" class="screen" style="position:relative;overflow:hidden;">
-  <div id="three-container" style="position:absolute;top:0;left:0;width:100%;height:100%;"></div>
+<div id="s-view" class="screen" style="overflow:hidden;">
+  <div id="three-container" style="position:absolute;top:0;left:0;width:100%;height:100%;overflow:hidden;"></div>
+  <div id="model-ready-toast" class="model-ready" role="status" aria-live="polite"></div>
 
   <div class="view-overlay-top">
     <div class="view-prompt-pill" id="view-prompt"></div>
@@ -1985,7 +1737,7 @@
         <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')" title="Solid with highlighted edges to read the geometry">Edges</button>
         <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')" title="Wireframe mesh only — see the underlying triangles">Wire</button>
       </div>
-      <div class="view-hint">Drag to rotate · scroll to zoom</div>
+      <div class="view-hint">Drag to spin · pinch to zoom</div>
     </div>
     <div class="view-actions">
       <button class="view-btn-secondary" onclick="goToSpeak()" title="Discard this model and describe a new one">Start over</button>
@@ -2010,23 +1762,23 @@
     </div>
     <div class="steps-list">
       <div class="step-item" id="s-step-1">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Loading model</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="s-step-2">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Slicing for Neptune 4 Pro</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="s-step-3">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Checking USB drive</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="s-step-4">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Copying to USB</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="s-step-5">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Ready to print</span><span class="step-msg"></span></div>
       </div>
     </div>
@@ -2054,9 +1806,12 @@
         <line x1="9" y1="9" x2="15" y2="15"/>
       </svg>
     </div>
-    <h2>Something went wrong</h2>
+    <h2>The build stopped</h2>
     <p id="error-msg">An unexpected error occurred.</p>
-    <button class="btn-primary" onclick="startOver()" style="width:200px;">Try again</button>
+    <div class="error-actions">
+      <button class="btn-primary" onclick="retryLastBuild()" title="Go back to your description and run the build again">Try again</button>
+      <button class="btn-ghost" onclick="startOver()" title="Discard this job and return to the home screen">Start over</button>
+    </div>
   </div>
 </div>
 
@@ -2077,8 +1832,8 @@
           <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
         </svg>
       </div>
-      <h3>No models yet</h3>
-      <p>Generate something to see it here</p>
+      <h3>Nothing on the shelf yet</h3>
+      <p>Describe something on the home screen and it lands here, ready to reprint.</p>
       <button class="btn-primary" onclick="closeLibrary()" style="flex:none;">Create your first model</button>
     </div>
   </div>
@@ -2103,6 +1858,7 @@
       <textarea
         id="engineer-input"
         class="engineer-textarea"
+        aria-label="Describe the functional part you need"
         placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
         rows="5"
       ></textarea>
@@ -2116,7 +1872,7 @@
     <div class="engineer-actions">
       <button class="btn-ghost" onclick="showScreen('s-idle')" title="Return to the home page">← Back</button>
       <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;" title="Research specs, generate parametric CAD, and prepare the part">
-        Start engineering →
+        Start engineering
       </button>
     </div>
     </div>
@@ -2130,14 +1886,6 @@
           <li><span>4</span> Reviews the design for strength</li>
         </ol>
       </div>
-      <div class="aside-card">
-        <div class="aside-title">Best for</div>
-        <ul class="aside-list">
-          <li>Brackets, mounts &amp; clips</li>
-          <li>Enclosures &amp; adapters</li>
-          <li>Parts with exact dimensions</li>
-        </ul>
-      </div>
     </aside>
   </div>
 </div>
@@ -2148,39 +1896,40 @@
     <div class="progress-header">
       <div class="progress-spinner" style="border-top-color: var(--green);"></div>
       <h2>Engineering your part</h2>
+      <span class="progress-eta">a few minutes</span>
     </div>
     <div id="engineer-gen-prompt" class="progress-prompt"></div>
-    <div class="steps-list">
+    <div class="steps-list" role="status" aria-live="polite">
       <div class="step-item" id="eg-step-0">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Kite AI — agent auth</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-1">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">You.com — web research</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-2">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Tavily — deep research</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-3">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Nebius — CAD generation</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-4">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">OpenSCAD — render STL</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-5">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">CuraEngine — slice gcode</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-6">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Moonraker — dispatch</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-7">
-        <div class="step-icon-wrap"><div class="step-icon">○</div></div>
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info"><span class="step-name">Nebius — structural review</span><span class="step-msg"></span></div>
       </div>
     </div>
@@ -2209,6 +1958,8 @@
     </div>
   </div>
 </div>
+
+</main>
 
 <script>
 'use strict';
@@ -2254,97 +2005,16 @@ let currentPrompt = '';
 let evtSource = null;
 let idleTimer = null;
 
+/* Which compose screen the running job came from, so a failed build can
+   return the user to their own words instead of a blank form. */
+let lastComposeScreen = 's-speak';
+let lastIntent = '';
+
 /* ════════ TTS ════════ */
-let voiceEnabled = true;
-
-async function loadVoiceSetting() {
-  try {
-    const r = await fetch('/api/settings/voice');
-    const data = await r.json();
-    voiceEnabled = data.enabled;
-    updateVoiceIcon();
-  } catch(e) {
-    console.log('Could not load voice setting:', e);
-  }
-}
-
-async function toggleVoice() {
-  voiceEnabled = !voiceEnabled;
-  updateVoiceIcon();
-  try {
-    await fetch('/api/settings/voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: voiceEnabled })
-    });
-  } catch(e) {
-    console.log('Could not save voice setting:', e);
-  }
-}
-
-function updateVoiceIcon() {
-  const onIcon = document.getElementById('voice-icon-on');
-  const offIcon = document.getElementById('voice-icon-off');
-  const btn = document.getElementById('voice-toggle-btn');
-  if (!onIcon || !offIcon || !btn) return;
-  if (voiceEnabled) {
-    onIcon.style.display = 'block';
-    offIcon.style.display = 'none';
-    btn.classList.remove('muted');
-    btn.title = 'Voice on — click to mute';
-  } else {
-    onIcon.style.display = 'none';
-    offIcon.style.display = 'block';
-    btn.classList.add('muted');
-    btn.title = 'Voice off — click to enable';
-  }
-}
-
-async function speak(text) {
-  if (!voiceEnabled) return;
-  try {
-    const r = await fetch('/api/speak', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text })
-    });
-    const data = await r.json();
-    if (!data.ok && data.message) {
-      showVoiceStatusMessage(data.message);
-    }
-  } catch (e) {
-    console.log('[TTS] speak error:', e);
-  }
-}
-
-function showVoiceStatusMessage(message) {
-  let el = document.getElementById('voice-status-toast');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'voice-status-toast';
-    el.style.cssText = `
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(13,13,13,0.9);
-      backdrop-filter: blur(10px);
-      border: 1px solid var(--border);
-      color: var(--text-2);
-      padding: 10px 18px;
-      border-radius: 20px;
-      font-size: 13px;
-      z-index: 300;
-      opacity: 0;
-      transition: opacity 0.3s ease;
-      pointer-events: none;
-    `;
-    document.body.appendChild(el);
-  }
-  el.textContent = message;
-  el.style.opacity = '1';
-  clearTimeout(el._hideTimer);
-  el._hideTimer = setTimeout(() => { el.style.opacity = '0'; }, 3000);
+function speak(text) {
+  // Voice output removed — the kiosk runs silent. Kept as a no-op because
+  // flow code calls speak() throughout; the backend /api/speak endpoint is
+  // also hard-disabled via VOICE_ENABLED=false in .env.
 }
 
 /* ════════ NAVIGATION ════════ */
@@ -2545,7 +2215,7 @@ function setStep(id, state, msg) {
     } else if (state === 'error') {
       marker.outerHTML = '<div class="step-icon">✗</div>';
     } else {
-      marker.outerHTML = '<div class="step-icon">○</div>';
+      marker.outerHTML = '<div class="step-icon">⬡</div>';
     }
   }
   if (msg && msgEl) msgEl.textContent = msg;
@@ -2614,6 +2284,7 @@ function handleConfirm() {
   const p = (el ? el.value : '').trim();
   if (!p) return;
   currentPrompt = p;
+  lastComposeScreen = 's-speak';
   stopListening();
 
   document.getElementById('gen-prompt').textContent = '"' + p + '"';
@@ -2635,6 +2306,7 @@ function handleConfirm() {
       showScreen('s-view');
       initViewer();
       loadModel('/api/model/glb?' + Date.now());
+      celebrateModelReady('Model ready');
       resetIdle();
       speak('Your model is ready. Drag to rotate, then tap print this.');
     } else if (d.status === 'error') {
@@ -2749,6 +2421,39 @@ function startOver() {
   resetAll();
 }
 
+/* "Try again" after an error: back to the compose screen the job came
+   from, with the user's words restored. Deliberately does NOT route
+   through goToSpeak()/goToEngineer() — both wipe their inputs. */
+function retryLastBuild() {
+  closeEvents();
+  if (lastComposeScreen === 's-engineer') {
+    showScreen('s-engineer');
+    const input = document.getElementById('engineer-input');
+    if (input) { input.value = lastIntent; input.focus(); }
+  } else {
+    const el = document.getElementById('prompt-input');
+    if (el) el.value = currentPrompt;
+    transcript = currentPrompt;  // keep speech buffer in sync so the mic appends, not clobbers
+    onPromptInput();
+    showScreen('s-speak');
+  }
+  resetIdle();
+}
+
+/* ════════ COMPLETION CELEBRATION ════════ */
+let readyToastTimer = null;
+
+function celebrateModelReady(label) {
+  const t = document.getElementById('model-ready-toast');
+  if (!t) return;
+  t.innerHTML = '<span class="hex" aria-hidden="true">⬡</span>' + label;
+  clearTimeout(readyToastTimer);
+  t.classList.remove('show');
+  void t.offsetWidth;  // restart the drop-in if a toast is already mid-flight
+  t.classList.add('show');
+  readyToastTimer = setTimeout(() => t.classList.remove('show'), 3400);
+}
+
 /* ════════ LIBRARY ════════ */
 let libraryReturnScreen = 's-idle';
 
@@ -2808,6 +2513,7 @@ async function loadLibrary() {
           <div class="library-card-actions">
             <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})" title="Open this model in the 3D viewer">View</button>
             <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})" title="Load this model and prepare it for printing">Print</button>
+            <button class="btn-sm btn-sm-danger" onclick="deleteModelFromLibrary(${JSON.stringify(id)}, this)" title="Delete this model from the library">Delete</button>
           </div>
         </div>
       `;
@@ -2820,9 +2526,43 @@ async function loadLibrary() {
       <div style="color:var(--red);font-size:14px;padding:20px;text-align:center">
         Failed to load library<br>
         <span style="font-size:12px;color:var(--text-3);margin-top:8px;display:block">${escapeHtml(e.message)}</span>
-        <button onclick="loadLibrary()" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:12px;padding:8px 16px;border-radius:var(--radius-sm);cursor:pointer;">Retry</button>
+        <button onclick="loadLibrary()" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:13px;padding:12px 20px;min-height:48px;border-radius:var(--radius-sm);cursor:pointer;">Retry</button>
       </div>
     `;
+  }
+}
+
+async function deleteModelFromLibrary(id, btn) {
+  // Two-tap confirm — no native dialogs on a kiosk. First tap arms the
+  // button, second tap within 3s deletes; otherwise it disarms itself.
+  if (!btn.dataset.armed) {
+    btn.dataset.armed = '1';
+    btn.classList.add('armed');
+    btn.textContent = 'Sure?';
+    btn._disarmTimer = setTimeout(() => {
+      delete btn.dataset.armed;
+      btn.classList.remove('armed');
+      btn.textContent = 'Delete';
+    }, 3000);
+    return;
+  }
+  clearTimeout(btn._disarmTimer);
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  try {
+    const r = await fetch('/api/models/' + id, { method: 'DELETE' });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Delete failed');
+    loadLibrary();
+  } catch (e) {
+    console.error('deleteModelFromLibrary error:', e);
+    btn.disabled = false;
+    btn.textContent = 'Failed';
+    setTimeout(() => {
+      delete btn.dataset.armed;
+      btn.classList.remove('armed');
+      btn.textContent = 'Delete';
+    }, 2000);
   }
 }
 
@@ -2886,6 +2626,8 @@ async function handleEngineerConfirm() {
   if (!input) return;
   const intent = input.value.trim();
   if (!intent) return;
+  lastComposeScreen = 's-engineer';
+  lastIntent = intent;
 
   document.getElementById('engineer-gen-prompt').textContent = '"' + intent + '"';
   showScreen('s-engineer-generating');
@@ -2904,6 +2646,7 @@ async function handleEngineerConfirm() {
           initViewer();
           loadSTL('/api/model/stl?' + Date.now());
           showScreen('s-view');
+          celebrateModelReady('Part ready');
           speak('Engineering complete. Your part is ready. Tap print when ready.');
         }, 800);
       }
@@ -3038,14 +2781,20 @@ function initViewer() {
   if (!container) { console.error('three-container not found'); return; }
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0d0d0d);
+  scene.background = new THREE.Color(0x0f1713);
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
+  // Size to the viewer container, not the whole window, so the canvas stays
+  // correct if the viewer is ever inset (e.g. a sidebar layout). Fall back to
+  // the window if the container hasn't been laid out yet.
+  const cw = container.clientWidth || window.innerWidth;
+  const ch = container.clientHeight || window.innerHeight;
+
+  camera = new THREE.PerspectiveCamera(45, cw / ch, 0.01, 1000);
   camera.position.set(0, 0, zoomLevel);
   camera.lookAt(0, 0, 0);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(cw, ch);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
@@ -3056,7 +2805,7 @@ function initViewer() {
   const l2 = new THREE.DirectionalLight(0xffffff, 2);
   l2.position.set(-5, -2, -5);
   scene.add(l2);
-  const l3 = new THREE.DirectionalLight(0x6366f1, 1.5);
+  const l3 = new THREE.DirectionalLight(0x45d38a, 1.2);
   l3.position.set(0, 10, 0);
   scene.add(l3);
 
@@ -3190,10 +2939,10 @@ function loadSTL(url) {
       geometry.computeVertexNormals();
 
       const material = new THREE.MeshPhongMaterial({
-        color: 0x22cc44,
-        emissive: 0x003300,
+        color: 0x3fcf85,
+        emissive: 0x0a2f1d,
         emissiveIntensity: 0.5,
-        specular: 0x88ffaa,
+        specular: 0xbfffe0,
         shininess: 100,
         side: THREE.DoubleSide,
       });
@@ -3242,10 +2991,10 @@ function setMaterial(mode) {
 
     if (mode === 'solid') {
       node.material = new THREE.MeshPhongMaterial({
-        color: 0x22cc44,
-        emissive: 0x003300,
+        color: 0x3fcf85,
+        emissive: 0x0a2f1d,
         emissiveIntensity: 0.5,
-        specular: 0x88ffaa,
+        specular: 0xbfffe0,
         shininess: 100,
         side: THREE.DoubleSide,
         wireframe: false,
@@ -3254,12 +3003,12 @@ function setMaterial(mode) {
 
     } else if (mode === 'grid') {
       node.material = new THREE.MeshPhongMaterial({
-        color: 0x001408,
+        color: 0x07130d,
         transparent: true,
         opacity: 0.2,
         side: THREE.DoubleSide,
         depthWrite: false,
-        emissive: 0x001408,
+        emissive: 0x07130d,
         emissiveIntensity: 0.5,
       });
       node.material.needsUpdate = true;
@@ -3267,7 +3016,7 @@ function setMaterial(mode) {
       const edges = new THREE.EdgesGeometry(node.geometry, 12);
 
       const edgeMat1 = new THREE.LineBasicMaterial({
-        color: 0x00ff41,
+        color: 0x45d38a,
         transparent: true,
         opacity: 1.0,
       });
@@ -3279,7 +3028,7 @@ function setMaterial(mode) {
       node.parent && node.parent.add(edgeMesh1);
 
       const edgeMat2 = new THREE.LineBasicMaterial({
-        color: 0x00ff41,
+        color: 0x45d38a,
         transparent: true,
         opacity: 0.2,
       });
@@ -3291,11 +3040,11 @@ function setMaterial(mode) {
       edgeMesh2.scale.multiplyScalar(1.004);
       node.parent && node.parent.add(edgeMesh2);
 
-      if (scene) scene.fog = new THREE.FogExp2(0x0d0d0d, 0.06);
+      if (scene) scene.fog = new THREE.FogExp2(0x0f1713, 0.06);
 
     } else if (mode === 'wire') {
       node.material = new THREE.MeshBasicMaterial({
-        color: 0x00ff41,
+        color: 0x45d38a,
         wireframe: true,
         side: THREE.DoubleSide,
       });
@@ -3306,8 +3055,11 @@ function setMaterial(mode) {
 
 window.addEventListener('resize', () => {
   if (!renderer || !camera) return;
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const el = renderer.domElement.parentElement;
+  const cw = (el && el.clientWidth) || window.innerWidth;
+  const ch = (el && el.clientHeight) || window.innerHeight;
+  renderer.setSize(cw, ch);
+  camera.aspect = cw / ch;
   camera.updateProjectionMatrix();
 });
 
@@ -3319,8 +3071,9 @@ function resetIdle() {
 
 function onIdle() {
   const id = currentScreen ? currentScreen.id : null;
-  // Never interrupt an in-progress pipeline.
-  if (id === 's-generating' || id === 's-slicing' || id === 's-idle') {
+  // Never interrupt an in-progress pipeline, and never yank the user away
+  // from the 3D viewer — inspecting a model can take as long as it takes.
+  if (id === 's-generating' || id === 's-slicing' || id === 's-idle' || id === 's-view') {
     resetIdle();
     return;
   }
@@ -3335,11 +3088,19 @@ document.addEventListener('touchstart', resetIdle, { passive: true });
 document.addEventListener('mousedown', resetIdle);
 
 /* ════════ BOOT ════════ */
-window.addEventListener('DOMContentLoaded', () => {
-  loadVoiceSetting();
-});
-
 window.addEventListener('load', () => {
+  // Every SVG in this app is decorative — it either sits inside a text-labelled
+  // or aria-labelled control, or repeats adjacent text. Hide them all from the
+  // a11y tree so screen readers don't double-announce the icon and its label.
+  document.querySelectorAll('svg').forEach(s => s.setAttribute('aria-hidden', 'true'));
+
+  // Deep-link / dev hook: #s-speak, #s-engineer, ... opens that screen directly.
+  const hashScreen = location.hash.replace('#', '');
+  if (hashScreen && document.getElementById(hashScreen)) {
+    showScreen(hashScreen);
+    resetIdle();
+    return;
+  }
   fetch('/api/state')
     .then(r => r.json())
     .then(st => {
