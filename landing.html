@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conjure — Describe it. Watch it print.</title>
+<style>
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:800; font-display:swap; src:url('/fonts/inter-800.woff2') format('woff2'); }
+
+  :root{
+    --bg:#0f1713; --bg-deep:#0b110e; --border:#2a3a32; --border-soft:#223029;
+    --text-1:#f2f5ef; --text-2:#b7c4ba; --text-3:#8ba094; --text-faint:#5c6f65;
+    --accent:#45d38a; --accent-hi:#55dd97; --accent-dim:#2fae6d; --accent-edge:#1e8a52; --accent-ink:#06170e;
+    --font-ui:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --radius-sm:3px; --radius-md:4px; --radius-lg:6px;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ scroll-behavior:auto; }
+  body{
+    background:var(--bg); color:var(--text-1);
+    font-family:var(--font-ui);
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    overflow-x:hidden;
+  }
+
+  /* fixed 3D canvas layer */
+  #scene{
+    position:fixed; inset:0; width:100vw; height:100vh; z-index:0;
+    pointer-events:none;
+  }
+  /* vignette / atmosphere overlay above canvas, below content */
+  #atmos{
+    position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:
+      radial-gradient(120% 90% at 50% 8%, rgba(69,211,138,0.06), transparent 46%),
+      radial-gradient(140% 120% at 50% 120%, rgba(11,17,14,0.9), transparent 60%),
+      radial-gradient(100% 100% at 50% 50%, transparent 55%, rgba(6,12,9,0.55) 100%);
+  }
+
+  /* top nav */
+  header{
+    position:fixed; top:0; left:0; right:0; z-index:20;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px clamp(20px,5vw,64px);
+    mix-blend-mode:normal;
+  }
+  .brand{ display:flex; align-items:center; gap:11px; }
+  .brand svg{ width:22px; height:22px; display:block; }
+  .brand .word{
+    font-family:var(--font-ui); font-weight:700; font-size:18px;
+    letter-spacing:-0.03em; color:var(--text-1);
+  }
+  nav.links{ display:flex; align-items:center; gap:28px; }
+  nav.links a{
+    font-family:var(--font-mono); font-size:12.5px; font-weight:500;
+    color:var(--text-2); text-decoration:none; letter-spacing:0.01em;
+    transition:color .2s ease;
+  }
+  nav.links a:hover{ color:var(--accent-hi); }
+  /* Selector must out-specify `nav.links a` (0,1,2) above, which otherwise wins
+     and paints this dark-on-jade button with light-gray link text. */
+  nav.links a.nav-cta{
+    font-family:var(--font-mono); font-size:12.5px; font-weight:600;
+    color:var(--accent-ink); background:var(--accent);
+    padding:8px 15px; border-radius:var(--radius-md); text-decoration:none;
+    transition:background .2s ease, transform .2s ease;
+  }
+  nav.links a.nav-cta:hover{ color:var(--accent-ink); background:var(--accent-hi); transform:translateY(-1px); }
+
+  /* Mobile menu: hamburger toggles the existing nav.links as a dropdown. */
+  .nav-toggle{
+    display:none; width:40px; height:40px; padding:0;
+    align-items:center; justify-content:center;
+    background:transparent; color:var(--text-1);
+    border:1px solid var(--border); border-radius:var(--radius-md); cursor:pointer;
+    transition:border-color .2s ease;
+  }
+  .nav-toggle:hover{ border-color:var(--accent-edge); }
+  .nav-toggle:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .nav-toggle svg{ width:18px; height:18px; display:block; }
+  .nav-toggle .icon-close{ display:none; }
+  .nav-toggle[aria-expanded="true"] .icon-open{ display:none; }
+  .nav-toggle[aria-expanded="true"] .icon-close{ display:block; }
+  @media (max-width:720px){
+    .nav-toggle{ display:inline-flex; }
+    nav.links{
+      display:none; position:absolute; top:100%; right:clamp(20px,5vw,64px);
+      flex-direction:column; align-items:stretch; gap:6px;
+      min-width:200px; padding:10px;
+      background:linear-gradient(rgba(11,17,14,0.96), rgba(11,17,14,0.94));
+      border:1px solid var(--border-soft); border-radius:var(--radius-lg);
+      backdrop-filter:blur(8px); box-shadow:0 12px 40px rgba(6,12,9,0.6);
+      z-index:30;
+    }
+    nav.links.open{ display:flex; }
+    nav.links a{ padding:10px 12px; border-radius:var(--radius-md); font-size:14px; }
+    nav.links a:not(.nav-cta):hover{ background:var(--border-soft); }
+    nav.links a.nav-cta{ text-align:center; }
+    /* Bug 9: opaque scrim so section .tag/.btn-primary/.reveal don't collide with
+       the floating logo as they scroll under the transparent fixed header; the bar
+       itself must not swallow taps meant for content below it. */
+    header{
+      background:linear-gradient(180deg, rgba(11,17,14,0.94) 0%, rgba(11,17,14,0.88) 55%, rgba(11,17,14,0) 100%);
+      -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+      padding-bottom:26px;
+      pointer-events:none;
+    }
+    header .brand, header .nav-toggle, header nav.links{ pointer-events:auto; }
+  }
+
+  /* fixed HUD progress readout (bottom-left) */
+  #hud{
+    position:fixed; left:clamp(20px,5vw,64px); bottom:26px; z-index:20;
+    font-family:var(--font-mono); font-size:12px; color:var(--text-2);
+    display:flex; flex-direction:column; gap:8px; width:220px;
+    pointer-events:none;
+    font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1, 'cv01' 1;
+    letter-spacing:0.02em;
+    padding:14px 16px; border-radius:var(--radius-md);
+    background:linear-gradient(rgba(11,17,14,0.72), rgba(11,17,14,0.6));
+    border:1px solid var(--border-soft); backdrop-filter:blur(6px);
+    text-shadow:0 1px 12px rgba(11,17,14,0.9);
+  }
+  #hud .row{ display:flex; justify-content:space-between; letter-spacing:0.02em; }
+  #hud .row .val{ color:var(--accent-hi); font-weight:600; }
+  #hud .bar{
+    height:3px; width:100%; background:var(--border-soft);
+    border-radius:2px; overflow:hidden;
+  }
+  #hud .bar i{
+    display:block; height:100%; width:0%; background:var(--accent);
+    box-shadow:0 0 8px rgba(69,211,138,0.6);
+  }
+  #hud .status{ color:var(--text-2); font-size:11px; letter-spacing:0.06em; }
+  /* Fade the fixed HUD out whenever readable body copy scrolls into its
+     screen region, so text is never obscured (see updateHudOverlap in JS). */
+  #hud{ transition:opacity .3s ease; }
+  #hud.hud-hidden{ opacity:0; }
+  @media (max-width:720px){ #hud{ display:none; } }
+
+  /* scroll content */
+  main{ position:relative; z-index:10; }
+  section{
+    min-height:100vh; display:flex; flex-direction:column; justify-content:center;
+    padding:120px clamp(20px,5vw,64px) 120px;
+    position:relative;
+  }
+  .wrap{ max-width:1180px; margin:0 auto; width:100%; }
+
+  /* reveal animation */
+  .reveal{ opacity:0; transform:translateY(26px); transition:opacity .9s cubic-bezier(.16,.7,.2,1), transform .9s cubic-bezier(.16,.7,.2,1); }
+  .reveal.in{ opacity:1; transform:none; }
+  .reveal.d1{ transition-delay:.08s; }
+  .reveal.d2{ transition-delay:.16s; }
+  .reveal.d3{ transition-delay:.24s; }
+  .reveal.d4{ transition-delay:.32s; }
+
+  /* ---- HERO ---- */
+  #hero .wrap{
+    max-width:900px; padding:40px clamp(20px,4vw,48px);
+    border-radius:var(--radius-lg);
+    background:radial-gradient(120% 130% at 28% 42%, rgba(11,17,14,0.74), rgba(11,17,14,0.46) 58%, transparent 86%);
+  }
+  .kicker{
+    font-family:var(--font-mono); font-size:12.5px; font-weight:500;
+    color:var(--accent); letter-spacing:0.04em; margin-bottom:22px;
+    display:inline-flex; align-items:center; gap:9px;
+  }
+  .kicker .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  h1.hero{
+    font-family:var(--font-ui); font-weight:800;
+    font-size:clamp(46px,9vw,96px); line-height:0.98;
+    letter-spacing:-0.03em; color:var(--text-1);
+    text-wrap:balance; margin-bottom:26px;
+    text-shadow:0 1px 20px rgba(11,17,14,0.9);
+  }
+  h1.hero em{ font-style:normal; color:var(--accent); }
+  .sub{
+    font-size:clamp(17px,2.1vw,21px); line-height:1.5; color:var(--text-2);
+    max-width:560px; text-wrap:balance; margin-bottom:38px;
+    text-shadow:0 1px 18px rgba(11,17,14,0.9);
+  }
+  .cta-row{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .btn-primary{
+    font-family:var(--font-ui); font-weight:600; font-size:15.5px;
+    color:var(--accent-ink); background:var(--accent);
+    padding:14px 26px; border-radius:var(--radius-md); text-decoration:none;
+    border:1px solid var(--accent-hi);
+    box-shadow:0 0 0 rgba(69,211,138,0);
+    transition:background .2s, box-shadow .3s, transform .2s;
+  }
+  .btn-primary:hover{ background:var(--accent-hi); transform:translateY(-1px); box-shadow:0 10px 30px -10px rgba(69,211,138,0.5); }
+  .btn-ghost{
+    font-family:var(--font-mono); font-weight:500; font-size:13.5px;
+    color:var(--text-2); text-decoration:none; letter-spacing:0.01em;
+    display:inline-flex; align-items:center; gap:8px;
+    transition:color .2s;
+  }
+  .btn-ghost:hover{ color:var(--accent-hi); }
+  .btn-ghost .arw{ transition:transform .2s; }
+  .btn-ghost:hover .arw{ transform:translateX(3px); }
+
+  .scroll-hint{
+    position:absolute; bottom:34px; left:50%; transform:translateX(-50%);
+    font-family:var(--font-mono); font-size:11px; letter-spacing:0.18em;
+    color:var(--text-3); text-transform:uppercase;
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+  }
+  .scroll-hint .line{ width:1px; height:30px; background:linear-gradient(var(--accent), transparent); animation:drop 1.9s infinite; }
+  @keyframes drop{ 0%{ transform:scaleY(0); transform-origin:top; opacity:0;} 40%{opacity:1;} 100%{ transform:scaleY(1); transform-origin:top; opacity:0;} }
+
+  /* ---- feature sections (2/3) ---- */
+  .feat{ max-width:560px; }
+  #speak .feat{ margin-left:auto; text-align:left; }
+  #engineer .feat{ margin-right:auto; }
+  .tag{
+    font-family:var(--font-mono); font-size:12px; font-weight:600;
+    color:var(--accent); letter-spacing:0.06em; text-transform:uppercase;
+    display:inline-block; margin-bottom:18px;
+    border:1px solid var(--border); border-radius:100px; padding:5px 12px;
+    background:rgba(15,23,19,0.5); backdrop-filter:blur(6px);
+  }
+  h2{
+    font-family:var(--font-ui); font-weight:700;
+    font-size:clamp(30px,4.6vw,50px); line-height:1.04;
+    letter-spacing:-0.025em; color:var(--text-1);
+    text-wrap:balance; margin-bottom:20px;
+    text-shadow:0 1px 20px rgba(11,17,14,0.9);
+  }
+  .lead{ font-size:clamp(16px,1.9vw,19px); line-height:1.55; color:var(--text-2); margin-bottom:26px; }
+  .specs{ display:flex; flex-direction:column; gap:0; border-top:1px solid var(--border-soft); }
+  .specs .spec{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:13px 2px; border-bottom:1px solid var(--border-soft);
+    font-family:var(--font-mono); font-size:13px;
+    font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1, 'cv01' 1;
+    letter-spacing:0.02em;
+  }
+  .specs .spec .k{ color:var(--text-2); letter-spacing:0.02em; }
+  .specs .spec .v{ color:var(--text-1); font-weight:500; }
+  .specs .spec .v.accent{ color:var(--accent-hi); }
+
+  .panel{
+    background:rgba(11,17,14,0.72); backdrop-filter:blur(10px);
+    border:1px solid var(--border-soft); border-radius:var(--radius-lg);
+    padding:clamp(26px,3.4vw,42px);
+  }
+
+  /* ---- gallery ---- */
+  #gallery .wrap{ max-width:1180px; }
+  .gal-head{
+    max-width:640px; margin-bottom:52px;
+    padding:26px clamp(18px,3vw,32px); border-radius:var(--radius-lg);
+    background:radial-gradient(120% 130% at 25% 40%, rgba(11,17,14,0.7), rgba(11,17,14,0.42) 60%, transparent 88%);
+  }
+  .gal-grid{ display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:18px; }
+  @media (max-width:860px){ .gal-grid{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:560px){ .gal-grid{ grid-template-columns:1fr; } }
+  .card{
+    position:relative; border:1px solid var(--border-soft); border-radius:var(--radius-lg);
+    background:rgba(11,17,14,0.5); backdrop-filter:blur(8px);
+    padding:20px; min-height:230px; display:flex; flex-direction:column; justify-content:flex-end;
+    overflow:hidden; transition:border-color .25s, transform .25s;
+  }
+  .card:hover{ border-color:var(--accent-edge); transform:translateY(-3px); }
+  .card.big{ grid-row:span 2; min-height:auto; }
+  @media (max-width:860px){ .card.big{ grid-row:auto; } }
+  .card .glyph{
+    position:absolute; top:0; left:0; right:0; bottom:60px;
+    display:flex; align-items:center; justify-content:center;
+    opacity:0.85;
+  }
+  .card .glyph svg{ width:56%; height:56%; max-width:180px; }
+  .card:hover .glyph svg .fill{ opacity:0.5; }
+  .card .cap .name{ font-family:var(--font-ui); font-weight:600; font-size:16px; color:var(--text-1); margin-bottom:4px; }
+  .card .cap .meta{ font-family:var(--font-mono); font-size:11.5px; color:var(--text-2); letter-spacing:0.02em; font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1, 'cv01' 1; }
+  .card .cap .meta b{ color:var(--accent-hi); font-weight:500; }
+
+  /* ---- final CTA ---- */
+  #final .wrap{
+    max-width:760px; text-align:center;
+    padding:44px clamp(20px,4vw,52px); border-radius:var(--radius-lg);
+    background:radial-gradient(120% 120% at 50% 45%, rgba(11,17,14,0.74), rgba(11,17,14,0.44) 62%, transparent 88%);
+  }
+  #final h2{ font-size:clamp(38px,7vw,74px); letter-spacing:-0.03em; line-height:0.98; margin-bottom:24px; }
+  #final .sub{ margin:0 auto 40px; text-align:center; }
+  #final .cta-row{ justify-content:center; }
+  .done-badge{
+    font-family:var(--font-mono); font-size:12px; font-weight:600;
+    color:var(--accent); letter-spacing:0.06em; text-transform:uppercase;
+    display:inline-flex; align-items:center; gap:9px; margin-bottom:22px;
+  }
+  .done-badge .check{ width:15px; height:15px; }
+
+  footer{
+    position:relative; z-index:10;
+    border-top:1px solid var(--border-soft);
+    padding:34px clamp(20px,5vw,64px);
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;
+    background:var(--bg-deep);
+  }
+  footer .brand .word{ font-size:15px; }
+  footer .fnote{ font-family:var(--font-mono); font-size:11.5px; color:var(--text-3); letter-spacing:0.02em; }
+
+  /* reduced motion */
+  @media (prefers-reduced-motion: reduce){
+    .reveal{ opacity:1 !important; transform:none !important; transition:none !important; }
+    .scroll-hint .line{ animation:none; }
+    #hud .status::after{ content:''; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div id="atmos"></div>
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#45d38a" stroke-width="1.5"/><polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#45d38a" opacity="0.4"/></svg>
+    <span class="word">Conjure</span>
+  </div>
+  <nav class="links" id="nav-links">
+    <a href="#speak">Speak</a>
+    <a href="#engineer">Engineer</a>
+    <a href="#gallery">Showroom</a>
+    <a href="/app?mode=speak" class="nav-cta">Start conjuring</a>
+  </nav>
+  <button class="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="nav-links">
+    <svg class="icon-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+    <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+  </button>
+</header>
+
+<div id="hud" aria-hidden="true">
+  <div class="row"><span>PRINT PROGRESS</span><span class="val" id="hud-pct">0%</span></div>
+  <div class="bar"><i id="hud-bar"></i></div>
+  <div class="row"><span>LAYER</span><span class="val"><span id="hud-layer">000</span> / 120</span></div>
+  <div class="status" id="hud-status">STANDBY — SCROLL TO PRINT</div>
+</div>
+
+<main>
+  <!-- 1. HERO -->
+  <section id="hero">
+    <div class="wrap">
+      <span class="kicker reveal in"><span class="dot"></span>AI · 3D-PRINT KIOSK</span>
+      <h1 class="hero reveal in">Describe it.<br><em>Watch it print.</em></h1>
+      <p class="sub reveal in d1">Say it out loud or type a line. Conjure's AI sculpts a real, printable 3D model and sends it straight to the plate in front of you — no software, no CAD, no waiting on a designer.</p>
+      <div class="cta-row reveal in d2">
+        <a href="/app?mode=speak" class="btn-primary">Start conjuring</a>
+        <a href="#speak" class="btn-ghost">See how it works <span class="arw">→</span></a>
+      </div>
+    </div>
+    <div class="scroll-hint"><span>Scroll to print</span><span class="line"></span></div>
+  </section>
+
+  <!-- 2. SPEAK MODE -->
+  <section id="speak">
+    <div class="wrap">
+      <div class="feat panel">
+        <span class="tag reveal">Speak mode</span>
+        <h2 class="reveal d1">Talk to it like you'd talk to a maker.</h2>
+        <p class="lead reveal d2">Hold the button and describe what you want — “a hexagonal planter with drainage holes,” “a dragon curled around a d20,” “a name tag that says ARLO in rounded letters.” The model listens, sculpts a watertight mesh, and shows you the result before a single gram of filament moves.</p>
+        <div class="specs reveal d3">
+          <div class="spec"><span class="k">Input</span><span class="v">Voice or free-text prompt</span></div>
+          <div class="spec"><span class="k">Model generation</span><span class="v accent">~2 min, on-kiosk</span></div>
+          <div class="spec"><span class="k">Output</span><span class="v">Watertight, print-ready mesh</span></div>
+          <div class="spec"><span class="k">Best for</span><span class="v">Toys, decor, gifts, props</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. ENGINEER MODE -->
+  <section id="engineer">
+    <div class="wrap">
+      <div class="feat panel">
+        <span class="tag reveal">Engineer mode</span>
+        <h2 class="reveal d1">Real parts, from real dimensions.</h2>
+        <p class="lead reveal d2">Need a bracket, a mount, a clip, a spacer? Give Conjure the measurements and it drives parametric CAD — not a fuzzy guess. Every part is generated from exact constraints, checked for wall thickness and load, and flagged if the geometry can't take the stress you described.</p>
+        <div class="specs reveal d3">
+          <div class="spec"><span class="k">Engine</span><span class="v">Parametric OpenSCAD kernel</span></div>
+          <div class="spec"><span class="k">Tolerances</span><span class="v accent">±0.1 mm nominal</span></div>
+          <div class="spec"><span class="k">Validation</span><span class="v">Wall &amp; strength check pre-print</span></div>
+          <div class="spec"><span class="k">Best for</span><span class="v">Brackets, mounts, clips, jigs</span></div>
+        </div>
+        <div class="cta-row reveal d3">
+          <a href="/app?mode=engineer" class="btn-primary">Engineer a part <span class="arw">→</span></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. GALLERY -->
+  <section id="gallery">
+    <div class="wrap">
+      <div class="gal-head">
+        <span class="tag reveal">Showroom</span>
+        <h2 class="reveal d1">Conjured on the floor, printed the same visit.</h2>
+        <p class="lead reveal d2">A few things people walked in describing — and walked out holding.</p>
+      </div>
+      <div class="gal-grid">
+        <div class="card big reveal d1">
+          <div class="glyph">
+            <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
+              <polygon class="edge" points="50,10 84,30 84,70 50,90 16,70 16,30"/>
+              <polygon class="fill" points="50,26 70,38 70,62 50,74 30,62 30,38" fill="#45d38a" opacity="0.28" stroke="none"/>
+              <line x1="50" y1="10" x2="50" y2="26"/><line x1="84" y1="30" x2="70" y2="38"/><line x1="16" y1="70" x2="30" y2="62"/>
+            </svg>
+          </div>
+          <div class="cap">
+            <div class="name">Faceted planter</div>
+            <div class="meta">SPEAK · 128 g PLA · <b>1h 52m</b></div>
+          </div>
+        </div>
+        <div class="card reveal d2">
+          <div class="glyph">
+            <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
+              <rect x="24" y="30" width="52" height="30" rx="3"/>
+              <circle cx="34" cy="45" r="5" class="fill" fill="#45d38a" opacity="0.3" stroke="none"/>
+              <circle cx="66" cy="45" r="5" class="fill" fill="#45d38a" opacity="0.3" stroke="none"/>
+              <line x1="24" y1="60" x2="14" y2="72"/><line x1="76" y1="60" x2="86" y2="72"/>
+            </svg>
+          </div>
+          <div class="cap">
+            <div class="name">GoPro seat mount</div>
+            <div class="meta">ENGINEER · <b>±0.1mm</b></div>
+          </div>
+        </div>
+        <div class="card reveal d3">
+          <div class="glyph">
+            <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
+              <path d="M30 70 Q30 40 50 30 Q70 40 70 70" />
+              <path class="fill" d="M38 70 Q38 46 50 40 Q62 46 62 70 Z" fill="#45d38a" opacity="0.26" stroke="none"/>
+              <circle cx="50" cy="34" r="3"/>
+            </svg>
+          </div>
+          <div class="cap">
+            <div class="name">Wave d20 stand</div>
+            <div class="meta">SPEAK · 41 g PLA · <b>38m</b></div>
+          </div>
+        </div>
+        <div class="card reveal d2">
+          <div class="glyph">
+            <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
+              <rect x="28" y="40" width="44" height="20" rx="10"/>
+              <rect class="fill" x="36" y="46" width="28" height="8" rx="4" fill="#45d38a" opacity="0.3" stroke="none"/>
+              <line x1="28" y1="50" x2="18" y2="50"/><line x1="72" y1="50" x2="82" y2="50"/>
+            </svg>
+          </div>
+          <div class="cap">
+            <div class="name">Cable clip, 6mm</div>
+            <div class="meta">ENGINEER · <b>x4 array</b></div>
+          </div>
+        </div>
+        <div class="card reveal d3">
+          <div class="glyph">
+            <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
+              <path d="M50 22 C34 22 30 40 50 52 C70 40 66 22 50 22 Z" class="fill" fill="#45d38a" opacity="0.24"/>
+              <path d="M50 52 C40 60 40 74 50 80 C60 74 60 60 50 52 Z"/>
+            </svg>
+          </div>
+          <div class="cap">
+            <div class="name">Coiled dragon</div>
+            <div class="meta">SPEAK · 96 g PLA · <b>2h 14m</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. FINAL CTA -->
+  <section id="final">
+    <div class="wrap">
+      <span class="done-badge reveal">
+        <svg class="check" viewBox="0 0 20 20" fill="none" stroke="#45d38a" stroke-width="2"><path d="M4 10.5l4 4 8-9"/></svg>
+        Print complete
+      </span>
+      <h2 class="reveal d1">Ready to make something?</h2>
+      <p class="sub reveal d2">Step up, describe it, and watch it come off the plate. First conjure is on us.</p>
+      <div class="cta-row reveal d3">
+        <a href="/app?mode=speak" class="btn-primary">Start conjuring</a>
+        <a href="#gallery" class="btn-ghost">Browse the showroom <span class="arw">→</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="brand">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#45d38a" stroke-width="1.5"/><polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#45d38a" opacity="0.4"/></svg>
+    <span class="word">Conjure</span>
+  </div>
+  <span class="fnote">Describe it. Watch it print. — © 2026 Conjure Systems</span>
+</footer>
+
+<script src="/vendor/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- scroll state ----------
+  var targetProgress = 0;   // 0..1 raw from scroll
+  var smoothProgress = 0;   // lerped
+
+  function computeScroll(){
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    targetProgress = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+  }
+  window.addEventListener('scroll', computeScroll, { passive:true });
+  window.addEventListener('resize', computeScroll);
+  computeScroll();
+
+  // Fade the fixed HUD whenever readable body copy overlaps its screen rect, so
+  // the storytelling readout never sits on top of text (worst on the Engineer
+  // section). rAF-debounced so scrolling doesn't thrash layout.
+  var hudEl = document.getElementById('hud');
+  var hudTextEls = null, hudTick = false;
+  function hudTargets(){
+    if (!hudTextEls) hudTextEls = [].slice.call(document.querySelectorAll('.sub, .lead, .specs, .gal-head, .cap, h2, .tag, .cta-row'));
+    return hudTextEls;
+  }
+  function updateHudOverlap(){
+    hudTick = false;
+    if (!hudEl) return;
+    var h = hudEl.getBoundingClientRect(), els = hudTargets(), hit = false;
+    for (var i = 0; i < els.length; i++){
+      var r = els[i].getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) continue;
+      if (r.left < h.right && r.right > h.left && r.top < h.bottom && r.bottom > h.top){ hit = true; break; }
+    }
+    hudEl.classList.toggle('hud-hidden', hit);
+  }
+  function hudOverlapScheduled(){ if (!hudTick){ hudTick = true; requestAnimationFrame(updateHudOverlap); } }
+  window.addEventListener('scroll', hudOverlapScheduled, { passive:true });
+  window.addEventListener('resize', function(){ hudTextEls = null; hudOverlapScheduled(); });
+  updateHudOverlap();
+
+  // ---------- Three.js scene ----------
+  var canvas = document.getElementById('scene');
+  var renderer = new THREE.WebGLRenderer({ canvas:canvas, antialias:true, alpha:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.localClippingEnabled = true;
+
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x0b110e, 0.03);
+
+  var camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+  camera.position.set(6.5, 5.2, 12.5);
+  camera.lookAt(0, 2.6, 0);
+
+  // ---------- lights (3-point rig) ----------
+  var key = new THREE.DirectionalLight(0xffffff, 1.15);
+  key.position.set(7, 11, 8);
+  scene.add(key);
+
+  var fill = new THREE.DirectionalLight(0x9fd8bd, 0.42);
+  fill.position.set(-9, 4, 5);
+  scene.add(fill);
+
+  var rim = new THREE.DirectionalLight(0x45d38a, 0.9);
+  rim.position.set(-4, 6, -10);
+  scene.add(rim);
+
+  scene.add(new THREE.AmbientLight(0x2a3a32, 0.85));
+  scene.add(new THREE.HemisphereLight(0x1e8a52, 0x06110b, 0.35));
+
+  // ---------- materials ----------
+  var graphite = new THREE.MeshStandardMaterial({ color:0x1a241f, metalness:0.82, roughness:0.42 });
+  var graphiteDark = new THREE.MeshStandardMaterial({ color:0x121a16, metalness:0.7, roughness:0.55 });
+  var steel = new THREE.MeshStandardMaterial({ color:0x2a3a32, metalness:0.9, roughness:0.32 });
+  var plateMat = new THREE.MeshStandardMaterial({ color:0x0d1512, metalness:0.6, roughness:0.35 });
+
+  var printClip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0); // clips above constant, updated per frame
+  var jade = new THREE.MeshStandardMaterial({
+    color:0x2fae6d, metalness:0.15, roughness:0.35,
+    emissive:0x0f5c34, emissiveIntensity:0.55,
+    clippingPlanes:[printClip], clipShadows:true
+  });
+  var nozzleGlow = new THREE.MeshBasicMaterial({ color:0x55dd97 });
+
+  // ---------- world groups ----------
+  var printer = new THREE.Group();
+  scene.add(printer);
+  printer.position.y = 0;
+  printer.rotation.y = -0.18;
+
+  // build plate
+  var plateY = 1.0;
+  var plate = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.35, 6.2), plateMat);
+  plate.position.y = plateY;
+  printer.add(plate);
+
+  // plate grid glow lip
+  var lip = new THREE.Mesh(new THREE.BoxGeometry(6.35, 0.06, 6.35), new THREE.MeshBasicMaterial({ color:0x1e8a52 }));
+  lip.position.y = plateY + 0.19;
+  lip.material.transparent = true; lip.material.opacity = 0.5;
+  printer.add(lip);
+
+  // base
+  var base = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.7, 7.0), graphiteDark);
+  base.position.y = 0.35;
+  printer.add(base);
+
+  // corner uprights (frame)
+  function upright(x, z){
+    var m = new THREE.Mesh(new THREE.BoxGeometry(0.32, 8.4, 0.32), steel);
+    m.position.set(x, 4.4, z);
+    printer.add(m);
+    return m;
+  }
+  upright(-3.4, -3.2); upright(3.4, -3.2); upright(-3.4, 3.2); upright(3.4, 3.2);
+
+  // top cross frame
+  var topY = 8.4;
+  function beam(w, d, x, z, ry){
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), steel);
+    m.position.set(x, topY, z); if(ry) m.rotation.y = ry;
+    printer.add(m);
+  }
+  beam(7.1, 0.32, 0, -3.2); beam(7.1, 0.32, 0, 3.2);
+  beam(0.32, 6.7, -3.4, 0); beam(0.32, 6.7, 3.4, 0);
+
+  // ---------- gantry (X beam) that moves in Z with layer height feel; carriage moves X ----------
+  var gantry = new THREE.Group();
+  printer.add(gantry);
+  var gantryBeam = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.4, 0.55), graphite);
+  gantry.add(gantryBeam);
+
+  // print head carriage
+  var carriage = new THREE.Group();
+  gantry.add(carriage);
+  var carriageBody = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 0.9), graphite);
+  carriage.add(carriageBody);
+  // hotend cone
+  var hotend = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.28, 0.7, 24), steel);
+  hotend.position.y = -0.62;
+  carriage.add(hotend);
+  // nozzle glow bead
+  var bead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 16), nozzleGlow);
+  bead.position.y = -0.98;
+  carriage.add(bead);
+  // point light at nozzle
+  var nozzleLight = new THREE.PointLight(0x55dd97, 0.0, 4.5, 2);
+  nozzleLight.position.y = -1.0;
+  carriage.add(nozzleLight);
+
+  // ---------- the printed object (the Conjure hexagon logo) ----------
+  // A pointy-top hexagon brand mark, extruded in Z and stood up in the X-Y plane
+  // so the hexagon face points at the camera and the print/clip axis is vertical (Y).
+  // As the clip plane rises in Y, the logo draws from its bottom vertex up to its top vertex.
+  var hexOuterR   = 2.3;   // center -> vertex of outer hexagon
+  var hexFrameHole= 1.95;  // inner edge of the outer frame (ring thickness ~0.35)
+  var hexInnerR   = 1.15;  // solid inner hexagon (~half the outer, matching the mark)
+  var hexDepth    = 0.42;  // extrusion thickness in Z
+  var objH = 2 * hexOuterR;      // full printed height = bottom vertex -> top vertex
+  var objBaseY = plateY + 0.175; // bottom vertex sits on plate top
+
+  // pointy-top hexagon: vertex at top-center (90°) and bottom-center (270°)
+  function hexRing(target, radius){
+    for(var i=0; i<6; i++){
+      var a = Math.PI/2 + i*(Math.PI/3);
+      var x = radius*Math.cos(a), y = radius*Math.sin(a);
+      if(i===0) target.moveTo(x, y); else target.lineTo(x, y);
+    }
+    target.closePath();
+    return target;
+  }
+  function hexShape(radius){ return hexRing(new THREE.Shape(), radius); }
+  function hexPath(radius){ return hexRing(new THREE.Path(), radius); }
+
+  var printObj = new THREE.Group();
+  printObj.position.y = objBaseY;
+  printer.add(printObj);
+
+  // inner hexagon material: same jade, but emissive a touch dimmer (logo's two tones)
+  var jadeInner = jade.clone();
+  jadeInner.emissive = new THREE.Color(0x0b3d23);
+  jadeInner.emissiveIntensity = 0.32;
+
+  // OUTER FRAME: hexagon outline built as an extruded hexagonal ring (concentric hole)
+  var frameShape = hexShape(hexOuterR);
+  frameShape.holes.push(hexPath(hexFrameHole));
+  var frameGeo = new THREE.ExtrudeGeometry(frameShape, { depth:hexDepth, bevelEnabled:false, curveSegments:1 });
+  // shift bottom vertex to local y=0 and center thickness on Z=0
+  frameGeo.translate(0, hexOuterR, -hexDepth/2);
+  var frameMesh = new THREE.Mesh(frameGeo, jade);
+  printObj.add(frameMesh);
+
+  // INNER HEXAGON: smaller solid extruded hexagon, concentric with the frame
+  var innerGeo = new THREE.ExtrudeGeometry(hexShape(hexInnerR), { depth:hexDepth, bevelEnabled:false, curveSegments:1 });
+  innerGeo.translate(0, hexOuterR, -hexDepth/2);
+  var innerMesh = new THREE.Mesh(innerGeo, jadeInner);
+  printObj.add(innerMesh);
+
+  // reference floor grid (subtle)
+  var grid = new THREE.GridHelper(30, 30, 0x223029, 0x162019);
+  grid.position.y = 0.02;
+  if(grid.material){ grid.material.transparent = true; grid.material.opacity = 0.35; }
+  scene.add(grid);
+
+  var objTopWorld = objBaseY + objH + 0.7; // world Y of finial tip
+
+  // ---------- resize ----------
+  function resize(){
+    var w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- HUD ----------
+  var hudPct = document.getElementById('hud-pct');
+  var hudBar = document.getElementById('hud-bar');
+  var hudLayer = document.getElementById('hud-layer');
+  var hudStatus = document.getElementById('hud-status');
+  var totalLayers = 120;
+  var lastLayer = -1;
+
+  function pad(n){ n = String(n); while(n.length<3) n = '0'+n; return n; }
+
+  function updateHud(p){
+    var pct = Math.round(p*100);
+    if(hudPct) hudPct.textContent = pct + '%';
+    if(hudBar) hudBar.style.width = pct + '%';
+    var layer = Math.round(p*totalLayers);
+    if(layer !== lastLayer){
+      if(hudLayer) hudLayer.textContent = pad(layer);
+      lastLayer = layer;
+    }
+    if(hudStatus){
+      var s;
+      if(pct <= 0) s = 'STANDBY — SCROLL TO PRINT';
+      else if(pct >= 100) s = 'PRINT COMPLETE — READY';
+      else s = 'PRINTING · JADE PLA · 210°C';
+      if(hudStatus.textContent !== s) hudStatus.textContent = s;
+    }
+  }
+
+  // ---------- render loop ----------
+  var carriageX = 0;
+  function applyPrint(p){
+    // p: 0..1 print progress
+    // clip plane: keep geometry BELOW cutHeight (world Y).
+    // Plane normal (0,-1,0), constant d => keeps points where (n·x + d) < 0 i.e. -y + d < 0 => y > d ... invert.
+    // We want to KEEP y < cut. normal (0,-1,0): dot = -y. keep where -y + constant >= 0 => y <= constant. So constant = cutY.
+    var cutY = objBaseY + p*(objH + 0.75);
+    printClip.constant = cutY;
+
+    // print head sits just above current layer
+    var headY = Math.min(cutY, objBaseY + objH) + 0.9;
+    gantry.position.y = headY;
+
+    // carriage sweeps X back and forth as it "prints" — spans the hexagon's width
+    var sweep = Math.sin(p * Math.PI * 22) * 2.0;
+    carriageX = sweep * (p>0 && p<1 ? 1 : 0);
+    carriage.position.x = carriageX;
+
+    // nozzle glow intensity: on while printing
+    var printing = (p > 0.001 && p < 0.999);
+    nozzleLight.intensity = printing ? 1.6 : (p>=0.999 ? 0.0 : 0.0);
+    bead.material.color.setHex(printing ? 0x55dd97 : (p>=0.999 ? 0x2fae6d : 0x1e8a52));
+    var beadScale = printing ? (0.85 + 0.5*Math.abs(Math.sin(p*80))) : 0.6;
+    bead.scale.setScalar(beadScale);
+
+    // emissive pulse on object near the print line (inner tone stays a touch dimmer)
+    jade.emissiveIntensity = printing ? 0.7 : 0.45;
+    jadeInner.emissiveIntensity = printing ? 0.48 : 0.30;
+  }
+
+  if(reduceMotion){
+    // fully printed, static
+    applyPrint(1);
+    printClip.constant = objTopWorld + 1;
+    nozzleLight.intensity = 0;
+    bead.scale.setScalar(0.6);
+    updateHud(1);
+  }
+
+  var t = 0;
+  function frame(){
+    requestAnimationFrame(frame);
+    t += 0.016;
+
+    if(!reduceMotion){
+      // smooth lerp toward target
+      smoothProgress += (targetProgress - smoothProgress) * 0.09;
+      if(Math.abs(targetProgress - smoothProgress) < 0.0002) smoothProgress = targetProgress;
+      applyPrint(smoothProgress);
+      updateHud(smoothProgress);
+
+      // gentle idle camera drift
+      var driftX = Math.sin(t*0.25)*0.35;
+      var driftY = Math.cos(t*0.2)*0.2;
+      camera.position.x = 6.5 + driftX;
+      camera.position.y = 5.2 + driftY;
+      // slowly rotate printer view based on progress for cinematic reveal
+      printer.rotation.y = -0.18 + smoothProgress*0.5 + Math.sin(t*0.15)*0.03;
+      camera.lookAt(0, 2.8, 0);
+    } else {
+      printer.rotation.y = -0.05;
+      camera.lookAt(0, 2.8, 0);
+    }
+
+    renderer.render(scene, camera);
+  }
+  frame();
+
+  // ---------- scroll reveal (IntersectionObserver) ----------
+  var revealEls = document.querySelectorAll('.reveal');
+  if(reduceMotion){
+    revealEls.forEach(function(el){ el.classList.add('in'); });
+  } else if('IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold:0.18, rootMargin:'0px 0px -8% 0px' });
+    revealEls.forEach(function(el){ if(!el.classList.contains('in')) io.observe(el); });
+  } else {
+    revealEls.forEach(function(el){ el.classList.add('in'); });
+  }
+
+  // smooth-scroll for in-page anchors
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){
+    a.addEventListener('click', function(ev){
+      var id = a.getAttribute('href');
+      if(id.length < 2) return;
+      var el = document.querySelector(id);
+      if(el){ ev.preventDefault(); el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block:'start' }); }
+    });
+  });
+
+  // mobile nav toggle (hamburger)
+  var navToggle = document.querySelector('.nav-toggle');
+  var navLinks  = document.getElementById('nav-links');
+  if (navToggle && navLinks){
+    function setNav(open){
+      navLinks.classList.toggle('open', open);
+      navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      navToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    }
+    navToggle.addEventListener('click', function(){
+      setNav(navToggle.getAttribute('aria-expanded') !== 'true');
+    });
+    navLinks.querySelectorAll('a').forEach(function(a){
+      a.addEventListener('click', function(){ setNav(false); });
+    });
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape' && navToggle.getAttribute('aria-expanded') === 'true'){ setNav(false); navToggle.focus(); }
+    });
+  }
+
+})();
+</script>
+</body>
+</html>
