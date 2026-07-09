@@ -195,11 +195,14 @@ Flat by default. This system conveys depth through **tonal layering**, not drop 
 The single exception to flatness is **physical, not atmospheric**: primary/secondary buttons carry a 3px darker bottom border (`jade-edge` / border) that reads as a machined lip, and depress (`translateY(2px)`, edge shrinks to 1px) on `:active`. Depth you can press, not depth that floats.
 
 ### Shadow Vocabulary
-- **Mic pulse** (`box-shadow: 0 0 0 6px rgba(69,211,138,0.16), 0 0 0 14px rgba(69,211,138,0.06)`, animated): The *only* glow in the system. Signals active listening on the push-to-talk mic. State feedback, not decoration — silenced under `prefers-reduced-motion`.
+- **Mic pulse** (`box-shadow: 0 0 0 6px rgba(69,211,138,0.16), 0 0 0 14px rgba(69,211,138,0.06)`, animated): Signals active listening on the push-to-talk mic. State feedback, not decoration — silenced under `prefers-reduced-motion`.
+- **Print head** (`box-shadow: 0 0 10px rgba(69,211,138,0.7)` on the leading 14px of the progress bar): The extrusion-line progress bar's bright tip — the print head runs hot. State feedback: it marks *where the job is right now* on the track.
 - **Viewer scrim** (`linear-gradient(to top, rgba(11,17,14,0.95), transparent)`): Not a shadow — a legibility gradient behind the 3D-viewer action bar so controls stay readable over any rendered geometry.
 
+These two glows (mic pulse, print head) are the *complete* glow vocabulary. Both mark live machine state; neither is decoration. Anything else that glows is a bug.
+
 ### Named Rules
-**The Flat-Enclosure Rule.** Surfaces are flat at rest. The only permitted depth cues are tonal (a lighter surface) and physical (the keycap bottom edge). Drop shadows and glows are forbidden except the mic's active-listening pulse. If a surface floats, flatten it.
+**The Flat-Enclosure Rule.** Surfaces are flat at rest. The only permitted depth cues are tonal (a lighter surface) and physical (the keycap bottom edge). Drop shadows and glows are forbidden except the two live-state glows named in the Shadow Vocabulary (mic pulse, progress-bar print head). If a surface floats, flatten it.
 
 ## 5. Components
 
@@ -247,7 +250,7 @@ The generating screens are a **build log, not a spinner**. Each machine stage is
 - **Don't** use gimmicky "AI toy" aesthetics: rainbow gradients, cartoon mascots, playful rounded-everything, and **never** gradient text (`background-clip: text`).
 - **Don't** slip into generic SaaS-landing clichés: cream/warm-neutral backgrounds, tracked eyebrows above every section, hero-metric blocks, identical icon-card grids. The home screen is an orientation surface, not a funnel.
 - **Don't** recreate cluttered maker-forum density — cramped panels, competing status widgets, low-contrast gray-on-gray.
-- **Don't** add drop shadows or glassmorphism. The only glow permitted is the mic's active-listening pulse.
+- **Don't** add drop shadows or glassmorphism. The only glows permitted are the two live-state glows: the mic's active-listening pulse and the progress bar's print head.
 - **Don't** use Sage Faint (`#5c6f65`, 3.4:1) for anything a user must read — decorative and large-text only.
 - **Don't** encode meaning in color alone: amber/red review states always carry text or an icon.
 - **Don't** rely on hover to reveal function or state — there is no hover on the kiosk.

@@ -192,10 +192,16 @@
     flex-shrink: 0;
   }
 
+  /* A real <button>, not a click-handling div — keyboard/switch users get
+     focus and the global :focus-visible ring for free. */
   #nav-logo {
     display: flex;
     align-items: center;
     gap: 10px;
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: var(--tap);
     font-size: 15px;
     font-weight: 700;
     color: var(--text-1);
@@ -572,14 +578,15 @@
     width: 100%;
   }
 
-  /* What you type is an instruction to a machine — set it in mono. */
+  /* The prompt is the person speaking, not the machine — Archivo, per the
+     Two-Voice Rule. (The Engineer textarea stays mono: dictating specs.) */
   .prompt-input {
     width: 100%;
     background: var(--bg-deep);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     color: var(--text-1);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 16.5px;
     line-height: 1.7;
     padding: 20px 76px 20px 22px;
@@ -861,7 +868,9 @@
 
   .step-icon {
     font-size: 15px;
-    color: var(--text-faint);
+    /* A pending step IS status information — sage (6.6:1), not the
+       decorative-only faint ramp (3.4:1). */
+    color: var(--text-3);
     line-height: 1;
   }
 
@@ -872,12 +881,14 @@
     flex: 1;
   }
 
+  /* Archivo name + mono message: the step name is the product speaking to
+     the person; the live message below it is the machine reporting work. */
   .step-name {
-    font-family: var(--font-mono);
-    font-size: 15px;
+    font-family: var(--font-ui);
+    font-size: 16px;
     font-weight: 500;
     color: var(--text-3);
-    letter-spacing: 0.01em;
+    letter-spacing: -0.005em;
   }
 
   .step-msg {
@@ -1239,15 +1250,28 @@
 
   .library-card:hover { border-color: var(--text-faint); }
 
+  /* State is carried by a text label, never by glyph shape alone —
+     "3D preview" (a GLB exists to view) vs "no preview" (print file only). */
   .library-card-thumb {
     height: 120px;
     background: var(--bg-deep);
     border-bottom: 1px solid var(--border-soft);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
     color: var(--accent-dim);
-    font-size: 34px;
+    font-size: 30px;
+  }
+
+  .library-card-thumb .thumb-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
   }
 
   .library-card-body {
@@ -1525,13 +1549,13 @@
 
 <!-- ════════ TOP NAV (persistent) ════════ -->
 <nav id="top-nav">
-  <div id="nav-logo" onclick="goHome()" title="Home">
+  <button id="nav-logo" type="button" onclick="goHome()" title="Home">
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#45d38a" stroke-width="1.5"/>
       <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#45d38a" opacity="0.4"/>
     </svg>
     <span>Conjure</span>
-  </div>
+  </button>
   <div id="nav-status"></div>
   <div class="nav-actions">
     <button id="nav-home-btn" onclick="goHome()" title="Return to the home page and start fresh">
@@ -1575,7 +1599,7 @@
         <span class="panel-desc">Any object you can describe: a low‑poly fox, a hexagonal plant pot, a dragon keychain. AI sculpts the mesh.</span>
         <span class="panel-foot">
           <span>creative shapes · ~2 min</span>
-          <span class="panel-go">Start →</span>
+          <span class="panel-go">Start</span>
         </span>
       </button>
       <button class="mode-panel panel-eng" onclick="goToEngineer()" title="Describe a functional part; the AI researches real specs and generates precise CAD">
@@ -1584,7 +1608,7 @@
         <span class="panel-desc">Brackets, mounts, clips and enclosures, built from real‑world dimensions and parametric OpenSCAD, reviewed for strength.</span>
         <span class="panel-foot">
           <span>exact mm · functional parts</span>
-          <span class="panel-go">Open →</span>
+          <span class="panel-go">Open</span>
         </span>
       </button>
     </div>
@@ -1633,7 +1657,7 @@
           data-enable-grammarly="false"
           oninput="onPromptInput()"
         ></textarea>
-        <button id="mic-btn" class="mic-inline" type="button" aria-label="Hold to speak" title="Hold to speak">
+        <button id="mic-btn" class="mic-inline" type="button" aria-label="Hold or tap to speak" title="Hold or tap to speak">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -1642,7 +1666,7 @@
           </svg>
         </button>
       </div>
-      <div id="mic-label" class="mic-caption">Hold the mic to speak</div>
+      <div id="mic-label" class="mic-caption">Hold the mic to speak — or tap it to talk hands-free</div>
     </div>
     <div class="prompt-suggestions">
       <span class="examples-label">Try:</span>
@@ -1718,6 +1742,7 @@
     <div class="progress-track">
       <div class="progress-bar" id="gen-progress-bar"></div>
     </div>
+    <button id="btn-cancel-gen" class="btn-ghost back-btn" onclick="cancelBuild()" title="Stop this job and go back to your description">← Cancel</button>
   </div>
 </div>
 
@@ -1785,6 +1810,7 @@
     <div class="progress-track">
       <div class="progress-bar" id="slice-progress-bar"></div>
     </div>
+    <button id="btn-cancel-slice" class="btn-ghost back-btn" onclick="cancelBuild()" title="Stop preparing this print and go back">← Cancel</button>
     <div id="usb-ready-msg" class="usb-ready" style="display:none;">
       <div class="usb-ready-icon">✓</div>
       <div class="usb-ready-text">
@@ -1834,7 +1860,7 @@
       </div>
       <h3>Nothing on the shelf yet</h3>
       <p>Describe something on the home screen and it lands here, ready to reprint.</p>
-      <button class="btn-primary" onclick="closeLibrary()" style="flex:none;">Create your first model</button>
+      <button class="btn-primary" onclick="closeLibrary()" style="flex:none;">Describe your first object</button>
     </div>
   </div>
 </div>
@@ -1845,14 +1871,14 @@
     <div class="compose-main">
     <div class="engineer-header">
       <div class="engineer-badge">
+        <!-- Dimension lines with end ticks — the "exact mm" promise, not a stock gear. -->
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
+          <path d="M3 9h18M3 15h18M6 9v6M18 9v6"/>
         </svg>
         Engineer Mode
       </div>
       <h2>Describe a functional part</h2>
-      <p>The AI will research real engineering specifications and generate precise parametric CAD geometry.</p>
+      <p>It researches real dimensions, writes the CAD, and checks the part for strength.</p>
     </div>
     <div class="engineer-input-area">
       <textarea
@@ -1861,17 +1887,18 @@
         aria-label="Describe the functional part you need"
         placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
         rows="5"
+        oninput="onEngineerInput()"
       ></textarea>
       <div class="engineer-examples">
         <span class="examples-label">Try:</span>
-        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">pipe bracket for 2 inch PVC</button>
-        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">desk cable management clip</button>
-        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim()">monitor stand riser</button>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim();onEngineerInput()">pipe bracket for 2 inch PVC</button>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim();onEngineerInput()">desk cable management clip</button>
+        <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim();onEngineerInput()">monitor stand riser</button>
       </div>
     </div>
     <div class="engineer-actions">
       <button class="btn-ghost" onclick="showScreen('s-idle')" title="Return to the home page">← Back</button>
-      <button class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;" title="Research specs, generate parametric CAD, and prepare the part">
+      <button id="btn-engineer" class="btn-primary" onclick="handleEngineerConfirm()" style="flex:none;" disabled title="Research specs, generate parametric CAD, and prepare the part">
         Start engineering
       </button>
     </div>
@@ -1936,6 +1963,7 @@
     <div class="progress-track">
       <div class="progress-bar" id="eg-progress-bar"></div>
     </div>
+    <button id="btn-cancel-eng" class="btn-ghost back-btn" onclick="cancelBuild()" title="Stop this job and go back to your description">← Cancel</button>
 
     <div id="eg-specs-panel" class="engineer-panel" style="display:none;">
       <div class="engineer-panel-label">Retrieved specs</div>
@@ -2042,11 +2070,27 @@ function goToIdle() {
 }
 
 /* ════════ SSE HELPER ════════ */
+/* The engineer flow polls instead of streaming — hoisted here so every
+   teardown path (cancel, home, idle, reset) stops it alongside the SSE. */
+let engineerPoller = null;
+
 function closeEvents() {
   if (evtSource) {
     evtSource.close();
     evtSource = null;
   }
+  if (engineerPoller) {
+    clearInterval(engineerPoller);
+    engineerPoller = null;
+  }
+}
+
+/* Cancel an in-flight build: stop listening for events, tell the backend
+   to reset, and return the user to their own words — the pipeline should
+   never hold a shared kiosk hostage. */
+function cancelBuild() {
+  fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  retryLastBuild();  // closeEvents() + restores the prompt + shows lastComposeScreen
 }
 
 /* ════════ SPEECH RECOGNITION ════════ */
@@ -2117,6 +2161,14 @@ function onPromptInput() {
   if (gen) gen.disabled = !(el && el.value.trim());
 }
 
+// Engineer-mode mirror of onPromptInput — the two composers share one rule:
+// the primary action is disabled until there are words to build from.
+function onEngineerInput() {
+  const btn = document.getElementById('btn-engineer');
+  const el = document.getElementById('engineer-input');
+  if (btn) btn.disabled = !(el && el.value.trim());
+}
+
 function useExample(btn) {
   const el = promptInputEl();
   if (el) { el.value = btn.textContent.trim(); el.focus(); }
@@ -2133,7 +2185,7 @@ function updateMicUI(listening) {
   const btn = document.getElementById('mic-btn');
   const label = document.getElementById('mic-label');
   if (btn) btn.classList.toggle('recording', listening);
-  if (label) label.textContent = listening ? 'Listening… release when done' : 'Hold the mic to speak';
+  if (label) label.textContent = listening ? 'Listening… release when done' : 'Hold the mic to speak — or tap it to talk hands-free';
 }
 
 function showSpeechMessage(msg) {
@@ -2159,6 +2211,7 @@ function startListening() {
 }
 
 function stopListening() {
+  micLatched = false;  // any teardown path (home, idle, confirm) unlatches too
   if (!recognition || !isListening) return;
   isListening = false;
   clearTimeout(restartTimer);
@@ -2183,30 +2236,79 @@ function handleRedo() {
   onPromptInput();
 }
 
+/* The mic works two ways: HOLD to talk (release ends it), or a quick TAP to
+   latch it on (tap again to stop). The tap path exists for switch and tremor
+   users who cannot sustain a press — hold-only push-to-talk locks them out. */
+let micPressedAt = 0;
+let micLatched = false;   // tap-to-toggle mode is active
+const MIC_TAP_MS = 350;   // release within this window = a tap, not a hold
+
+function micPress() {
+  micPressedAt = Date.now();
+  if (micLatched) return;  // latched — the release handler stops it
+  startListening();
+}
+
+function micRelease() {
+  if (!isListening) return;  // start failed (no speech support / mic blocked)
+  if (micLatched) {
+    // Second tap ends a latched session, however short the press.
+    micLatched = false;
+    stopListening();
+    return;
+  }
+  if (Date.now() - micPressedAt < MIC_TAP_MS) {
+    // A quick tap latches on instead of demanding a sustained hold.
+    micLatched = true;
+    showSpeechMessage('Listening… tap the mic again when done');
+    return;
+  }
+  stopListening();
+}
+
 const micBtn = document.getElementById('mic-btn');
-micBtn.addEventListener('mousedown', startListening);
-micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startListening(); }, { passive: false });
-micBtn.addEventListener('mouseup', stopListening);
-micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopListening(); }, { passive: false });
-micBtn.addEventListener('mouseleave', () => { if (isListening) stopListening(); });
-micBtn.addEventListener('touchcancel', () => { if (isListening) stopListening(); });
-// Safety net: releasing the pointer or losing focus anywhere ends the session,
-// so the mic can never get stuck in LISTENING if release happens off-button.
-document.addEventListener('mouseup', () => { if (isListening) stopListening(); });
-window.addEventListener('blur', () => { if (isListening) stopListening(); });
+micBtn.addEventListener('mousedown', micPress);
+micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); micPress(); }, { passive: false });
+micBtn.addEventListener('mouseup', micRelease);
+micBtn.addEventListener('touchend', (e) => { e.preventDefault(); micRelease(); }, { passive: false });
+// Keyboard / switch access: Enter and Space fire 'click' on a button without
+// ever sending mousedown, so toggle directly on those synthetic clicks.
+micBtn.addEventListener('click', (e) => {
+  if (e.detail !== 0) return;  // pointer clicks already handled above
+  if (isListening) { micLatched = false; stopListening(); }
+  else { startListening(); micLatched = isListening; if (micLatched) showSpeechMessage('Listening… press again when done'); }
+});
+// Safety nets for HOLD mode only: releasing the pointer or losing focus
+// anywhere ends the session, so the mic can never get stuck in LISTENING if
+// release happens off-button. A latched session must survive these — its
+// whole point is that the finger has left the screen.
+micBtn.addEventListener('mouseleave', () => { if (isListening && !micLatched) stopListening(); });
+micBtn.addEventListener('touchcancel', () => { if (isListening && !micLatched) stopListening(); });
+document.addEventListener('mouseup', () => { if (isListening && !micLatched) stopListening(); });
+window.addEventListener('blur', () => { micLatched = false; if (isListening) stopListening(); });
 
 /* ════════ STEP HELPERS ════════ */
 function setStep(id, state, msg) {
   const row = document.getElementById(id);
   if (!row) return;
+
+  // SSE and the 1s engineer poller re-assert the same state every tick.
+  // Replacing the marker via outerHTML each time replays the done-pop
+  // (step-lock) on settled checkmarks and restarts the active spinner —
+  // so the marker and row class only re-render when the state actually
+  // changes. Live messages still update freely on every tick.
+  const stateChanged = row.dataset.state !== state;
+  const msgEl = row.querySelector('.step-msg');
+  if (msg && msgEl) msgEl.textContent = msg;
+  if (!stateChanged) return;
+  row.dataset.state = state;
   row.className = 'step-item ' + state;
 
   // The marker is either the pending/done/error glyph (.step-icon) or the
-  // active spinner (.step-spinner). Look up whichever is present so repeated
-  // setStep(id,'active') calls (SSE + polling re-assert the same step) never
-  // dereference null. Colors are driven by the .step-item.<state> CSS rules.
+  // active spinner (.step-spinner). Look up whichever is present so a
+  // state transition never dereferences null. Colors are driven by the
+  // .step-item.<state> CSS rules.
   const marker = row.querySelector('.step-icon') || row.querySelector('.step-spinner');
-  const msgEl = row.querySelector('.step-msg');
   if (marker) {
     if (state === 'active') {
       marker.outerHTML = '<div class="step-spinner"></div>';
@@ -2218,7 +2320,6 @@ function setStep(id, state, msg) {
       marker.outerHTML = '<div class="step-icon">⬡</div>';
     }
   }
-  if (msg && msgEl) msgEl.textContent = msg;
 }
 
 function setGenProgress(pct) {
@@ -2241,6 +2342,8 @@ function resetSliceSteps() {
   if (usb) usb.style.display = 'none';
   const btn = document.getElementById('btn-start-over');
   if (btn) btn.style.display = 'none';
+  const cancel = document.getElementById('btn-cancel-slice');
+  if (cancel) cancel.style.display = 'inline-flex';
 }
 
 /* ════════ SSE EVENT MAPPERS ════════ */
@@ -2362,6 +2465,9 @@ function showUsbReady() {
   if (usb) usb.style.display = 'flex';
   const btn = document.getElementById('btn-start-over');
   if (btn) btn.style.display = 'block';
+  // The job is done — a lingering Cancel would only confuse.
+  const cancel = document.getElementById('btn-cancel-slice');
+  if (cancel) cancel.style.display = 'none';
 }
 
 /* ════════ ERROR ════════ */
@@ -2430,6 +2536,7 @@ function retryLastBuild() {
     showScreen('s-engineer');
     const input = document.getElementById('engineer-input');
     if (input) { input.value = lastIntent; input.focus(); }
+    onEngineerInput();  // restored words re-enable the button
   } else {
     const el = document.getElementById('prompt-input');
     if (el) el.value = currentPrompt;
@@ -2506,7 +2613,10 @@ async function loadLibrary() {
       const card = document.createElement('div');
       card.className = 'library-card';
       card.innerHTML = `
-        <div class="library-card-thumb">${hasGlb ? '◼' : '◻'}</div>
+        <div class="library-card-thumb">
+          <span class="thumb-hex" aria-hidden="true">⬡</span>
+          <span class="thumb-label">${hasGlb ? '3D preview' : 'no preview'}</span>
+        </div>
         <div class="library-card-body">
           <div class="library-card-prompt">${escapeHtml(prompt)}</div>
           <div class="library-card-date">${escapeHtml(date)}</div>
@@ -2619,6 +2729,7 @@ function goToEngineer() {
   showScreen('s-engineer');
   const input = document.getElementById('engineer-input');
   if (input) { input.value = ''; input.focus(); }
+  onEngineerInput();
 }
 
 async function handleEngineerConfirm() {
@@ -2634,7 +2745,8 @@ async function handleEngineerConfirm() {
   resetEngineerSteps();
   speak('Understood. Engineering your part now.');
 
-  let engineerPoller = setInterval(async () => {
+  closeEvents();
+  engineerPoller = setInterval(async () => {
     try {
       const r = await fetch('/api/engineer/status');
       if (!r.ok) return;
@@ -2939,7 +3051,7 @@ function loadSTL(url) {
       geometry.computeVertexNormals();
 
       const material = new THREE.MeshPhongMaterial({
-        color: 0x3fcf85,
+        color: 0x45d38a,  // the Borrowed-Accent Rule: the UI wears this exact render color
         emissive: 0x0a2f1d,
         emissiveIntensity: 0.5,
         specular: 0xbfffe0,
@@ -2991,7 +3103,7 @@ function setMaterial(mode) {
 
     if (mode === 'solid') {
       node.material = new THREE.MeshPhongMaterial({
-        color: 0x3fcf85,
+        color: 0x45d38a,  // the Borrowed-Accent Rule: the UI wears this exact render color
         emissive: 0x0a2f1d,
         emissiveIntensity: 0.5,
         specular: 0xbfffe0,
