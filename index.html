@@ -2513,12 +2513,15 @@ async function copyStlToUsb() {
 
 /* ════════ RESET ════════ */
 function resetAll() {
-  closeEvents();
-  stopListening();
-  handleRedo();
+  // Guard every teardown step: a throw in any of these (e.g. a half-initialised
+  // viewer or mic) must NOT prevent the actual navigation below. Before this,
+  // an exception here left "Start over" silently stuck on the viewer screen.
+  try { closeEvents(); }   catch (e) { console.error('resetAll: closeEvents failed', e); }
+  try { stopListening(); } catch (e) { console.error('resetAll: stopListening failed', e); }
+  try { handleRedo(); }    catch (e) { console.error('resetAll: handleRedo failed', e); }
   currentPrompt = '';
   fetch('/api/reset', { method: 'POST' }).catch(() => {});
-  disposeViewer();
+  try { disposeViewer(); } catch (e) { console.error('resetAll: disposeViewer failed', e); }
   showScreen('s-idle');
   resetIdle();
 }
@@ -2565,10 +2568,14 @@ function celebrateModelReady(label) {
 let libraryReturnScreen = 's-idle';
 
 function openLibrary() {
-  const currentId = currentScreen ? currentScreen.id : 's-idle';
-  libraryReturnScreen = (currentId === 's-library') ? 's-idle' : currentId;
-  showScreen('s-library');
-  loadLibrary();
+  try {
+    const currentId = currentScreen ? currentScreen.id : 's-idle';
+    libraryReturnScreen = (currentId === 's-library') ? 's-idle' : currentId;
+    showScreen('s-library');
+    loadLibrary();
+  } catch (e) {
+    console.error('openLibrary failed', e);
+  }
 }
 
 function closeLibrary() {
@@ -2685,12 +2692,17 @@ function escapeHtml(str) {
 }
 
 function goHome() {
-  libraryReturnScreen = 's-idle';
-  closeEvents();
-  try { stopListening(); } catch(e) {}
-  transcript = '';
-  try { handleRedo(); } catch(e) {}
-  showScreen('s-idle');
+  // Teardown is best-effort; the navigation must happen regardless of any throw.
+  try {
+    libraryReturnScreen = 's-idle';
+    closeEvents();
+    try { stopListening(); } catch(e) {}
+    transcript = '';
+    try { handleRedo(); } catch(e) {}
+  } catch (e) {
+    console.error('goHome teardown failed (navigating anyway)', e);
+  }
+  window.location.assign('/');
 }
 
 async function selectModelFromLibrary(id) {
