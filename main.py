@@ -823,19 +823,57 @@ async def run_slicing() -> None:
 
         sliced = False
 
-        # ── Step 2a: Try OrcaSlicer first ─────────────────────────────────
+        # ── Step 2a: Slice with OrcaSlicer (Neptune 4 Pro system presets) ──
+        # OrcaSlicer 2.4.x CLI needs a full flattened preset bundle (machine +
+        # process + filament, inheritance pre-resolved), a per-model --scale
+        # (Meshy/OpenSCAD STLs are often larger than the 235mm bed), --arrange +
+        # --ensure-on-bed to center/seat the part, and it always writes
+        # plate_1.gcode into --outputdir. The old --slice/--export-gcode/--load
+        # form is not valid in this version.
         if orca_path and Path(orca_path).exists():
             await push_event("slice", "active", "Slicing with OrcaSlicer...", 18)
-            orca_cmd = [
-                orca_path,
-                "--slice",
-                "--export-gcode",
-                "--load", str(orca_profile),
-                "--output", str(gcode_path),
-                str(stl_path),
-            ]
+            orca_machine  = PROFILES_DIR / "flat_machine_neptune4pro_04.json"
+            orca_process  = PROFILES_DIR / "flat_process_0.20mm_standard_n4pro_04.json"
+            orca_filament = PROFILES_DIR / "flat_filament_elegoo_pla_en4.json"
+            orca_out      = OUTPUT_DIR / "orca_out"
             proc = None
             try:
+                # Compute a fit-to-bed scale from OrcaSlicer's own --info readout.
+                scale = 1.0
+                try:
+                    info_proc = await asyncio.create_subprocess_exec(
+                        orca_path, "--info", str(stl_path),
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    )
+                    info_out, _ = await asyncio.wait_for(info_proc.communicate(), timeout=60)
+                    dims = {}
+                    for line in info_out.decode("utf-8", "ignore").splitlines():
+                        m = re.search(r"size_([xyz])\s*[:=]\s*([0-9.]+)", line)
+                        if m:
+                            dims[m.group(1)] = float(m.group(2))
+                    if dims:
+                        sx = dims.get("x") or 1.0
+                        sy = dims.get("y") or 1.0
+                        sz = dims.get("z") or 1.0
+                        scale = min(220.0 / sx, 220.0 / sy, 260.0 / sz, 1.0)
+                except Exception as se:
+                    log.warning("[Slice] OrcaSlicer --info failed (%s) — using scale 1.0", se)
+
+                if orca_out.exists():
+                    shutil.rmtree(orca_out, ignore_errors=True)
+                orca_out.mkdir(parents=True, exist_ok=True)
+
+                orca_cmd = [
+                    orca_path,
+                    "--load-settings", f"{orca_machine};{orca_process}",
+                    "--load-filaments", str(orca_filament),
+                    "--scale", f"{scale:.5f}",
+                    "--ensure-on-bed",
+                    "--arrange", "1",
+                    "--slice", "0",
+                    "--outputdir", str(orca_out),
+                    str(stl_path),
+                ]
                 proc = await asyncio.create_subprocess_exec(
                     *orca_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -843,13 +881,16 @@ async def run_slicing() -> None:
                     cwd=str(BASE_DIR),
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-                if proc.returncode == 0 and gcode_path.exists() and gcode_path.stat().st_size > 5000:
+                orca_gcode = orca_out / "plate_1.gcode"   # CLI always emits this fixed name
+                if proc.returncode == 0 and orca_gcode.exists() and orca_gcode.stat().st_size > 5000:
+                    shutil.move(str(orca_gcode), str(gcode_path))
                     gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
-                    log.info("[Slice] OrcaSlicer complete — %.1f MB", gcode_mb)
+                    log.info("[Slice] OrcaSlicer complete — %.1f MB (scale %.3f)", gcode_mb, scale)
                     await push_event("slice", "complete", f"OrcaSlicer: gcode ready — {gcode_mb:.1f} MB", 60)
                     sliced = True
                 else:
-                    log.warning("[Slice] OrcaSlicer failed (rc=%s) — falling back to CuraEngine", proc.returncode)
+                    tail = stderr.decode("utf-8", "ignore")[-300:] if stderr else ""
+                    log.warning("[Slice] OrcaSlicer failed (rc=%s) — falling back to CuraEngine. %s", proc.returncode, tail)
                     await push_event("slice", "active", "OrcaSlicer failed — trying CuraEngine...", 22)
             except asyncio.TimeoutError:
                 if proc is not None:
@@ -993,9 +1034,21 @@ async def startup_event() -> None:
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
 
 
+# Single unified experience: the working kiosk is the site. It already carries
+# the full visual identity (the 3D printer/grid background scene + jade + glass
+# panels behind every screen), so there's no separate marketing page. /app is
+# kept as an alias so existing links / ?mode=speak|engineer deep-links still work.
 @app.get("/", response_class=HTMLResponse)
-def get_index() -> HTMLResponse:
+@app.get("/app", response_class=HTMLResponse)
+def get_app() -> HTMLResponse:
     return HTMLResponse(content=(BASE_DIR / "index.html").read_text())
+
+
+# The old marketing scroll page, kept available (not the default) in case it's
+# wanted later.
+@app.get("/landing", response_class=HTMLResponse)
+def get_landing() -> HTMLResponse:
+    return HTMLResponse(content=(BASE_DIR / "landing.html").read_text())
 
 
 class GenerateRequest(BaseModel):
@@ -1237,6 +1290,18 @@ def api_speak(req: SpeakRequest) -> JSONResponse:
 def list_models() -> JSONResponse:
     try:
         models = db_list_models()
+        # Report what actually exists on disk so the library never dead-ends on a
+        # missing/invalid asset. A real preview needs a per-model .glb that exists;
+        # a real STL is a per-model .stl (NOT the shared output/model.stl scratch).
+        for m in models:
+            gp = (m.get("glb_path") or "")
+            sp = (m.get("stl_path") or "")
+            m["glb_available"] = bool(gp) and gp.lower().endswith(".glb") and Path(gp).exists()
+            sp_norm = sp.replace("\\", "/")
+            m["stl_available"] = (
+                bool(sp) and sp.lower().endswith(".stl")
+                and "/models/" in sp_norm and Path(sp).exists()
+            )
         return JSONResponse({"models": models, "count": len(models)})
     except Exception as e:
         return JSONResponse(
@@ -1800,8 +1865,43 @@ def run_engineer_pipeline(intent: str) -> None:
 
     try:
         model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
-        db_update_model_paths(model_id, str(stl_path), str(stl_path))
-        engineer_log(f"DB: model record saved (id {model_id})", "success")
+        # Engineer parts are parametric CAD -> STL; there is NO Meshy GLB. Persist
+        # the STL into a per-model dir (not the shared output/model.stl scratch,
+        # which the next job overwrites) and leave glb_path EMPTY. Previously both
+        # paths were set to the shared scratch STL, so library entries pointed at a
+        # non-existent/overwritten "GLB" and dead-ended on View. See list_models.
+        eng_dir = OUTPUT_DIR / "models" / str(model_id)
+        eng_dir.mkdir(parents=True, exist_ok=True)
+        eng_stl = eng_dir / "model.stl"
+        try:
+            shutil.copy2(stl_path, eng_stl)
+            saved_stl = str(eng_stl)
+        except Exception as ce:
+            engineer_log(f"STL copy to per-model dir failed: {ce}", "warning")
+            saved_stl = str(stl_path)
+        # Engineer parts have no Meshy GLB. Convert the OpenSCAD STL -> GLB with
+        # trimesh so the library viewer (three.js GLTFLoader / loadModel) can
+        # preview them exactly like Speak-mode models. Degrades to STL-only on
+        # any failure, so a bad conversion never breaks the pipeline.
+        saved_glb = ""
+        try:
+            import trimesh
+            mesh = trimesh.load(saved_stl, force="mesh")
+            glb_out = eng_dir / "model.glb"
+            mesh.export(str(glb_out), file_type="glb")
+            if glb_out.exists() and glb_out.stat().st_size > 0:
+                saved_glb = str(glb_out)
+                # Mirror to the scratch active file so the immediate post-generation
+                # viewer can also show the GLB.
+                try:
+                    shutil.copy2(glb_out, OUTPUT_DIR / "model.glb")
+                except Exception:
+                    pass
+                engineer_log(f"GLB converted from STL: {glb_out.stat().st_size // 1024}KB", "success")
+        except Exception as ge:
+            engineer_log(f"STL->GLB conversion failed: {ge} — STL only", "warning")
+        db_update_model_paths(model_id, saved_glb, saved_stl)
+        engineer_log(f"DB: model record saved (id {model_id}{'' if saved_glb else ', STL only'})", "success")
     except Exception as e:
         engineer_log(f"DB save failed: {e}", "warning")
         model_id = None
