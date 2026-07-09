@@ -7,3 +7,10 @@ __pycache__/
 *.pyc
 *.bak-*
 .cursor/
+
+# slicer logs
+*.log
+
+# scratch design prototypes / unused vendor
+/vendor/proto-*.html
+/vendor/gsap.min.js
