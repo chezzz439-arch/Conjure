@@ -10,13 +10,15 @@
 <script src="/vendor/GLTFLoader.js"></script>
 <script src="/vendor/STLLoader.js"></script>
 <!-- Fonts are self-hosted (served from /fonts by main.py) so the kiosk boots
-     with correct type even with no network. Archivo ships as one variable file. -->
+     with correct type even with no network. Unified on Inter to match the
+     marketing landing page. -->
 <style>
   /* ════════ SELF-HOSTED FONTS ════════ */
-  @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400 800; font-display: swap; src: url('/fonts/archivo.woff2') format('woff2'); }
-  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400.woff2') format('woff2'); }
-  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500.woff2') format('woff2'); }
-  @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/ibm-plex-mono-600.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:800; font-display:swap; src:url('/fonts/inter-800.woff2') format('woff2'); }
 
   /* ─────────────────────────────────────────────────────────────
      CONJURE — machine-enamel design system
@@ -44,12 +46,20 @@
     --accent-ink:  #06170e;   /* text on jade */
     --surface-hi:  #17261f;   /* green-lifted surface — accented panel hover */
     --accent-glow: rgba(69, 211, 138, 0.13);
+    /* Glass surfaces — translucent fills so the animated print scene shows
+       through, matching the marketing landing's cards. New tokens only;
+       the palette tokens above are unchanged. */
+    --glass-1:      rgba(22, 33, 28, 0.64);   /* surface, translucent */
+    --glass-2:      rgba(11, 17, 14, 0.55);   /* deep input, translucent */
+    --glass-nav:    rgba(11, 17, 14, 0.62);   /* top placard */
+    --glass-border: rgba(69, 211, 138, 0.16); /* jade-tinted hairline */
+    --glass-blur:   blur(10px) saturate(1.1);
     --green:       #45d38a;   /* success shares the jade family */
     --green-dim:   #2fae6d;
     --amber:       #e0a458;
     --red:         #e5604f;
-    --font-ui:     'Archivo', -apple-system, system-ui, sans-serif;
-    --font-mono:   'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --font-ui:     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --radius-sm:   3px;       /* machined, not pillowy */
     --radius-md:   4px;
     --radius-lg:   6px;
@@ -72,7 +82,9 @@
 
   body {
     font-family: var(--font-ui);
-    background: var(--bg);
+    /* Deep base is only a fallback behind #appBgCanvas — the animated scene
+       (its scene.background / FogExp2) supplies the real dark. */
+    background: var(--bg-deep);
     color: var(--text-1);
     font-size: 15px;
     line-height: 1.6;
@@ -93,6 +105,36 @@
     );
     pointer-events: none;
     z-index: 1;
+  }
+
+  /* ════════ ANIMATED 3D BACKGROUND (persistent, behind all UI) ════════ */
+  /* A single fixed WebGL canvas that carries the same jade printer scene as
+     the marketing landing. It sits behind everything; the UI floats on glass. */
+  #appBgCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    display: block;
+    transition: opacity 0.5s ease;
+  }
+  /* Dimmed while the 3D model viewer (#s-view) is active, so a second animated
+     WebGL context isn't competing with the viewer's own scene. */
+  #appBgCanvas.bg-dimmed { opacity: 0.15; }
+
+  /* Vignette / atmosphere overlay — above the canvas, below the UI. Darkens the
+     edges for text legibility over the scene (mirrors landing.html #atmos). */
+  #appAtmos {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 90% at 50% 8%, rgba(69,211,138,0.06), transparent 46%),
+      radial-gradient(140% 120% at 50% 120%, rgba(11,17,14,0.9), transparent 60%),
+      radial-gradient(100% 100% at 50% 50%, transparent 55%, rgba(6,12,9,0.55) 100%);
   }
 
   /* Entrance beat: display none→flex restarts the animation, so every
@@ -177,12 +219,14 @@
     }
   }
 
-  /* ════════ TOP NAV — solid machine placard, no glass ════════ */
+  /* ════════ TOP NAV — translucent machine placard ════════ */
   #top-nav {
     position: fixed;
     top: 0; left: 0; right: 0;
     height: var(--nav-h);
-    background: var(--bg-deep);
+    background: var(--glass-nav);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border-bottom: 1px solid var(--border-soft);
     display: flex;
     align-items: center;
@@ -379,7 +423,9 @@
     padding: 30px 30px 24px;
     min-height: 240px;
     border-radius: var(--radius-lg);
-    background: var(--surface);
+    background: var(--glass-1);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border);
     border-bottom-width: 4px;
     overflow: hidden;
@@ -391,7 +437,7 @@
   }
 
   .panel-make {
-    background: var(--surface);
+    background: var(--glass-1);
     border-color: rgba(69, 211, 138, 0.35);
     border-bottom-color: var(--accent-edge);
     padding: 38px 38px 28px;
@@ -578,11 +624,13 @@
     width: 100%;
   }
 
-  /* The prompt is the person speaking, not the machine — Archivo, per the
-     Two-Voice Rule. (The Engineer textarea stays mono: dictating specs.) */
+  /* The prompt is the person speaking — set in the UI face, per the
+     Two-Voice Rule. (Type unified on Inter; readouts carry tabular-nums.) */
   .prompt-input {
     width: 100%;
-    background: var(--bg-deep);
+    background: var(--glass-2);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     color: var(--text-1);
@@ -712,8 +760,10 @@
   }
 
   .aside-card {
-    background: transparent;
-    border: 1px solid var(--border-soft);
+    background: var(--glass-1);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-lg);
     padding: 24px 26px;
   }
@@ -778,6 +828,8 @@
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -820,12 +872,15 @@
     font-size: 13px;
     color: var(--text-3);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.015em;
   }
 
   .progress-header h2 {
     font-size: 32px;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.025em;
     color: var(--text-1);
   }
 
@@ -836,8 +891,10 @@
     color: var(--text-2);
     line-height: 1.6;
     padding: 13px 16px;
-    background: var(--bg-deep);
-    border: 1px solid var(--border-soft);
+    background: var(--glass-2);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-sm);
   }
 
@@ -881,8 +938,8 @@
     flex: 1;
   }
 
-  /* Archivo name + mono message: the step name is the product speaking to
-     the person; the live message below it is the machine reporting work. */
+  /* UI-face name + machine-readout message: the step name is the product
+     speaking to the person; the live message below it reports work. */
   .step-name {
     font-family: var(--font-ui);
     font-size: 16px;
@@ -896,6 +953,9 @@
     font-size: 13px;
     color: var(--text-3);
     min-height: 16px;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.015em;
   }
 
   .step-item.active .step-name { color: var(--text-1); font-weight: 600; }
@@ -976,7 +1036,9 @@
     align-items: center;
     gap: 12px;
     padding: 15px 26px;
-    background: var(--surface);
+    background: var(--glass-1);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid rgba(69, 211, 138, 0.5);
     border-bottom: 3px solid var(--accent-edge);
     border-radius: var(--radius-md);
@@ -1194,7 +1256,7 @@
     font-size: 22px;
     font-weight: 700;
     color: var(--text-1);
-    letter-spacing: -0.01em;
+    letter-spacing: -0.025em;
   }
 
   .error-container p {
@@ -1224,7 +1286,7 @@
   .library-header h2 {
     font-size: 24px;
     font-weight: 700;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
     color: var(--text-1);
     margin-bottom: 4px;
   }
@@ -1241,7 +1303,9 @@
   }
 
   .library-card {
-    background: var(--surface);
+    background: var(--glass-1);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -1265,6 +1329,17 @@
     font-size: 30px;
   }
 
+  /* Once a real rendered snapshot is available it fills the thumb area as a
+     background image; the hexagon placeholder + label are hidden. Models with
+     no GLB (or a failed render) keep the placeholder permanently. */
+  .library-card-thumb.has-thumb {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .library-card-thumb.has-thumb .thumb-hex,
+  .library-card-thumb.has-thumb .thumb-label { display: none; }
+
   .library-card-thumb .thumb-label {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -1272,6 +1347,21 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-3);
+  }
+  /* Models whose 3D file is gone: amber "Preview unavailable" + disabled actions. */
+  .library-card-thumb.thumb-unavailable .thumb-label { color: var(--amber); }
+  .library-card-thumb.thumb-unavailable .thumb-hex { color: var(--text-faint); opacity: 0.6; }
+  /* Disabled View/Print read as a neutral muted chip, NOT a dimmed-green CTA — a
+     40%-opacity jade button still looks actionable. Specificity (0,3,0) beats
+     .btn-sm-primary (0,1,0), so this overrides the green with no markup change. */
+  .library-card-actions .btn-sm:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    pointer-events: none;
+    background: var(--surface-2);
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    font-weight: 500;
   }
 
   .library-card-body {
@@ -1296,6 +1386,9 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.015em;
   }
 
   .library-card-actions {
@@ -1416,7 +1509,9 @@
 
   .engineer-textarea {
     width: 100%;
-    background: var(--bg-deep);
+    background: var(--glass-2);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     color: var(--text-1);
@@ -1451,8 +1546,10 @@
   #eg-progress-bar { background: var(--accent-dim); }
 
   .engineer-panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--glass-1);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     padding: 16px;
   }
@@ -1485,6 +1582,8 @@
     color: var(--text-3);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
   }
 
   .spec-value {
@@ -1492,6 +1591,9 @@
     font-weight: 600;
     color: var(--accent);
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.015em;
   }
 
   .scad-viewer {
@@ -1505,6 +1607,9 @@
     overflow-y: auto;
     white-space: pre;
     line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.01em;
   }
 
   .analysis-line {
@@ -1512,6 +1617,9 @@
     font-family: var(--font-mono);
     padding: 4px 0;
     line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv01' 1;
+    letter-spacing: 0.015em;
   }
 
   .analysis-ok { color: var(--green); }
@@ -1543,9 +1651,81 @@
     .engineer-actions .btn-primary,
     .engineer-actions .btn-ghost { width: 100%; }
   }
+
+  /* ═══════════════════════════════════════════════════════════════
+     MOBILE / TABLET RESPONSIVE PASS — appended last so equal-specificity
+     rules win the cascade. Additive: existing selectors + :root tokens
+     only, no palette/font/JS changes. (from the app-mobile-audit workflow;
+     each block was self-verified at 390px and 768px.)
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ── Top nav + home screen ── */
+  @media (max-width: 480px) {
+    #top-nav { padding: 0 16px; }
+    #nav-logo { font-size: 14px; letter-spacing: 0.10em; }
+    .nav-actions { gap: 6px; }
+    /* Icon-only Home/Library on phones (labels stay in the DOM for a11y). */
+    #nav-home-btn, #nav-library-btn { width: var(--tap); padding: 0; gap: 0; font-size: 0; justify-content: center; }
+  }
+  @media (min-width: 620px) and (max-width: 860px) {
+    .mode-panels { grid-template-columns: 1.2fr 1fr; }
+  }
+
+  /* ── Compose screens (s-speak / s-engineer) ── */
+  @media (max-width: 768px) {
+    .compose-layout { grid-template-columns: 1fr; max-width: 560px; padding: 28px var(--edge) 32px; gap: 0; }
+    .compose-main { gap: 20px; justify-content: flex-start; }
+    .speak-header h2, .engineer-header h2 { font-size: 26px; }
+    .speak-header p, .engineer-header p { font-size: 15px; }
+    .prompt-input, .engineer-textarea { min-height: 160px; font-size: 16px; }
+    .prompt-suggestions, .engineer-examples { justify-content: flex-start; }
+    .example-pill { flex: 0 1 auto; justify-content: center; }
+  }
+  @media (max-width: 480px) {
+    .compose-layout { padding: 20px var(--edge) 28px; }
+    .speak-header h2, .engineer-header h2 { font-size: 24px; }
+    .speak-actions, .engineer-actions { flex-direction: column; align-items: stretch; gap: 12px; }
+    .speak-actions .btn-primary, .speak-actions .btn-ghost,
+    .engineer-actions .btn-primary, .engineer-actions .btn-ghost { width: 100%; flex: none; }
+  }
+
+  /* ── Progress screens (s-generating / s-slicing / s-engineer-generating) ── */
+  @media (max-width: 768px) {
+    #s-generating, #s-slicing { justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    #s-generating, #s-slicing, #s-engineer-generating { padding-top: var(--nav-h); padding-bottom: 32px; }
+    .progress-container { gap: 20px; padding: 8px 18px 0; }
+    .progress-header { flex-wrap: wrap; gap: 8px 14px; }
+    .progress-header h2 { font-size: 24px; flex: 1 1 auto; min-width: 0; }
+    .progress-eta { margin-left: auto; }
+    .progress-prompt { font-size: 12.5px; padding: 11px 13px; word-break: break-word; }
+    .step-item { padding: 10px 0; gap: 12px; }
+    .step-name { font-size: 15px; }
+    .usb-ready { padding: 14px 16px; gap: 12px; }
+    .engineer-panel { padding: 14px; }
+  }
+  @media (max-width: 480px) {
+    .progress-header h2 { font-size: 22px; }
+    .scad-viewer { white-space: pre-wrap; word-break: break-word; max-height: 130px; }
+  }
+
+  /* ── Viewer / Library / Error ── */
+  @media (max-width: 768px) {
+    .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .view-overlay-bottom { flex-wrap: wrap; }
+  }
+  @media (max-width: 480px) {
+    .library-grid { grid-template-columns: 1fr; }
+    .error-container { max-width: 100%; width: 100%; }
+    .error-actions { flex-direction: column; align-items: stretch; width: 100%; }
+    .error-actions .btn-primary, .error-actions .btn-ghost { width: 100%; min-width: 0; justify-content: center; }
+  }
 </style>
 </head>
 <body>
+
+<!-- ════════ ANIMATED 3D BACKGROUND (persistent, behind all UI) ════════ -->
+<canvas id="appBgCanvas"></canvas>
+<div id="appAtmos"></div>
 
 <!-- ════════ TOP NAV (persistent) ════════ -->
 <nav id="top-nav">
@@ -1765,7 +1945,7 @@
       <div class="view-hint">Drag to spin · pinch to zoom</div>
     </div>
     <div class="view-actions">
-      <button class="view-btn-secondary" onclick="goToSpeak()" title="Discard this model and describe a new one">Start over</button>
+      <button class="view-btn-secondary" onclick="startOver()" title="Discard this model and return to the home screen">Start over</button>
       <button class="view-btn-primary" id="btn-print" onclick="handlePrint()" title="Slice this model for the printer and export the file to USB">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M4 6V2h8v4"/>
@@ -2391,7 +2571,7 @@ function handleConfirm() {
   stopListening();
 
   document.getElementById('gen-prompt').textContent = '"' + p + '"';
-  document.getElementById('view-prompt').textContent = '"' + p + '"';
+  setViewPrompt(p);
 
   showScreen('s-generating');
   resetGenSteps();
@@ -2471,6 +2651,17 @@ function showUsbReady() {
 }
 
 /* ════════ ERROR ════════ */
+function friendlyError(e) {
+  const m = (e && e.message) ? e.message.toLowerCase() : '';
+  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('err_connection') || m.includes('load failed')) {
+    return 'The kiosk lost its connection. Please try again or ask for help.';
+  }
+  if (/http\s*5\d\d/.test(m) || m.includes('500') || m.includes('502') || m.includes('503') || m.includes('504')) {
+    return 'Something went wrong on our end. Press Try Again or ask a staff member.';
+  }
+  return 'An unexpected error occurred. Please try again.';
+}
+
 function showError(msg) {
   document.getElementById('error-msg').textContent = msg || 'An unexpected error occurred.';
   showScreen('s-error');
@@ -2499,7 +2690,7 @@ async function copyStlToUsb() {
       btn.disabled = false;
     }, 3000);
   } catch (e) {
-    btn.textContent = '✗ ' + e.message.slice(0, 20);
+    btn.textContent = '✗ Failed';
     btn.style.borderColor = 'var(--red)';
     btn.style.color = 'var(--red)';
     setTimeout(() => {
@@ -2527,6 +2718,7 @@ function resetAll() {
 }
 
 function startOver() {
+  console.log('[nav] startOver');
   resetAll();
 }
 
@@ -2568,6 +2760,7 @@ function celebrateModelReady(label) {
 let libraryReturnScreen = 's-idle';
 
 function openLibrary() {
+  console.log('[nav] openLibrary');
   try {
     const currentId = currentScreen ? currentScreen.id : 's-idle';
     libraryReturnScreen = (currentId === 's-library') ? 's-idle' : currentId;
@@ -2583,6 +2776,10 @@ function closeLibrary() {
   libraryReturnScreen = 's-idle';
   showScreen(returnTo);
 }
+
+// Cache the loaded models by id so the viewer can label a library-opened model
+// with its prompt (the /select path doesn't carry the prompt otherwise).
+let libraryModelsById = {};
 
 async function loadLibrary() {
   const grid = document.getElementById('library-grid');
@@ -2610,26 +2807,35 @@ async function loadLibrary() {
     }
 
     grid.style.display = 'grid';
+    libraryModelsById = {};
 
     models.forEach((m, i) => {
       const id = m.id != null ? m.id : i;
       const prompt = String(m.prompt || 'Untitled model ' + (i + 1));
       const date = String(m.created_at || '').slice(0, 16).replace('T', ' ');
-      const hasGlb = m.glb_path && m.glb_path.length > 0;
+      // Trust the server's on-disk availability flags, not just a stored path —
+      // Engineer parts (STL, no GLB) and any model whose files were removed must
+      // show an accurate state instead of dead-ending on a missing GLB.
+      const glbOk = m.glb_available === true;
+      const stlOk = m.stl_available === true;
+      const previewable = glbOk || stlOk;
+      const thumbLabel = glbOk ? '3D preview' : (stlOk ? 'STL part' : 'Preview unavailable');
+      libraryModelsById[id] = m;
 
       const card = document.createElement('div');
       card.className = 'library-card';
+      const disabledAttr = previewable ? '' : 'disabled';
       card.innerHTML = `
-        <div class="library-card-thumb">
+        <div class="library-card-thumb${previewable ? '' : ' thumb-unavailable'}" data-thumb-id="${escapeHtml(String(id))}">
           <span class="thumb-hex" aria-hidden="true">⬡</span>
-          <span class="thumb-label">${hasGlb ? '3D preview' : 'no preview'}</span>
+          <span class="thumb-label">${escapeHtml(thumbLabel)}</span>
         </div>
         <div class="library-card-body">
           <div class="library-card-prompt">${escapeHtml(prompt)}</div>
           <div class="library-card-date">${escapeHtml(date)}</div>
           <div class="library-card-actions">
-            <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})" title="Open this model in the 3D viewer">View</button>
-            <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})" title="Load this model and prepare it for printing">Print</button>
+            <button class="btn-sm btn-sm-primary" onclick="selectModelFromLibrary(${JSON.stringify(id)})" ${disabledAttr} title="${previewable ? 'Open this model in the 3D viewer' : 'This model\'s 3D file is no longer available'}">View</button>
+            <button class="btn-sm btn-sm-secondary" onclick="printModelFromLibrary(${JSON.stringify(id)})" ${disabledAttr} title="${previewable ? 'Load this model and prepare it for printing' : 'This model\'s 3D file is no longer available'}">Print</button>
             <button class="btn-sm btn-sm-danger" onclick="deleteModelFromLibrary(${JSON.stringify(id)}, this)" title="Delete this model from the library">Delete</button>
           </div>
         </div>
@@ -2637,12 +2843,17 @@ async function loadLibrary() {
       grid.appendChild(card);
     });
 
+    // Render real 3D snapshots into each card's thumb, one model at a time,
+    // reusing cached images where available. Fire-and-forget; failures are
+    // handled per-card and never affect the grid above.
+    appThumbStart(models);
+
   } catch(e) {
     console.error('Library load error:', e);
     grid.innerHTML = `
       <div style="color:var(--red);font-size:14px;padding:20px;text-align:center">
         Failed to load library<br>
-        <span style="font-size:12px;color:var(--text-3);margin-top:8px;display:block">${escapeHtml(e.message)}</span>
+        <span style="font-size:12px;color:var(--text-3);margin-top:8px;display:block">Try again in a moment.</span>
         <button onclick="loadLibrary()" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:13px;padding:12px 20px;min-height:48px;border-radius:var(--radius-sm);cursor:pointer;">Retry</button>
       </div>
     `;
@@ -2692,20 +2903,44 @@ function escapeHtml(str) {
 }
 
 function goHome() {
-  // Teardown is best-effort; the navigation must happen regardless of any throw.
-  try {
-    libraryReturnScreen = 's-idle';
-    closeEvents();
-    try { stopListening(); } catch(e) {}
-    transcript = '';
-    try { handleRedo(); } catch(e) {}
-  } catch (e) {
-    console.error('goHome teardown failed (navigating anyway)', e);
-  }
-  window.location.assign('/');
+  console.log('[nav] goHome');
+  // Navigate to the home screen IN-PAGE. Do NOT reload the page: now that "/" is
+  // the app itself, window.location.assign('/') reloaded and the state-restore
+  // saw the still-active model_ready pipeline and bounced straight back to the
+  // viewer — so Home appeared dead. Tear down the viewer + streams, clear the
+  // server pipeline (the model stays saved in the library) so a manual reload
+  // also lands home, then show the idle screen. Every step is guarded so a throw
+  // can never block the navigation.
+  libraryReturnScreen = 's-idle';
+  try { closeEvents(); }   catch (e) { console.error('goHome: closeEvents failed', e); }
+  try { stopListening(); } catch (e) { console.error('goHome: stopListening failed', e); }
+  transcript = '';
+  try { handleRedo(); }    catch (e) { console.error('goHome: handleRedo failed', e); }
+  try { disposeViewer(); } catch (e) { console.error('goHome: disposeViewer failed', e); }
+  currentPrompt = '';
+  fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  showScreen('s-idle');
+  resetIdle();
+}
+
+// Set the viewer's prompt pill, hiding it entirely when empty so it never
+// renders as a blank badge.
+function setViewPrompt(text) {
+  const el = document.getElementById('view-prompt');
+  if (!el) return;
+  const t = (text || '').trim();
+  el.textContent = t ? '"' + t + '"' : '';
+  el.style.display = t ? '' : 'none';
 }
 
 async function selectModelFromLibrary(id) {
+  const pm = libraryModelsById[id] || {};
+  // No usable 3D file on disk — the card's View is disabled, but guard anyway so
+  // a stale click can never drop the user on the dead-end error screen.
+  if (pm.glb_available !== true && pm.stl_available !== true) {
+    console.warn('selectModelFromLibrary: no available asset for model', id);
+    return;
+  }
   try {
     const r = await fetch('/api/models/' + id + '/select', { method: 'POST' });
     const data = await r.json().catch(() => ({}));
@@ -2713,12 +2948,16 @@ async function selectModelFromLibrary(id) {
     closeLibrary();
     await new Promise(resolve => setTimeout(resolve, 200));
     initViewer();
-    loadModel('/api/model/glb?' + Date.now());
+    // Load exactly this model from its per-model endpoint (GLB if it has one,
+    // otherwise the STL for Engineer parts).
+    if (pm.glb_available === true) loadModel('/api/models/' + id + '/glb?' + Date.now());
+    else loadSTL('/api/models/' + id + '/stl?' + Date.now());
+    setViewPrompt(pm.prompt ? pm.prompt : '');
     showScreen('s-view');
     speak('Model loaded. Rotate to inspect it. Tap print when ready.');
   } catch(e) {
     console.error('selectModelFromLibrary error:', e);
-    showError('Could not load model: ' + e.message);
+    showError('This model couldn\'t load. Please try again or choose another from the library.');
   }
 }
 
@@ -2732,7 +2971,7 @@ async function printModelFromLibrary(id) {
     handlePrint();
   } catch(e) {
     console.error('printModelFromLibrary error:', e);
-    showError('Could not load model for printing: ' + e.message);
+    showError('Couldn\'t prepare this model for printing. Please try again.');
   }
 }
 
@@ -2769,6 +3008,7 @@ async function handleEngineerConfirm() {
         setTimeout(() => {
           initViewer();
           loadSTL('/api/model/stl?' + Date.now());
+          setViewPrompt(lastIntent);   // label the viewer with the part description (was blank in Engineer mode)
           showScreen('s-view');
           celebrateModelReady('Part ready');
           speak('Engineering complete. Your part is ready. Tap print when ready.');
@@ -2778,7 +3018,7 @@ async function handleEngineerConfirm() {
         clearInterval(engineerPoller);
         const logs = data.logs || [];
         const lastError = logs.filter(l => l.level === 'error').pop();
-        showError(lastError ? lastError.message : 'Engineering pipeline failed');
+        showError('Engineering stopped. Press Start over and try describing the part differently.');
       }
     } catch(e) { console.error('Engineer poll error:', e); }
   }, 1000);
@@ -2796,7 +3036,7 @@ async function handleEngineerConfirm() {
     }
   } catch(e) {
     clearInterval(engineerPoller);
-    showError('Could not reach server: ' + e.message);
+    showError(friendlyError(e));
   }
 }
 
@@ -2920,16 +3160,22 @@ function initViewer() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(cw, ch);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Filmic tone mapping so bright faces roll off instead of clipping to white.
+  // The blow-out came from the old lights (ambient 3 + dir 4/2) over-driving every
+  // face past white; these sane intensities + ACES keep the jade a shaded solid.
+  // (No sRGB output encoding — it lightens the jade toward pale mint.)
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
   container.appendChild(renderer.domElement);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 3));
-  const l1 = new THREE.DirectionalLight(0xffffff, 4);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const l1 = new THREE.DirectionalLight(0xffffff, 1.5);
   l1.position.set(5, 5, 5);
   scene.add(l1);
-  const l2 = new THREE.DirectionalLight(0xffffff, 2);
+  const l2 = new THREE.DirectionalLight(0xffffff, 0.6);
   l2.position.set(-5, -2, -5);
   scene.add(l2);
-  const l3 = new THREE.DirectionalLight(0x45d38a, 1.2);
+  const l3 = new THREE.DirectionalLight(0x45d38a, 0.5);
   l3.position.set(0, 10, 0);
   scene.add(l3);
 
@@ -3167,14 +3413,214 @@ function setMaterial(mode) {
       if (scene) scene.fog = new THREE.FogExp2(0x0f1713, 0.06);
 
     } else if (mode === 'wire') {
-      node.material = new THREE.MeshBasicMaterial({
-        color: 0x45d38a,
-        wireframe: true,
-        side: THREE.DoubleSide,
+      // Hidden-line wireframe: an opaque dark fill occludes the far side (which
+      // is what restores 3D depth), with a clean jade WireframeGeometry overlay.
+      // The old unlit DoubleSide wireframe:true drew see-through, aliased speckle
+      // with no depth. polygonOffset keeps the fill from z-fighting the lines.
+      node.material = new THREE.MeshPhongMaterial({
+        color: 0x0a1f16,
+        emissive: 0x07130d,
+        emissiveIntensity: 0.4,
+        side: THREE.FrontSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       });
       node.material.needsUpdate = true;
+
+      const wireGeo = new THREE.WireframeGeometry(node.geometry);
+      const wireMat = new THREE.LineBasicMaterial({ color: 0x45d38a, transparent: true, opacity: 0.9 });
+      const wireMesh = new THREE.LineSegments(wireGeo, wireMat);
+      wireMesh.name = 'wire-overlay';   // cleaned up by the wire-overlay sweep on the next setMaterial()
+      wireMesh.position.copy(node.position);
+      wireMesh.rotation.copy(node.rotation);
+      wireMesh.scale.copy(node.scale);
+      if (node.parent) node.parent.add(wireMesh);
     }
   });
+}
+
+/* ════════ LIBRARY THUMBNAIL RENDERER ════════
+   Renders a real, shaded snapshot of each library model client-side so the
+   cards show the actual geometry instead of a generic glyph. Everything here
+   is namespaced `appThumb*` so it never collides with the model VIEWER
+   (scene/camera/renderer/model3d/rafId) or the background scene (appBg*).
+
+   Design:
+     - ONE shared offscreen WebGLRenderer (appThumbRenderer), created lazily and
+       DISPOSED when the queue drains, so we never hold a third GL context idle.
+     - Work is queued SEQUENTIALLY (one model at a time) with a yield between
+       each render — 56 models must not spike the Orange Pi's GPU/CPU.
+     - Two-tier cache ("rendered once"): in-memory appThumbCache for the session,
+       plus best-effort localStorage that degrades gracefully on quota errors. */
+
+const appThumbCache = {};            // model id -> jpeg data URL (in-memory)
+const APP_THUMB_W = 400, APP_THUMB_H = 260;
+const APP_THUMB_LS_PREFIX = 'conjure_thumb_';
+let appThumbRenderer = null;         // shared, lazily created / disposed
+let appThumbRunToken = 0;            // bumped each loadLibrary → cancels stale queues
+let appThumbBusy = false;            // guards against overlapping queue runs
+
+/* Lazily (re)create the single shared offscreen renderer. */
+function appThumbGetRenderer() {
+  if (appThumbRenderer) return appThumbRenderer;
+  const r = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+  r.setSize(APP_THUMB_W, APP_THUMB_H, false);
+  r.setPixelRatio(1);
+  // Match the viewer's look exactly: ACES filmic tone mapping, no sRGB output
+  // encoding (which would lighten the jade toward pale mint).
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.toneMappingExposure = 1.0;
+  r.setClearColor(0x0f1713, 1);
+  appThumbRenderer = r;
+  return r;
+}
+
+/* Free the shared context once all visible models are rendered/cached. */
+function appThumbDisposeRenderer() {
+  if (!appThumbRenderer) return;
+  try {
+    appThumbRenderer.dispose();
+    const ctx = appThumbRenderer.getContext && appThumbRenderer.getContext();
+    const lose = ctx && ctx.getExtension && ctx.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+  } catch (e) { /* best-effort teardown */ }
+  appThumbRenderer = null;
+}
+
+/* Read a persisted thumbnail from localStorage (quota/parse-safe). */
+function appThumbLoadPersisted(id) {
+  try {
+    return localStorage.getItem(APP_THUMB_LS_PREFIX + id) || null;
+  } catch (e) { return null; }
+}
+
+/* Persist a thumbnail; silently skip on QuotaExceededError or any failure. */
+function appThumbPersist(id, dataUrl) {
+  try {
+    localStorage.setItem(APP_THUMB_LS_PREFIX + id, dataUrl);
+  } catch (e) { /* quota full / unavailable → degrade gracefully, never throw */ }
+}
+
+/* Paint a data URL into the matching card's thumb area. */
+function appThumbApply(id, dataUrl) {
+  const el = document.querySelector('.library-card-thumb[data-thumb-id="' + (window.CSS && CSS.escape ? CSS.escape(String(id)) : String(id)) + '"]');
+  if (!el) return; // card was replaced by a newer loadLibrary — nothing to do
+  el.style.backgroundImage = 'url(' + dataUrl + ')';
+  el.classList.add('has-thumb');
+}
+
+/* Render one GLB to a compact jpeg data URL, reusing the shared renderer.
+   Mirrors loadModel's framing (Box3 → center → scale) and the viewer's solid
+   jade material + light rig so thumbnails match what the user sees. */
+function appThumbRenderOne(id) {
+  return new Promise((resolve, reject) => {
+    if (!window.THREE || !THREE.GLTFLoader) { reject(new Error('THREE/GLTFLoader missing')); return; }
+    const loader = new THREE.GLTFLoader();
+    loader.load('/api/models/' + id + '/glb', (gltf) => {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0f1713);
+      const model = gltf.scene;
+
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const scaleFactor = 2.5 / maxDim;
+      model.scale.setScalar(scaleFactor);
+      model.position.set(-center.x * scaleFactor, -center.y * scaleFactor, -center.z * scaleFactor);
+
+      // Meshy GLBs ship without NORMAL → lit materials render black. Generate
+      // smooth normals, then apply the viewer's exact solid jade material.
+      model.traverse((node) => {
+        if (!node.isMesh || !node.geometry) return;
+        if (!node.geometry.attributes.normal) node.geometry.computeVertexNormals();
+        node.material = new THREE.MeshPhongMaterial({
+          color: 0x45d38a, emissive: 0x0a2f1d, emissiveIntensity: 0.5,
+          specular: 0xbfffe0, shininess: 100, side: THREE.DoubleSide,
+        });
+      });
+      scene.add(model);
+
+      // Same light rig as the viewer (ambient + key + fill + jade top).
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      const l1 = new THREE.DirectionalLight(0xffffff, 1.5); l1.position.set(5, 5, 5); scene.add(l1);
+      const l2 = new THREE.DirectionalLight(0xffffff, 0.6); l2.position.set(-5, -2, -5); scene.add(l2);
+      const l3 = new THREE.DirectionalLight(0x45d38a, 0.5); l3.position.set(0, 10, 0); scene.add(l3);
+
+      const cam = new THREE.PerspectiveCamera(45, APP_THUMB_W / APP_THUMB_H, 0.01, 1000);
+      cam.position.set(2.4, 1.6, 3.9); // slight 3/4 view, ~zoom 5 like the viewer
+      cam.lookAt(0, 0, 0);
+
+      let url;
+      try {
+        const r = appThumbGetRenderer();
+        r.render(scene, cam);
+        url = r.domElement.toDataURL('image/jpeg', 0.72);
+      } catch (e) { cleanup(); reject(e); return; }
+
+      cleanup();
+      resolve(url);
+
+      function cleanup() {
+        model.traverse((node) => {
+          if (node.isMesh) {
+            if (node.geometry) node.geometry.dispose();
+            if (node.material) node.material.dispose();
+          }
+        });
+      }
+    }, undefined, (err) => reject(err || new Error('GLB load failed')));
+  });
+}
+
+/* Entry point from loadLibrary: apply cached thumbnails immediately, then
+   render the rest sequentially, then dispose the shared renderer. */
+async function appThumbStart(models) {
+  if (!window.THREE || !THREE.GLTFLoader) return;
+  const token = ++appThumbRunToken; // invalidate any queue from a prior open
+
+  const pending = [];
+  (models || []).forEach((m, i) => {
+    const id = m.id != null ? m.id : i;
+    // Only real, on-disk GLBs get a rendered thumbnail — skip STL-only/missing
+    // models silently so they never log "thumbnail render failed".
+    if (m.glb_available !== true) return;
+
+    // Cache hit (in-memory, or restored from localStorage) → paint now, skip render.
+    let cached = appThumbCache[id];
+    if (cached == null) {
+      const persisted = appThumbLoadPersisted(id);
+      if (persisted) { appThumbCache[id] = persisted; cached = persisted; }
+    }
+    if (cached) { appThumbApply(id, cached); return; }
+
+    pending.push(id);
+  });
+
+  if (!pending.length) { appThumbDisposeRenderer(); return; }
+  if (appThumbBusy) return; // another queue is draining; it will pick up the DOM
+  appThumbBusy = true;
+
+  try {
+    for (const id of pending) {
+      if (token !== appThumbRunToken) break; // a newer loadLibrary superseded us
+      try {
+        const url = await appThumbRenderOne(id);
+        appThumbCache[id] = url;
+        appThumbPersist(id, url);
+        appThumbApply(id, url);
+      } catch (e) {
+        // One bad model must not break the grid — leave its placeholder.
+        console.warn('Thumbnail render failed for model ' + id, e);
+      }
+      // Yield so the kiosk UI stays responsive between renders.
+      await new Promise((res) => setTimeout(res, 16));
+    }
+  } finally {
+    appThumbBusy = false;
+    appThumbDisposeRenderer(); // free the third GL context; recreated lazily next time
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -3188,16 +3634,55 @@ window.addEventListener('resize', () => {
 });
 
 /* ════════ IDLE TIMEOUT (90s) ════════ */
+const IDLE_MS = 90000;
+const IDLE_WARN_LEAD = 15000;
+// Screens where idle timeout should never fire (long-running or deliberate pause).
+const IDLE_SKIP = new Set(['s-generating', 's-slicing', 's-engineer-generating', 's-idle', 's-view']);
+
+let idleWarnTimer = null;
+
+function showIdleWarn() {
+  const id = currentScreen ? currentScreen.id : null;
+  if (IDLE_SKIP.has(id)) return;
+  let warn = document.getElementById('idle-warn');
+  if (!warn) {
+    warn = document.createElement('div');
+    warn.id = 'idle-warn';
+    warn.setAttribute('role', 'status');
+    warn.setAttribute('aria-live', 'polite');
+    document.body.appendChild(warn);
+    Object.assign(warn.style, {
+      position: 'fixed', bottom: '32px', left: '50%', transform: 'translateX(-50%)',
+      background: 'var(--surface-raised)', border: '1px solid var(--border)',
+      color: 'var(--text-2)', fontFamily: 'var(--font-ui)', fontSize: '15px',
+      lineHeight: '1.4', padding: '14px 24px', borderRadius: 'var(--radius-sm)',
+      zIndex: '9000', textAlign: 'center', pointerEvents: 'none',
+      maxWidth: '90vw', display: 'none',
+    });
+  }
+  warn.textContent = 'Still here? Tap anywhere to continue — returning home in 15 seconds.';
+  warn.style.display = 'block';
+}
+
+function hideIdleWarn() {
+  const warn = document.getElementById('idle-warn');
+  if (warn) warn.style.display = 'none';
+}
+
 function resetIdle() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(onIdle, 90000);
+  clearTimeout(idleWarnTimer);
+  hideIdleWarn();
+  idleWarnTimer = setTimeout(showIdleWarn, IDLE_MS - IDLE_WARN_LEAD);
+  idleTimer = setTimeout(onIdle, IDLE_MS);
 }
 
 function onIdle() {
+  hideIdleWarn();
   const id = currentScreen ? currentScreen.id : null;
   // Never interrupt an in-progress pipeline, and never yank the user away
   // from the 3D viewer — inspecting a model can take as long as it takes.
-  if (id === 's-generating' || id === 's-slicing' || id === 's-idle' || id === 's-view') {
+  if (IDLE_SKIP.has(id)) {
     resetIdle();
     return;
   }
@@ -3211,8 +3696,209 @@ function onIdle() {
 document.addEventListener('touchstart', resetIdle, { passive: true });
 document.addEventListener('mousedown', resetIdle);
 
+/* ════════ PERSISTENT ANIMATED BACKGROUND ════════ */
+/* A SECOND, independent Three.js scene painted onto #appBgCanvas behind the
+   whole UI — the same jade printer + hex-logo vignette as the marketing
+   landing, but calm and ambient (no scroll, no print animation). Everything
+   here is namespaced `appBg*` so it never collides with the model VIEWER
+   globals (scene / camera / renderer / model3d / rafId). */
+let appBgScene, appBgCamera, appBgRenderer, appBgRaf = null;
+let appBgReduce = false, appBgViewActive = null;
+let appBgBaseAz = 0, appBgBaseRadius = 0;
+
+function appBgInit() {
+  if (typeof THREE === 'undefined') return;
+  const canvas = document.getElementById('appBgCanvas');
+  if (!canvas || appBgRenderer) return;
+
+  appBgReduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  appBgRenderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+  appBgRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  appBgRenderer.outputEncoding = THREE.sRGBEncoding;
+  appBgRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  appBgRenderer.toneMappingExposure = 1.05;
+
+  appBgScene = new THREE.Scene();
+  // The deep green-graphite base lives here, so the app still reads dark.
+  appBgScene.background = new THREE.Color(0x0b110e);
+  appBgScene.fog = new THREE.FogExp2(0x0b110e, 0.03);
+
+  appBgCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+  appBgCamera.position.set(6.5, 5.2, 12.5);
+  appBgCamera.lookAt(0, 2.6, 0);
+  // Remember the vantage so the ambient orbit swings around it.
+  appBgBaseAz = Math.atan2(appBgCamera.position.z, appBgCamera.position.x);
+  appBgBaseRadius = Math.hypot(appBgCamera.position.x, appBgCamera.position.z);
+
+  // ---- light rig (key / fill / rim / ambient / hemisphere) ----
+  const key = new THREE.DirectionalLight(0xffffff, 1.15);
+  key.position.set(7, 11, 8); appBgScene.add(key);
+  const fill = new THREE.DirectionalLight(0x9fd8bd, 0.42);
+  fill.position.set(-9, 4, 5); appBgScene.add(fill);
+  const rim = new THREE.DirectionalLight(0x45d38a, 0.9);
+  rim.position.set(-4, 6, -10); appBgScene.add(rim);
+  appBgScene.add(new THREE.AmbientLight(0x2a3a32, 0.85));
+  appBgScene.add(new THREE.HemisphereLight(0x1e8a52, 0x06110b, 0.35));
+
+  // ---- materials (no clipping planes — the object is fully printed) ----
+  const graphite = new THREE.MeshStandardMaterial({ color: 0x1a241f, metalness: 0.82, roughness: 0.42 });
+  const graphiteDark = new THREE.MeshStandardMaterial({ color: 0x121a16, metalness: 0.7, roughness: 0.55 });
+  const steel = new THREE.MeshStandardMaterial({ color: 0x2a3a32, metalness: 0.9, roughness: 0.32 });
+  const plateMat = new THREE.MeshStandardMaterial({ color: 0x0d1512, metalness: 0.6, roughness: 0.35 });
+  const jade = new THREE.MeshStandardMaterial({ color: 0x2fae6d, metalness: 0.15, roughness: 0.35, emissive: 0x0f5c34, emissiveIntensity: 0.5 });
+  const jadeInner = jade.clone();
+  jadeInner.emissive = new THREE.Color(0x0b3d23);
+  jadeInner.emissiveIntensity = 0.3;
+
+  // ---- printer group ----
+  const printer = new THREE.Group();
+  appBgScene.add(printer);
+  printer.rotation.y = -0.18;
+
+  const plateY = 1.0;
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.35, 6.2), plateMat);
+  plate.position.y = plateY; printer.add(plate);
+
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(6.35, 0.06, 6.35), new THREE.MeshBasicMaterial({ color: 0x1e8a52 }));
+  lip.position.y = plateY + 0.19;
+  lip.material.transparent = true; lip.material.opacity = 0.5;
+  printer.add(lip);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.7, 7.0), graphiteDark);
+  base.position.y = 0.35; printer.add(base);
+
+  function upright(x, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.32, 8.4, 0.32), steel);
+    m.position.set(x, 4.4, z); printer.add(m);
+  }
+  upright(-3.4, -3.2); upright(3.4, -3.2); upright(-3.4, 3.2); upright(3.4, 3.2);
+
+  const topY = 8.4;
+  function beam(w, d, x, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), steel);
+    m.position.set(x, topY, z); printer.add(m);
+  }
+  beam(7.1, 0.32, 0, -3.2); beam(7.1, 0.32, 0, 3.2);
+  beam(0.32, 6.7, -3.4, 0); beam(0.32, 6.7, 3.4, 0);
+
+  // ---- gantry + carriage, parked above the finished object ----
+  const gantry = new THREE.Group();
+  printer.add(gantry);
+  gantry.add(new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.4, 0.55), graphite));
+  const carriage = new THREE.Group();
+  gantry.add(carriage);
+  carriage.add(new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 0.9), graphite));
+  const hotend = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.28, 0.7, 24), steel);
+  hotend.position.y = -0.62; carriage.add(hotend);
+  const bead = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 16), new THREE.MeshBasicMaterial({ color: 0x2fae6d }));
+  bead.position.y = -0.98; bead.scale.setScalar(0.6); carriage.add(bead);
+
+  // ---- the printed object: Conjure hex logo, fully built on the plate ----
+  const hexOuterR = 2.3, hexFrameHole = 1.95, hexInnerR = 1.15, hexDepth = 0.42;
+  const objH = 2 * hexOuterR;
+  const objBaseY = plateY + 0.175;
+  gantry.position.y = objBaseY + objH + 0.9; // parked just above the finished tip
+
+  function hexRing(target, radius) {
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 2 + i * (Math.PI / 3);
+      const x = radius * Math.cos(a), y = radius * Math.sin(a);
+      if (i === 0) target.moveTo(x, y); else target.lineTo(x, y);
+    }
+    target.closePath();
+    return target;
+  }
+  const hexShape = (r) => hexRing(new THREE.Shape(), r);
+  const hexPath = (r) => hexRing(new THREE.Path(), r);
+
+  const printObj = new THREE.Group();
+  printObj.position.y = objBaseY;
+  printer.add(printObj);
+
+  const frameShape = hexShape(hexOuterR);
+  frameShape.holes.push(hexPath(hexFrameHole));
+  const frameGeo = new THREE.ExtrudeGeometry(frameShape, { depth: hexDepth, bevelEnabled: false, curveSegments: 1 });
+  frameGeo.translate(0, hexOuterR, -hexDepth / 2);
+  printObj.add(new THREE.Mesh(frameGeo, jade));
+
+  const innerGeo = new THREE.ExtrudeGeometry(hexShape(hexInnerR), { depth: hexDepth, bevelEnabled: false, curveSegments: 1 });
+  innerGeo.translate(0, hexOuterR, -hexDepth / 2);
+  printObj.add(new THREE.Mesh(innerGeo, jadeInner));
+
+  // ---- reference floor grid ----
+  const grid = new THREE.GridHelper(30, 30, 0x223029, 0x162019);
+  grid.position.y = 0.02;
+  if (grid.material) { grid.material.transparent = true; grid.material.opacity = 0.35; }
+  appBgScene.add(grid);
+
+  window.addEventListener('resize', appBgResize);
+  appBgResize();
+  document.addEventListener('visibilitychange', appBgVisibility);
+
+  appBgStart();
+}
+
+function appBgResize() {
+  if (!appBgRenderer) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  appBgRenderer.setSize(w, h, false);
+  appBgCamera.aspect = w / h;
+  appBgCamera.updateProjectionMatrix();
+  if (appBgReduce) appBgRenderer.render(appBgScene, appBgCamera); // static: repaint on resize
+}
+
+/* Pause the whole loop when the tab is hidden — one animated context is
+   plenty of work for an Orange Pi. */
+function appBgVisibility() {
+  if (document.hidden) {
+    if (appBgRaf) { cancelAnimationFrame(appBgRaf); appBgRaf = null; }
+  } else if (!appBgReduce && !appBgRaf) {
+    appBgFrame();
+  }
+}
+
+function appBgStart() {
+  if (appBgReduce) {
+    // Honor reduced-motion: one static, composed frame — no drift, no loop.
+    appBgRenderer.render(appBgScene, appBgCamera);
+    return;
+  }
+  if (!appBgRaf) appBgFrame();
+}
+
+function appBgFrame() {
+  appBgRaf = requestAnimationFrame(appBgFrame);
+
+  // Dim + pause while the model VIEWER (#s-view) owns the GPU, so two animated
+  // WebGL contexts never compete. Checked each frame; the class only toggles on
+  // a real visibility change.
+  const sView = document.getElementById('s-view');
+  const active = !!(sView && getComputedStyle(sView).display !== 'none');
+  if (active !== appBgViewActive) {
+    appBgViewActive = active;
+    const c = document.getElementById('appBgCanvas');
+    if (c) c.classList.toggle('bg-dimmed', active);
+  }
+  if (active) return; // skip rendering this frame
+
+  // Calm ambient motion: a slow azimuth orbit + gentle vertical bob, always
+  // looking at the printer. Subtle and premium, not busy.
+  const now = performance.now();
+  const az = appBgBaseAz + Math.sin(now * 0.00006) * 0.14;   // ~±8°
+  appBgCamera.position.x = Math.cos(az) * appBgBaseRadius;
+  appBgCamera.position.z = Math.sin(az) * appBgBaseRadius;
+  appBgCamera.position.y = 5.2 + Math.sin(now * 0.00009) * 0.5;
+  appBgCamera.lookAt(0, 2.7, 0);
+
+  appBgRenderer.render(appBgScene, appBgCamera);
+}
+
 /* ════════ BOOT ════════ */
 window.addEventListener('load', () => {
+  // Start the persistent background first — it lives on every screen, so it
+  // must come up regardless of which screen the boot logic below lands on.
+  appBgInit();
   // Every SVG in this app is decorative — it either sits inside a text-labelled
   // or aria-labelled control, or repeats adjacent text. Hide them all from the
   // a11y tree so screen readers don't double-announce the icon and its label.
@@ -3225,12 +3911,18 @@ window.addEventListener('load', () => {
     resetIdle();
     return;
   }
+  // Front-door handoff: the landing page (served at /) links here as
+  // /app?mode=speak or /app?mode=engineer. Enter that compose flow directly via
+  // the real entry function (mic permission / input focus), not a bare screen swap.
+  const entryMode = new URLSearchParams(location.search).get('mode');
+  if (entryMode === 'speak')    { goToSpeak();                return; }
+  if (entryMode === 'engineer') { goToEngineer(); resetIdle(); return; }
   fetch('/api/state')
     .then(r => r.json())
     .then(st => {
       if (st && st.prompt) {
         currentPrompt = st.prompt;
-        document.getElementById('view-prompt').textContent = '"' + st.prompt + '"';
+        setViewPrompt(st.prompt);
         document.getElementById('gen-prompt').textContent = '"' + st.prompt + '"';
       }
       if (st && st.status === 'model_ready') {
