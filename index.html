@@ -1729,7 +1729,7 @@
 
 <!-- ════════ TOP NAV (persistent) ════════ -->
 <nav id="top-nav">
-  <button id="nav-logo" type="button" onclick="goHome()" title="Home">
+  <button id="nav-logo" type="button" onclick="goToLanding()" title="Back to the Conjure home page">
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <polygon points="10,2 18,7 18,13 10,18 2,13 2,7" fill="none" stroke="#45d38a" stroke-width="1.5"/>
       <polygon points="10,6 14,8.5 14,11.5 10,14 6,11.5 6,8.5" fill="#45d38a" opacity="0.4"/>
@@ -1738,7 +1738,7 @@
   </button>
   <div id="nav-status"></div>
   <div class="nav-actions">
-    <button id="nav-home-btn" onclick="goHome()" title="Return to the home page and start fresh">
+    <button id="nav-home-btn" onclick="goToLanding()" title="Return to the Conjure home page">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M3 10.5 12 3l9 7.5"/>
         <path d="M5 9.5V21h14V9.5"/>
@@ -2923,6 +2923,21 @@ function goHome() {
   resetIdle();
 }
 
+// The top-left Conjure wordmark and the top-nav Home button both leave the app
+// and return to the public landing page (served at "/"). Tear down any live
+// viewer / audio stream and reset the server pipeline first so we never leave a
+// job running or a WebGL context leaked; the fetch uses keepalive so the reset
+// still lands after navigation begins. Every teardown step is guarded so a throw
+// can't block the hand-off to the landing.
+function goToLanding() {
+  console.log('[nav] goToLanding');
+  try { closeEvents(); }   catch (e) { console.error('goToLanding: closeEvents failed', e); }
+  try { stopListening(); } catch (e) { console.error('goToLanding: stopListening failed', e); }
+  try { disposeViewer(); } catch (e) { console.error('goToLanding: disposeViewer failed', e); }
+  try { fetch('/api/reset', { method: 'POST', keepalive: true }); } catch (e) {}
+  window.location.assign('/');
+}
+
 // Set the viewer's prompt pill, hiding it entirely when empty so it never
 // renders as a blank badge.
 function setViewPrompt(text) {
@@ -3914,9 +3929,19 @@ window.addEventListener('load', () => {
   // Front-door handoff: the landing page (served at /) links here as
   // /app?mode=speak or /app?mode=engineer. Enter that compose flow directly via
   // the real entry function (mic permission / input focus), not a bare screen swap.
-  const entryMode = new URLSearchParams(location.search).get('mode');
+  const params = new URLSearchParams(location.search);
+  const entryMode = params.get('mode');
   if (entryMode === 'speak')    { goToSpeak();                return; }
   if (entryMode === 'engineer') { goToEngineer(); resetIdle(); return; }
+  // Showroom hand-off: the landing page's model cards link here as
+  // /app?view=library. Land on idle first (so "← Back" in the library returns to
+  // the app home), then open the real library where models can be previewed.
+  if (params.get('view') === 'library') {
+    showScreen('s-idle');
+    resetIdle();
+    openLibrary();
+    return;
+  }
   fetch('/api/state')
     .then(r => r.json())
     .then(st => {

@@ -267,8 +267,19 @@
     background:rgba(11,17,14,0.5); backdrop-filter:blur(8px);
     padding:20px; min-height:230px; display:flex; flex-direction:column; justify-content:flex-end;
     overflow:hidden; transition:border-color .25s, transform .25s;
+    cursor:pointer; text-decoration:none; color:inherit;
   }
-  .card:hover{ border-color:var(--accent-edge); transform:translateY(-3px); }
+  .card:hover, .card:focus-visible{ border-color:var(--accent-edge); transform:translateY(-3px); }
+  .card:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; }
+  .card .cap .view-hint{
+    margin-top:9px; font-family:var(--font-ui); font-size:12px; font-weight:600;
+    color:var(--accent-hi); opacity:0; transform:translateY(4px);
+    transition:opacity .25s, transform .25s;
+  }
+  .card:hover .view-hint, .card:focus-visible .view-hint{ opacity:1; transform:none; }
+  @media (prefers-reduced-motion: reduce){
+    .card .cap .view-hint{ transition:opacity .25s; transform:none; }
+  }
   .card.big{ grid-row:span 2; min-height:auto; }
   @media (max-width:860px){ .card.big{ grid-row:auto; } }
   .card .glyph{
@@ -406,7 +417,7 @@
         <p class="lead reveal d2">A few things people walked in describing — and walked out holding.</p>
       </div>
       <div class="gal-grid">
-        <div class="card big reveal d1">
+        <a class="card big reveal d1" href="/app?view=library" aria-label="Faceted planter — open the model library">
           <div class="glyph">
             <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
               <polygon class="edge" points="50,10 84,30 84,70 50,90 16,70 16,30"/>
@@ -417,9 +428,10 @@
           <div class="cap">
             <div class="name">Faceted planter</div>
             <div class="meta">SPEAK · 128 g PLA · <b>1h 52m</b></div>
+            <div class="view-hint">Open in library <span class="arw">→</span></div>
           </div>
-        </div>
-        <div class="card reveal d2">
+        </a>
+        <a class="card reveal d2" href="/app?view=library" aria-label="GoPro seat mount — open the model library">
           <div class="glyph">
             <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
               <rect x="24" y="30" width="52" height="30" rx="3"/>
@@ -431,9 +443,10 @@
           <div class="cap">
             <div class="name">GoPro seat mount</div>
             <div class="meta">ENGINEER · <b>±0.1mm</b></div>
+            <div class="view-hint">Open in library <span class="arw">→</span></div>
           </div>
-        </div>
-        <div class="card reveal d3">
+        </a>
+        <a class="card reveal d3" href="/app?view=library" aria-label="Wave d20 stand — open the model library">
           <div class="glyph">
             <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
               <path d="M30 70 Q30 40 50 30 Q70 40 70 70" />
@@ -444,9 +457,10 @@
           <div class="cap">
             <div class="name">Wave d20 stand</div>
             <div class="meta">SPEAK · 41 g PLA · <b>38m</b></div>
+            <div class="view-hint">Open in library <span class="arw">→</span></div>
           </div>
-        </div>
-        <div class="card reveal d2">
+        </a>
+        <a class="card reveal d2" href="/app?view=library" aria-label="Cable clip — open the model library">
           <div class="glyph">
             <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
               <rect x="28" y="40" width="44" height="20" rx="10"/>
@@ -457,9 +471,10 @@
           <div class="cap">
             <div class="name">Cable clip, 6mm</div>
             <div class="meta">ENGINEER · <b>x4 array</b></div>
+            <div class="view-hint">Open in library <span class="arw">→</span></div>
           </div>
-        </div>
-        <div class="card reveal d3">
+        </a>
+        <a class="card reveal d3" href="/app?view=library" aria-label="Coiled dragon — open the model library">
           <div class="glyph">
             <svg viewBox="0 0 100 100" fill="none" stroke="#45d38a" stroke-width="1.4">
               <path d="M50 22 C34 22 30 40 50 52 C70 40 66 22 50 22 Z" class="fill" fill="#45d38a" opacity="0.24"/>
@@ -469,8 +484,9 @@
           <div class="cap">
             <div class="name">Coiled dragon</div>
             <div class="meta">SPEAK · 96 g PLA · <b>2h 14m</b></div>
+            <div class="view-hint">Open in library <span class="arw">→</span></div>
           </div>
-        </div>
+        </a>
       </div>
     </div>
   </section>
