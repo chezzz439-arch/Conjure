@@ -1034,21 +1034,18 @@ async def startup_event() -> None:
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
 
 
-# Single unified experience: the working kiosk is the site. It already carries
-# the full visual identity (the 3D printer/grid background scene + jade + glass
-# panels behind every screen), so there's no separate marketing page. /app is
-# kept as an alias so existing links / ?mode=speak|engineer deep-links still work.
+# Front door: the marketing scroll landing page. Its CTAs hand off to the working
+# kiosk at /app?mode=speak|engineer. Also reachable at /landing.
 @app.get("/", response_class=HTMLResponse)
-@app.get("/app", response_class=HTMLResponse)
-def get_app() -> HTMLResponse:
-    return HTMLResponse(content=(BASE_DIR / "index.html").read_text())
-
-
-# The old marketing scroll page, kept available (not the default) in case it's
-# wanted later.
 @app.get("/landing", response_class=HTMLResponse)
 def get_landing() -> HTMLResponse:
     return HTMLResponse(content=(BASE_DIR / "landing.html").read_text())
+
+
+# The working kiosk app (describe -> generate -> view -> slice -> print).
+@app.get("/app", response_class=HTMLResponse)
+def get_app() -> HTMLResponse:
+    return HTMLResponse(content=(BASE_DIR / "index.html").read_text())
 
 
 class GenerateRequest(BaseModel):
