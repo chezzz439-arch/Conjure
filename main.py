@@ -2738,10 +2738,20 @@ async def api_use_library_model(req: LibraryModelRequest, background_tasks: Back
     return JSONResponse({"status": "started", "source": req.source, "model_id": req.model_id})
 
 
+# Meshy task ids are hex-and-hyphen (uuid-shaped). Anything else does not belong
+# in a URL we then fetch: task_id is interpolated into MESHY_BASE below, so an
+# unconstrained value lets a caller steer the request path (Snyk SSRF finding,
+# main.py:2746). Starlette already refuses `/` in a path param, so the host
+# cannot be changed — this closes the remaining `..` traversal within Meshy.
+_MESHY_TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
 @app.get("/api/status/{task_id}")
 def api_task_status(task_id: str) -> JSONResponse:
     if not MESHY_API_KEY:
         raise HTTPException(500, "MESHY_API_KEY not configured in .env")
+    if not _MESHY_TASK_ID.match(task_id):
+        raise HTTPException(400, "Invalid task id")
     try:
         r = requests.get(
             f"{MESHY_BASE}/v2/text-to-3d/{task_id}",
