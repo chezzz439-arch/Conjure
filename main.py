@@ -6,6 +6,7 @@ import time
 import logging
 import sqlite3
 import asyncio
+import uuid
 import shutil
 import subprocess
 import threading
@@ -54,6 +55,26 @@ ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
+
+# ── FalkorDB graph memory (optional; the kiosk runs fine without it) ───────
+# Every Engineer build is recorded as a graph so later builds can look up what
+# earlier ones already worked out. FALKORDB_URL overrides host+port outright,
+# the same way MOONRAKER_URL does, for a connection string or TLS endpoint.
+FALKORDB_HOST        = os.getenv("FALKORDB_HOST", "")
+FALKORDB_PORT        = int(os.getenv("FALKORDB_PORT", "6379"))
+FALKORDB_USERNAME    = os.getenv("FALKORDB_USERNAME", "")
+FALKORDB_PASSWORD    = os.getenv("FALKORDB_PASSWORD", "")
+FALKORDB_URL         = os.getenv("FALKORDB_URL", "")
+FALKORDB_GRAPH       = os.getenv("FALKORDB_GRAPH", "conjure")
+FALKORDB_SSL         = os.getenv("FALKORDB_SSL", "").strip().lower() in ("1", "true", "yes")
+# The FalkorDB constructor opens the socket eagerly — it does not defer until
+# the first query. Without an explicit timeout an unreachable host blocks on
+# the OS default (~75 s), which would stall the generation pipeline that this
+# whole layer is supposed to stay out of the way of. Keep it short.
+FALKORDB_TIMEOUT     = float(os.getenv("FALKORDB_TIMEOUT", "5"))
+# Prompt-similarity score above which a prior build's design brief is reused
+# instead of asking the LLM again. 1.0 disables reuse while still logging hits.
+FALKORDB_REUSE_AT    = float(os.getenv("FALKORDB_REUSE_AT", "0.6"))
 
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
@@ -1229,6 +1250,289 @@ def log_supabase_event(
 
 
 # ---------------------------------------------------------------------------
+# FalkorDB graph memory
+# ---------------------------------------------------------------------------
+# Records every Engineer build as a graph so a later build can reuse what an
+# earlier one already worked out, instead of paying for the same design brief
+# twice.
+#
+# Strictly additive. Nothing in generation, slicing or printing depends on any
+# of this: every entry point below returns None/[] when FalkorDB is missing,
+# unreachable, unauthenticated or simply broken, and each caller is written to
+# carry on without it. The kiosk's job is to print things, not to have a graph.
+
+_FALKOR_STOPWORDS = {
+    "a", "an", "the", "and", "or", "for", "to", "of", "with", "that", "this",
+    "it", "is", "my", "me", "our", "your", "i", "in", "on", "at", "as", "be",
+    "can", "make", "made", "print", "printed", "printable", "3d", "model",
+    "part", "please", "one", "some", "need", "want", "would", "like",
+}
+
+
+def _falkor_tokens(text: str) -> set:
+    """The content words of a prompt, for overlap scoring."""
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if len(w) > 1 and w not in _FALKOR_STOPWORDS}
+
+
+def _falkor_similarity(a: str, b: str) -> float:
+    """How much two prompts have in common, 0.0-1.0.
+
+    Deliberately not an embedding. The graph is the substance of this feature,
+    and a set intersection needs no model, no API key and no credit — so prompt
+    matching keeps working on days when the LLM budget does not.
+
+    Scored on containment rather than plain Jaccard. Jaccard divides by the
+    union, so "a gearbox with a crank" against a stored prompt that spells out
+    the sun gear, the carrier and the ring gear scores badly purely because the
+    stored one says more — real queries are short and stored prompts are long,
+    so nothing ever cleared the reuse threshold. Containment asks the question
+    that actually matters: is one request essentially a subset of the other?
+
+    The guard stops it degenerating: a single shared word between a two-word
+    query and anything at all would otherwise score 1.0, so below two shared
+    words this falls back to Jaccard, which stays near zero.
+    """
+    ta, tb = _falkor_tokens(a), _falkor_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    shared = len(ta & tb)
+    if shared == 0:
+        return 0.0
+    jaccard = shared / len(ta | tb)
+    if shared < 2:
+        return jaccard
+    return max(jaccard, shared / min(len(ta), len(tb)))
+
+
+def get_falkordb_client():
+    """A FalkorDB handle, or None. Never raises.
+
+    Mirrors get_supabase_client(): being unconfigured is the default, not an
+    error. Two deliberate differences, both forced by how this client behaves:
+
+     - the import is deferred rather than top-level, so a missing package
+       degrades to "no graph memory" instead of refusing to boot the kiosk;
+     - the timeouts are mandatory. FalkorDB() opens its socket eagerly, so an
+       unreachable host blocks in the constructor on the OS default (~75 s)
+       rather than failing at query time.
+    """
+    if not FALKORDB_HOST and not FALKORDB_URL:
+        return None
+    try:
+        from falkordb import FalkorDB
+    except ImportError:
+        log.warning("[FalkorDB] configured but the client is not installed "
+                    "— pip install FalkorDB")
+        return None
+    try:
+        kw = {"socket_connect_timeout": FALKORDB_TIMEOUT,
+              "socket_timeout": FALKORDB_TIMEOUT}
+        if FALKORDB_URL:
+            return FalkorDB.from_url(FALKORDB_URL, **kw)
+        if FALKORDB_USERNAME:
+            kw["username"] = FALKORDB_USERNAME
+        if FALKORDB_PASSWORD:
+            kw["password"] = FALKORDB_PASSWORD
+        if FALKORDB_SSL:
+            kw["ssl"] = True
+        return FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT, **kw)
+    except Exception as e:
+        log.warning("[FalkorDB] Client init failed: %s", e)
+        return None
+
+
+def _falkor_graph():
+    """The kiosk's graph, or None."""
+    db = get_falkordb_client()
+    if not db:
+        return None
+    try:
+        return db.select_graph(FALKORDB_GRAPH)
+    except Exception as e:
+        log.warning("[FalkorDB] select_graph(%r) failed: %s", FALKORDB_GRAPH, e)
+        return None
+
+
+def save_build_to_graph(
+    prompt: str,
+    specs: dict | None,
+    material: str = "PLA",
+    dimensions: dict | None = None,
+) -> str | None:
+    """Record one finished build as (Build)-[:USES]->(Material) + specs.
+
+    Returns the new build id, or None if nothing was written. Called alongside
+    the existing SQLite and Supabase saves, never instead of them.
+    """
+    g = _falkor_graph()
+    if not g:
+        return None
+
+    specs = specs or {}
+    # Every numeric the design brief settled on becomes a Spec node, so two
+    # builds that agreed on a wall thickness are visibly connected through it.
+    dims = dimensions or {k: specs[k] for k in
+                          ("od_mm", "wall_mm", "clearance_mm") if k in specs}
+    build_id = uuid.uuid4().hex[:12]
+
+    def _num(key):
+        try:
+            return float(specs[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    try:
+        g.query(
+            """
+            MERGE (m:Material {name: $material})
+              ON CREATE SET m.tensile_strength = $tensile, m.source = $msource
+            CREATE (b:Build {
+                id: $id, prompt: $prompt, timestamp: $ts, material: $material,
+                dimensions: $dims_json, summary: $summary,
+                od_mm: $od, wall_mm: $wall, clearance_mm: $clearance
+            })
+            CREATE (b)-[:USES]->(m)
+            """,
+            params={
+                "id": build_id,
+                "prompt": prompt or "",
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "material": material,
+                "tensile": specs.get("tensile_mpa", PLA_TENSILE_MPA),
+                # Named honestly. These are compiled-in constants, not a figure
+                # scraped from a datasheet, and the graph should not imply
+                # provenance the number does not have.
+                "msource": "kiosk-constant",
+                "dims_json": json.dumps(dims, sort_keys=True),
+                "summary": specs.get("summary", ""),
+                "od": _num("od_mm"),
+                "wall": _num("wall_mm"),
+                "clearance": _num("clearance_mm"),
+            },
+        )
+
+        for dim_type, value in dims.items():
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            g.query(
+                """
+                MATCH (b:Build {id: $id})
+                MERGE (s:Spec {dimension_type: $dt, value: $v, unit: $unit})
+                  ON CREATE SET s.source_url = $src
+                MERGE (b)-[:HAS_SPEC]->(s)
+                """,
+                params={"id": build_id, "dt": dim_type, "v": value,
+                        "unit": "mm", "src": "llm:design_brief"},
+            )
+
+        # Link to prior builds sharing a material, or landing within 20% on the
+        # main dimension. This is what makes the store a graph rather than a
+        # table: the demo query walks these edges.
+        rel = g.query(
+            """
+            MATCH (b:Build {id: $id}), (o:Build)
+            WHERE o.id <> $id
+              AND (o.material = $material
+                   OR ($od IS NOT NULL AND o.od_mm IS NOT NULL
+                       AND abs(o.od_mm - $od) <= $tol))
+            MERGE (b)-[:SIMILAR_TO]->(o)
+            """,
+            params={"id": build_id, "material": material, "od": _num("od_mm"),
+                    "tol": (_num("od_mm") or 0.0) * 0.2},
+        )
+        log.info("[FalkorDB] Build %s saved (%d SIMILAR_TO edges)",
+                 build_id, rel.relationships_created)
+        return build_id
+    except Exception as e:
+        log.warning("[FalkorDB] save_build_to_graph failed: %s", e)
+        return None
+
+
+def query_similar_builds(prompt: str, specs: dict | None = None,
+                         limit: int = 5) -> list:
+    """Prior builds resembling this request, best match first.
+
+    Scoring happens in Python rather than Cypher on purpose: the graph read is
+    a cheap bounded scan, and keeping the ranking here means the threshold can
+    be tuned without a query rewrite. Returns [] on any failure.
+    """
+    g = _falkor_graph()
+    if not g:
+        return []
+    try:
+        rows = g.ro_query(
+            """
+            MATCH (b:Build)
+            OPTIONAL MATCH (b)-[:USES]->(m:Material)
+            RETURN b.id, b.prompt, b.summary, b.timestamp, b.dimensions,
+                   b.od_mm, b.wall_mm, b.clearance_mm, m.name
+            ORDER BY b.timestamp DESC
+            LIMIT 200
+            """
+        ).result_set
+    except Exception as e:
+        log.warning("[FalkorDB] query_similar_builds failed: %s", e)
+        return []
+
+    out = []
+    for r in rows:
+        score = _falkor_similarity(prompt, r[1])
+        # A shared main dimension is corroborating evidence, not proof on its
+        # own — it nudges the score rather than setting it.
+        if specs and r[5] is not None:
+            try:
+                want = float(specs.get("od_mm"))
+                if want and abs(float(r[5]) - want) <= want * 0.2:
+                    score = min(1.0, score + 0.15)
+            except (TypeError, ValueError):
+                pass
+        if score <= 0:
+            continue
+        out.append({
+            "id": r[0], "prompt": r[1], "summary": r[2] or "",
+            "timestamp": r[3], "dimensions": r[4], "material": r[8] or "",
+            "score": round(score, 3),
+            "specs": {
+                "od_mm": r[5], "wall_mm": r[6], "clearance_mm": r[7],
+                "summary": r[2] or "", "tensile_mpa": PLA_TENSILE_MPA,
+                "safety_factor": DESIGN_SAFETY_FACTOR,
+                "inner_r": round(float(r[5]) / 2 + 0.4, 4) if r[5] else None,
+            },
+        })
+    out.sort(key=lambda d: d["score"], reverse=True)
+    return out[:limit]
+
+
+def falkordb_status() -> dict:
+    """Reachability for /api/health. Total — never raises."""
+    if not FALKORDB_HOST and not FALKORDB_URL:
+        return {"configured": False, "online": False,
+                "reason": "FALKORDB_HOST or FALKORDB_URL not set in .env"}
+    db = get_falkordb_client()
+    if not db:
+        return {"configured": True, "online": False,
+                "reason": "client init failed — see server log"}
+    try:
+        graphs = db.list_graphs()
+        builds = 0
+        try:
+            rs = db.select_graph(FALKORDB_GRAPH).ro_query(
+                "MATCH (b:Build) RETURN count(b)").result_set
+            builds = rs[0][0] if rs else 0
+        except Exception:
+            # A graph that has never been written to does not exist yet, and
+            # asking for its node count is an error, not an outage.
+            pass
+        return {"configured": True, "online": True, "graph": FALKORDB_GRAPH,
+                "graphs": graphs, "builds": builds}
+    except Exception as e:
+        return {"configured": True, "online": False, "reason": str(e)[:200]}
+
+
+# ---------------------------------------------------------------------------
 # Pipeline state
 # ---------------------------------------------------------------------------
 pipeline_state: dict = {
@@ -1996,6 +2300,7 @@ async def startup_event() -> None:
     (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
     log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
+    log.info("Graph memory: %s", "configured" if FALKORDB_HOST or FALKORDB_URL else "not configured")
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -2228,6 +2533,30 @@ def api_printer_status() -> JSONResponse:
     return JSONResponse(moonraker_status())
 
 
+@app.get("/api/memory/similar")
+def api_memory_similar(prompt: str = "", limit: int = 5) -> JSONResponse:
+    """Prior builds resembling `prompt`, for debugging and live demo.
+
+    Read-only and non-destructive: it reports what the graph already knows and
+    writes nothing. Returns 200 with an empty list when FalkorDB is unavailable
+    — the caller wants to know there are no matches, and "the memory layer is
+    switched off" is a legitimate reason for that rather than a server error.
+    """
+    if not prompt.strip():
+        raise HTTPException(400, "Pass ?prompt=... to search prior builds")
+    status = falkordb_status()
+    matches = query_similar_builds(prompt, limit=max(1, min(limit, 50)))
+    return JSONResponse({
+        "prompt": prompt,
+        "configured": status["configured"],
+        "online": status["online"],
+        "reuse_threshold": FALKORDB_REUSE_AT,
+        "would_reuse": bool(matches and matches[0]["score"] >= FALKORDB_REUSE_AT),
+        "count": len(matches),
+        "matches": matches,
+    })
+
+
 @app.post("/api/print-now")
 def api_print_now() -> JSONResponse:
     """Uploads the sliced gcode to the printer and starts it."""
@@ -2437,6 +2766,7 @@ def health_check() -> JSONResponse:
         "supabase_connected":  sb_ok,
         "llm_usage":  llm_usage_summary(),
         "printer":    moonraker_status(),
+        "graph_memory": falkordb_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
@@ -2954,7 +3284,28 @@ def run_engineer_pipeline(intent: str) -> None:
 
     engineer_set_step(0)
     engineer_log("Step 0 — design brief", "info")
-    specs = design_brief(intent)
+
+    # Graph memory first. A prior build that already sized this exact kind of
+    # part has the answer the design brief is about to pay an LLM call for.
+    # Wrapped because a memory layer is never allowed to stop a build: any
+    # failure here has to land us on the ordinary design_brief() path.
+    specs = None
+    try:
+        prior = query_similar_builds(intent)
+        if prior:
+            top = prior[0]
+            engineer_log(
+                f"Graph memory: found similar prior build — \"{top['prompt']}\" "
+                f"({top['score']:.0%} match)", "success")
+            if top["score"] >= FALKORDB_REUSE_AT and top["specs"].get("od_mm"):
+                specs = dict(top["specs"])
+                engineer_log("Reusing that build's design brief — skipping the "
+                             "LLM sizing call", "success")
+    except Exception as e:
+        log.warning("[FalkorDB] similar-build lookup failed: %s", e)
+
+    if specs is None:
+        specs = design_brief(intent)
     with engineer_state["lock"]:
         engineer_state["specs"] = specs
     engineer_log(f"Specs: {specs}", "success")
@@ -3045,6 +3396,15 @@ def run_engineer_pipeline(intent: str) -> None:
     except Exception as e:
         engineer_log(f"DB save failed: {e}", "warning")
         model_id = None
+
+    # Graph memory, in addition to the SQLite row above and the Supabase backup
+    # below — not instead of either. On its own thread for the same reason the
+    # Supabase backup is: a slow or dead remote must not hold up the print.
+    def _graph_backup():
+        bid = save_build_to_graph(intent, specs, material="PLA")
+        if bid:
+            engineer_log(f"Graph memory: build {bid} recorded", "success")
+    threading.Thread(target=_graph_backup, daemon=True).start()
 
     engineer_set_step(4)
     engineer_log(f"Step 4 — send to printer ({moonraker_base() or 'no printer configured'})", "info")

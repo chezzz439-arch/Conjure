@@ -11,3 +11,7 @@ anthropic>=0.120.0
 
 supabase>=2.7.0
 websockets>=13
+
+# Graph memory. Optional at runtime — main.py imports it lazily and degrades to
+# "no graph memory" when it is absent, so the kiosk still boots without it.
+FalkorDB>=1.6.2
