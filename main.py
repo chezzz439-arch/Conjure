@@ -7,6 +7,7 @@ import logging
 import sqlite3
 import asyncio
 import uuid
+import queue
 import shutil
 import subprocess
 import threading
@@ -84,6 +85,12 @@ LINKUP_API_KEY       = os.getenv("LINKUP_API_KEY", "")
 LINKUP_DEPTH         = os.getenv("LINKUP_DEPTH", "standard")
 LINKUP_TIMEOUT       = float(os.getenv("LINKUP_TIMEOUT", "25"))
 LINKUP_MAX_SOURCES   = int(os.getenv("LINKUP_MAX_SOURCES", "5"))
+
+LASER_CONNECTION_STRING = os.getenv("LASER_CONNECTION_STRING", "")
+LASER_STREAM         = os.getenv("LASER_STREAM", "conjure")
+LASER_TOPIC          = os.getenv("LASER_TOPIC", "pipeline-events")
+LASER_TIMEOUT        = float(os.getenv("LASER_TIMEOUT", "10"))
+LASER_QUEUE_MAX      = int(os.getenv("LASER_QUEUE_MAX", "500"))
 
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
@@ -1683,6 +1690,158 @@ def snyk_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# LaserData — pipeline telemetry over Apache Iggy
+#
+# Every stage transition and log line from the Engineer pipeline is published
+# to a Laser topic, so the physical progress of a print is a stream you can
+# consume rather than something buried in this process's memory.
+#
+# ⚠ THE PUBLISH PATH IS UNVERIFIED. Everything below the queue was written
+# against the real laser-sdk API — signatures were read off the installed
+# package, not guessed — but no message has ever been sent, because LaserData
+# Cloud is in private preview and the documented local target (laser-stack)
+# needs Docker, which is not installed here. Apache Iggy also ships no macOS
+# binaries, so there is no falkordblite-style local engine to test against.
+# What IS verified is the part that protects the kiosk: with no connection
+# string configured, none of this runs at all. Treat a successful publish as
+# untested until someone watches a record land.
+#
+# Two things drove the design:
+#
+#   1. Laser.connect() takes no timeout argument — checked against the real
+#      signature. Pointed at a black-holed host it blocked past 30s with no
+#      sign of giving up. Since the API is async, asyncio.wait_for() supplies
+#      the bound the SDK does not, and that wrapper is load-bearing: without
+#      it a dead broker parks a thread forever.
+#
+#   2. Emission must never apply backpressure to a print. So callers only ever
+#      touch a bounded queue, and a full queue drops the event rather than
+#      waiting. Telemetry that can stall the machine it is measuring is worse
+#      than no telemetry.
+# ---------------------------------------------------------------------------
+_laser_queue: "queue.Queue | None" = None
+_laser_started = False
+_laser_lock = threading.Lock()
+_laser_stats = {"published": 0, "dropped": 0, "failed": 0,
+                "connected": False, "reason": "not started"}
+
+
+def _laser_set(**kw) -> None:
+    with _laser_lock:
+        _laser_stats.update(kw)
+
+
+async def _laser_run(q) -> None:
+    """Connect once, then drain the queue until the process ends."""
+    import laser_sdk as ls
+
+    # The one call that can hang. Everything else is cheap once connected.
+    laser = await asyncio.wait_for(
+        ls.Laser.connect(LASER_CONNECTION_STRING, stream=LASER_STREAM),
+        timeout=LASER_TIMEOUT,
+    )
+    topic = laser.topic(LASER_TOPIC)
+    try:
+        # Idempotent; a topic that already exists is not an error.
+        await asyncio.wait_for(topic.ensure(1), timeout=LASER_TIMEOUT)
+    except Exception as e:
+        log.info("[LaserData] topic.ensure skipped: %s", e)
+    _laser_set(connected=True, reason="")
+    log.info("[LaserData] connected — publishing to %s/%s",
+             LASER_STREAM, LASER_TOPIC)
+
+    while True:
+        # Blocking get, moved off the event loop so the loop is free to run
+        # the publish that follows.
+        event = await asyncio.to_thread(q.get)
+        if event is None:
+            return
+        try:
+            await asyncio.wait_for(topic.publish(event).send(),
+                                   timeout=LASER_TIMEOUT)
+            with _laser_lock:
+                _laser_stats["published"] += 1
+        except Exception as e:
+            # One bad record must not kill the drain loop, or the first
+            # hiccup silently ends telemetry for the rest of the session.
+            with _laser_lock:
+                _laser_stats["failed"] += 1
+                _laser_stats["reason"] = f"{type(e).__name__}: {str(e)[:120]}"
+
+
+def _laser_worker(q) -> None:
+    try:
+        asyncio.run(_laser_run(q))
+    except asyncio.TimeoutError:
+        _laser_set(connected=False,
+                   reason=f"connect timed out after {LASER_TIMEOUT}s")
+        log.warning("[LaserData] connect timed out after %ss — telemetry off, "
+                    "pipeline unaffected", LASER_TIMEOUT)
+    except ImportError:
+        _laser_set(connected=False, reason="laser-sdk not installed")
+        log.warning("[LaserData] configured but the SDK is missing "
+                    "— pip install laser-sdk")
+    except Exception as e:
+        _laser_set(connected=False,
+                   reason=f"{type(e).__name__}: {str(e)[:150]}")
+        log.warning("[LaserData] worker stopped (%s): %s", type(e).__name__, e)
+
+
+def emit_pipeline_event(stage: str, status: str,
+                        metadata: dict | None = None) -> None:
+    """Queue one pipeline event. Never blocks, never raises, never prints.
+
+    Safe to call from anywhere in the pipeline, including inside the engineer
+    state lock: the only work done on the caller's thread is building a dict
+    and a non-blocking put.
+    """
+    if not LASER_CONNECTION_STRING:
+        return
+    global _laser_queue, _laser_started
+    try:
+        with _laser_lock:
+            if not _laser_started:
+                _laser_queue = queue.Queue(maxsize=LASER_QUEUE_MAX)
+                threading.Thread(target=_laser_worker, args=(_laser_queue,),
+                                 daemon=True, name="laserdata").start()
+                _laser_started = True
+                _laser_stats["reason"] = "connecting"
+            q = _laser_queue
+        event = {
+            "stage": stage,
+            "status": status,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "source": "conjure-kiosk",
+        }
+        if metadata:
+            event["metadata"] = metadata
+        try:
+            q.put_nowait(event)
+        except queue.Full:
+            # Dropping is the correct failure here — see note 2 above.
+            with _laser_lock:
+                _laser_stats["dropped"] += 1
+    except Exception:
+        # This function is called from the hot path of a physical machine.
+        # It has no business raising, whatever went wrong.
+        pass
+
+
+def laserdata_status() -> dict:
+    """For /api/health. Total — never raises."""
+    if not LASER_CONNECTION_STRING:
+        return {"configured": False, "connected": False,
+                "reason": "LASER_CONNECTION_STRING not set in .env"}
+    with _laser_lock:
+        s = dict(_laser_stats)
+    s["configured"] = True
+    s["stream"] = LASER_STREAM
+    s["topic"] = LASER_TOPIC
+    s["publish_verified"] = False  # see the module note above
+    return s
+
+
+# ---------------------------------------------------------------------------
 # Pipeline state
 # ---------------------------------------------------------------------------
 pipeline_state: dict = {
@@ -2452,6 +2611,8 @@ async def startup_event() -> None:
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
     log.info("Graph memory: %s", "configured" if FALKORDB_HOST or FALKORDB_URL else "not configured")
     log.info("Linkup research: %s", "configured" if LINKUP_API_KEY else "not configured")
+    log.info("LaserData telemetry: %s", "configured (publish path unverified)"
+             if LASER_CONNECTION_STRING else "not configured")
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -2920,6 +3081,7 @@ def health_check() -> JSONResponse:
         "printer":    moonraker_status(),
         "graph_memory": falkordb_status(),
         "security_scan": snyk_status(),
+        "telemetry": laserdata_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
@@ -3247,12 +3409,18 @@ def engineer_log(message: str, level: str = "info") -> None:
     with engineer_state["lock"]:
         engineer_state["logs"].append(entry)
     print(f"[ENGINEER][{timestamp}] [{level.upper()}] {message}", flush=True)
+    # Mirrored to LaserData. Emitting from inside here rather than at the ~50
+    # call sites means no existing line changes and none can be missed; it is
+    # a no-op when LASER_CONNECTION_STRING is unset.
+    emit_pipeline_event("log", level, {"message": message})
 
 
 def engineer_set_step(n: int) -> None:
     with engineer_state["lock"]:
         engineer_state["current_step"] = n
         engineer_state["current_step_name"] = ENGINEER_STEP_NAMES[n] if n < len(ENGINEER_STEP_NAMES) else ""
+    name = ENGINEER_STEP_NAMES[n] if n < len(ENGINEER_STEP_NAMES) else ""
+    emit_pipeline_event("step", "started", {"step": n, "name": name})
 
 
 def engineer_set_status(s: str) -> None:

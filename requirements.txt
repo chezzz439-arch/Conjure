@@ -19,3 +19,7 @@ FalkorDB>=1.6.2
 # Live web research on a memory miss. Optional — lazily imported, and the
 # Engineer pipeline sizes parts from the model's own knowledge without it.
 linkup-sdk>=0.19.0
+
+# Pipeline telemetry over Apache Iggy. Optional — imported lazily inside the
+# background worker, so a missing package logs a warning and nothing else.
+laser-sdk>=0.0.1
