@@ -1308,34 +1308,53 @@ def _falkor_tokens(text: str) -> set:
     return {w for w in words if len(w) > 1 and w not in _FALKOR_STOPWORDS}
 
 
-def _falkor_similarity(a: str, b: str) -> float:
-    """How much two prompts have in common, 0.0-1.0.
+def _falkor_similarity(new_prompt: str, stored_prompt: str) -> float:
+    """How much a new request has in common with a stored one, 0.0-1.0.
+
+    ARGUMENT ORDER IS LOAD-BEARING — this is deliberately NOT symmetric. See
+    below.
 
     Deliberately not an embedding. The graph is the substance of this feature,
     and a set intersection needs no model, no API key and no credit — so prompt
     matching keeps working on days when the LLM budget does not.
 
-    Scored on containment rather than plain Jaccard. Jaccard divides by the
-    union, so "a gearbox with a crank" against a stored prompt that spells out
-    the sun gear, the carrier and the ring gear scores badly purely because the
-    stored one says more — real queries are short and stored prompts are long,
-    so nothing ever cleared the reuse threshold. Containment asks the question
-    that actually matters: is one request essentially a subset of the other?
+    Scored on containment rather than plain Jaccard, but in ONE direction only.
+    Jaccard divides by the union, so "a gearbox with a crank" against a stored
+    prompt that spells out the sun gear, the carrier and the ring gear scores
+    badly purely because the stored one says more. Containment fixes that case:
+    a short new request that is essentially a subset of a richer stored build
+    should reuse it.
+
+    The reverse is NOT safe, and the original `min(len(ta), len(tb))` allowed
+    it. A SHORT STORED prompt sitting inside a LONG new request also scored
+    1.0 — so asking for a three-compartment organizer holding a battery tester,
+    a wire coil and a set of hex keys matched a prior plain "a wall bracket for
+    a Fluke BAT-250 battery tester" at 100%, reused its brief, and silently
+    dropped two of the three compartments from the sizing. Measured: 7 stored
+    tokens all present in 46 new ones -> containment 1.0, Jaccard 0.152. The
+    richer request is NOT a subset of the simpler build; it is a superset, and
+    a superset must be sized fresh.
+
+    So containment only applies when the new prompt is the shorter one. When
+    the new request says MORE than the stored build, we fall back to Jaccard,
+    which stays low and correctly misses.
 
     The guard stops it degenerating: a single shared word between a two-word
     query and anything at all would otherwise score 1.0, so below two shared
     words this falls back to Jaccard, which stays near zero.
     """
-    ta, tb = _falkor_tokens(a), _falkor_tokens(b)
+    ta, tb = _falkor_tokens(new_prompt), _falkor_tokens(stored_prompt)
     if not ta or not tb:
         return 0.0
     shared = len(ta & tb)
     if shared == 0:
         return 0.0
     jaccard = shared / len(ta | tb)
-    if shared < 2:
+    # len(ta) > len(tb): the new request says more than the stored build did.
+    # Reusing that build would answer a bigger question with a smaller answer.
+    if shared < 2 or len(ta) > len(tb):
         return jaccard
-    return max(jaccard, shared / min(len(ta), len(tb)))
+    return max(jaccard, shared / len(ta))
 
 
 def get_falkordb_client():
