@@ -3910,6 +3910,7 @@ engineer_state = {
     # to apply the same refusal the printer path already applies, so the result
     # is recorded here. None = no build has sliced yet this process.
     "slice_ok": None,
+    "review": None,
     "lock": threading.Lock(),
 }
 
@@ -4415,6 +4416,91 @@ def orca_slice_sync(stl_path: Path, gcode_path: Path) -> bool:
         return False
 
 
+def engineer_review_gate(stl_path: Path, specs: dict, intent: str) -> dict:
+    """Second-agent review between render and slice. Decides whether this build
+    is allowed to be called COMPLETE.
+
+    This runs BEFORE the slice, not after. The same watertight number was
+    already being computed in _guild_audit() at the very end, but by then the
+    build had been marked COMPLETE and — with a printer configured — already
+    dispatched. A quality signal produced after the print starts is a record,
+    not a check.
+
+    The verdict is computed LOCALLY and the Guild session is logged from here.
+    Deliberately not the other way round: log_build_to_guild() is fire-and-
+    forget into a bounded queue that drops on full, so making the verdict wait
+    on Guild would mean a Guild outage could stall a build. The standing rule
+    is that no integration may ever hold up a print, and a governance step that
+    can deadlock the thing it governs is worse than no governance step.
+    """
+    issues = []
+
+    watertight = None
+    open_edges = None
+    try:
+        import trimesh
+        import numpy as np
+        from collections import Counter
+        mesh = trimesh.load(str(stl_path), force="mesh")
+        mesh.merge_vertices()
+        # NOT trimesh's is_watertight. Measured against real OpenSCAD output on
+        # 2026-08-03: a plain closed coaster reported is_watertight False while
+        # having ZERO edges used by only one face — it is closed. That flag also
+        # folds in winding/duplicate-face strictness which OpenSCAD's STL writer
+        # trips constantly, so gating prints on it would have marked essentially
+        # every legitimate build NEEDS_REVIEW and withheld every print.
+        #   real coaster      faces=3068 edges=4538 used_once=0   <- closed
+        #   deliberately torn faces=1240 edges=1878 used_once=36  <- open
+        # An edge used by exactly one face is what actually makes a mesh
+        # unprintable, so that is what gets counted.
+        counts = Counter(map(tuple, np.sort(mesh.edges, axis=1)))
+        open_edges = sum(1 for v in counts.values() if v == 1)
+        watertight = open_edges == 0
+    except Exception as me:
+        # None, never False. "We could not check" and "the mesh is open" are
+        # different claims, and this one gates a print.
+        log.info("[Gate] watertight check skipped: %s", me)
+    if watertight is False:
+        issues.append(f"mesh has {open_edges} open edge(s) — not a closed solid, "
+                      f"will slice into unpredictable geometry")
+
+    wall = specs.get("wall_mm")
+    if isinstance(wall, (int, float)) and wall < MIN_WALL_MM:
+        issues.append(f"wall {wall}mm is below the {MIN_WALL_MM}mm minimum "
+                      f"({NOZZLE_MM}mm nozzle needs two perimeters)")
+
+    sf = specs.get("safety_factor")
+    if isinstance(sf, (int, float)) and sf < DESIGN_SAFETY_FACTOR:
+        issues.append(f"safety factor {sf} is under the {DESIGN_SAFETY_FACTOR} "
+                      f"design minimum")
+
+    verdict = "needs_review" if issues else "pass"
+    result = {
+        "verdict": verdict,
+        "watertight": watertight,
+        "open_edges": open_edges,
+        "wall_mm": wall,
+        "safety_factor": sf,
+        "issues": issues,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Logged on the queue like every other Guild record — the pipeline does not
+    # wait for this and does not read it back.
+    try:
+        log_build_to_guild({
+            "event":  "engineer_review",
+            "intent": intent,
+            "specs":  specs,
+            "review": result,
+            "ts":     result["checked_at"],
+        })
+    except Exception as e:
+        log.warning("[Gate] review session not logged: %s", e)
+
+    return result
+
+
 def run_engineer_pipeline(intent: str) -> None:
     with engineer_state["lock"]:
         engineer_state["status"] = "RUNNING"
@@ -4428,6 +4514,7 @@ def run_engineer_pipeline(intent: str) -> None:
         # step 3 must not leave the previous build's True sitting here and make
         # its stale gcode look exportable.
         engineer_state["slice_ok"] = None
+        engineer_state["review"] = None
 
     engineer_log("=== ENGINEER PIPELINE STARTED ===", "success")
     engineer_log(f"Intent: {intent}", "info")
@@ -4528,6 +4615,21 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_set_status("ERROR")
         return
 
+    # Second-agent review, between render and slice. Its verdict decides
+    # whether this build may print and whether it ends COMPLETE.
+    review = engineer_review_gate(stl_path, specs, intent)
+    with engineer_state["lock"]:
+        engineer_state["review"] = review
+    if review["verdict"] == "needs_review":
+        engineer_log(f"Review gate: NEEDS REVIEW — {len(review['issues'])} "
+                     f"issue(s), print will be withheld", "warning")
+        for iss in review["issues"]:
+            engineer_log(f"  • {iss}", "warning")
+    else:
+        engineer_log(f"Review gate: pass (watertight={review['watertight']}, "
+                     f"wall={review['wall_mm']}mm, sf={review['safety_factor']})",
+                     "success")
+
     engineer_set_step(3)
     engineer_log("Step 3 — OrcaSlicer slice", "info")
     gcode_path = OUTPUT_DIR / "model.gcode"
@@ -4602,6 +4704,11 @@ def run_engineer_pipeline(intent: str) -> None:
         if not slice_ok:
             raise Exception("slice failed — refusing to print a stale gcode "
                             "left over from an earlier build")
+        # The review gate is a hard stop for the printer, not advice. A build
+        # that failed it still produces its STL and gcode so a human can look
+        # at them; what it does not get is an automatic start on a real machine.
+        if review["verdict"] == "needs_review":
+            raise Exception("review gate: " + "; ".join(review["issues"]))
         with open(gcode_path, "rb") as f:
             up = moonraker_request(
                 "POST", "/server/files/upload",
@@ -4680,8 +4787,13 @@ def run_engineer_pipeline(intent: str) -> None:
 
     threading.Thread(target=_guild_audit, daemon=True).start()
 
-    engineer_set_status("COMPLETE")
-    engineer_log("=== ENGINEER PIPELINE COMPLETE ===", "success")
+    if review["verdict"] == "needs_review":
+        engineer_set_status("NEEDS_REVIEW")
+        engineer_log("=== ENGINEER PIPELINE FINISHED — NEEDS REVIEW ===",
+                     "warning")
+    else:
+        engineer_set_status("COMPLETE")
+        engineer_log("=== ENGINEER PIPELINE COMPLETE ===", "success")
 
 
 @app.post("/api/engineer/trigger")
@@ -4740,6 +4852,7 @@ def engineer_status() -> JSONResponse:
             "specs":             engineer_state["specs"],
             "design_review":     engineer_state["design_review"],
             "slice_ok":          engineer_state["slice_ok"],
+            "review":            engineer_state["review"],
         })
 
 
