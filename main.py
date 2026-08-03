@@ -4251,6 +4251,13 @@ def run_engineer_pipeline(intent: str) -> None:
     try:
         if not moonraker_base():
             raise Exception("PRINTER_IP not set")
+        # A failed slice leaves the PREVIOUS build's model.gcode on disk —
+        # orca_slice_sync returns False without clearing its target. Uploading
+        # it here with print=true would start a print of the wrong object on a
+        # real machine. Only PRINTER_IP being unset has been hiding this.
+        if not slice_ok:
+            raise Exception("slice failed — refusing to print a stale gcode "
+                            "left over from an earlier build")
         with open(gcode_path, "rb") as f:
             up = moonraker_request(
                 "POST", "/server/files/upload",
