@@ -1775,13 +1775,22 @@ async def _laser_run(q) -> None:
 
 
 def _laser_worker(q) -> None:
+    t_start = time.monotonic()
     try:
         asyncio.run(_laser_run(q))
     except asyncio.TimeoutError:
-        _laser_set(connected=False,
-                   reason=f"connect timed out after {LASER_TIMEOUT}s")
-        log.warning("[LaserData] connect timed out after %ss — telemetry off, "
-                    "pipeline unaffected", LASER_TIMEOUT)
+        # asyncio.TimeoutError IS builtins.TimeoutError on 3.11+, which the
+        # socket layer also raises on a refused connection. Blaming the budget
+        # for a failure that took a fraction of it points at the wrong cause,
+        # so report the elapsed time and only call it a timeout if it was one.
+        el = time.monotonic() - t_start
+        if el >= LASER_TIMEOUT * 0.95:
+            reason = f"connect timed out after {el:.1f}s (budget {LASER_TIMEOUT}s)"
+        else:
+            reason = (f"connection refused or dropped after {el:.2f}s "
+                      f"— not the {LASER_TIMEOUT}s budget")
+        _laser_set(connected=False, reason=reason)
+        log.warning("[LaserData] %s — telemetry off, pipeline unaffected", reason)
     except ImportError:
         _laser_set(connected=False, reason="laser-sdk not installed")
         log.warning("[LaserData] configured but the SDK is missing "
@@ -3701,12 +3710,24 @@ def rocketride_design_brief(intent: str) -> dict | None:
     """
     if not rocketride_configured():
         return None
+    t_start = time.monotonic()
     try:
         return asyncio.run(
             asyncio.wait_for(_rocketride_brief(intent),
                              timeout=ROCKETRIDE_TIMEOUT))
     except asyncio.TimeoutError:
-        log.warning("[RocketRide] timed out after %ss", ROCKETRIDE_TIMEOUT)
+        # asyncio.TimeoutError IS builtins.TimeoutError on 3.11+, and the SDK
+        # raises that for a refused connection too. Reporting the configured
+        # budget unconditionally therefore claimed a 45s timeout for a failure
+        # that took 0.46s, which sent me looking in entirely the wrong place.
+        # Report what actually elapsed and let the number tell the story.
+        el = time.monotonic() - t_start
+        if el >= ROCKETRIDE_TIMEOUT * 0.95:
+            log.warning("[RocketRide] timed out after %.1fs (budget %ss)",
+                        el, ROCKETRIDE_TIMEOUT)
+        else:
+            log.warning("[RocketRide] connection refused or dropped after "
+                        "%.2fs — not the %ss budget", el, ROCKETRIDE_TIMEOUT)
     except ImportError:
         log.warning("[RocketRide] enabled but the SDK is missing "
                     "— pip install rocketride")
