@@ -33,6 +33,29 @@ An autonomous engineering agent running on a laptop. It researches real-world en
 
 ---
 
+## Before You Demo: close other kiosk tabs
+
+**Have exactly one kiosk tab open.** A second tab pointed at `/app` calls
+`POST /api/reset` when it loads, and that endpoint deletes the shared working
+files — including `output/model.gcode`. If an Engineer build has just finished
+and another tab loads, that build's gcode is gone and the USB export has
+nothing to copy.
+
+It fails safe rather than badly. `/api/usb/export-gcode` re-checks the file on
+disk instead of trusting the in-memory `slice_ok` flag, so the result is a
+clean `409 "No gcode file on disk"` — never a stick written with the wrong
+object. The cost is that you have to re-run the build, roughly a minute.
+
+This is not a bug in reset. Speak mode and Engineer mode both write the same
+scratch path, `output/model.gcode`, so there is no "Speak-only" state for reset
+to clear — it is doing exactly what it says. The real fix is to give Engineer
+its own per-build gcode path alongside the STL it already writes to
+`output/models/{id}/`, which would put a finished build structurally out of
+reset's reach. That change lives inside the Engineer pipeline and is
+deliberately deferred.
+
+---
+
 ## Sponsor Stack
 
 | Sponsor | How We Use It |
