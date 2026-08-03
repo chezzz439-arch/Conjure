@@ -10,7 +10,7 @@ import uuid
 import shutil
 import subprocess
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -1542,6 +1542,147 @@ def falkordb_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Snyk — last recorded security scan
+#
+# This reads the artifacts ./snyk_scan.sh left on disk. It never invokes the
+# Snyk CLI and never contacts api.snyk.io: a health endpoint that shelled out
+# to a network scanner would take tens of seconds and would fail whenever the
+# network did, which is the opposite of what a health check is for. So this
+# reports the last real scan, and says plainly how old it is rather than
+# implying the state is current.
+#
+# The whole module is written so that "we do not know" never renders as "clean".
+# ---------------------------------------------------------------------------
+SNYK_DIR = OUTPUT_DIR / "snyk"
+
+# The CLI's documented exit codes, which are the actual source of truth here.
+_SNYK_EXIT = {
+    0: ("clean", "no issues found"),
+    1: ("issues_found", "vulnerabilities found"),
+    2: ("failed", "scan did not complete"),
+    3: ("no_projects", "no supported projects detected"),
+}
+
+
+def _snyk_read_json(name: str):
+    """Parse one artifact, or None. Never raises."""
+    path = SNYK_DIR / name
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception as e:
+        log.warning("[Snyk] could not read %s: %s", name, e)
+        return None
+
+
+def _snyk_severity_counts(items, key) -> dict:
+    """Tally severities, tolerating unexpected shapes."""
+    out: dict = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        sev = str(item.get(key) or "unknown").lower()
+        out[sev] = out.get(sev, 0) + 1
+    return out
+
+
+def _snyk_deps_detail() -> dict:
+    """Headline numbers from `snyk test --json-file-output`.
+
+    Documented shape is a single object with ok/vulnerabilities/dependencyCount,
+    but --all-projects emits a list of those, so both are handled.
+    """
+    doc = _snyk_read_json("deps.json")
+    if doc is None:
+        return {}
+    docs = doc if isinstance(doc, list) else [doc]
+    vulns, deps = [], 0
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        v = d.get("vulnerabilities")
+        if isinstance(v, list):
+            vulns.extend(v)
+        if isinstance(d.get("dependencyCount"), int):
+            deps += d["dependencyCount"]
+    detail = {"severities": _snyk_severity_counts(vulns, "severity")}
+    if deps:
+        detail["dependencies_scanned"] = deps
+    # uniqueCount counts distinct issues; len(vulnerabilities) counts paths to
+    # them, so one CVE reached two ways shows up twice. Prefer the former.
+    uniq = next((d.get("uniqueCount") for d in docs
+                 if isinstance(d, dict) and isinstance(d.get("uniqueCount"), int)), None)
+    detail["issues"] = uniq if uniq is not None else len(vulns)
+    return detail
+
+
+def _snyk_code_detail() -> dict:
+    """Headline numbers from `snyk code test --json-file-output`.
+
+    Snyk's own docs distinguish --json from --sarif but do not publish the JSON
+    schema, and this has not yet been checked against a real authenticated run.
+    So try SARIF, then the open-source shape, and if neither matches say so
+    instead of reporting zero — an unrecognised file is not an empty one.
+    """
+    doc = _snyk_read_json("code.json")
+    if doc is None:
+        return {}
+    if isinstance(doc, dict) and isinstance(doc.get("runs"), list):
+        results = []
+        for run in doc["runs"]:
+            if isinstance(run, dict) and isinstance(run.get("results"), list):
+                results.extend(run["results"])
+        return {"issues": len(results),
+                "severities": _snyk_severity_counts(results, "level"),
+                "format": "sarif"}
+    if isinstance(doc, dict) and isinstance(doc.get("vulnerabilities"), list):
+        return {"issues": len(doc["vulnerabilities"]),
+                "severities": _snyk_severity_counts(doc["vulnerabilities"], "severity"),
+                "format": "snyk"}
+    return {"parsed": False,
+            "reason": "unrecognised code.json shape — counts unavailable"}
+
+
+def snyk_status() -> dict:
+    """The last recorded scan. Total — never raises, never calls Snyk."""
+    summary = _snyk_read_json("summary.json")
+    if not isinstance(summary, dict) or "dependencies_exit" not in summary:
+        return {"scanned": False,
+                "reason": "no scan recorded — run ./snyk_scan.sh"}
+
+    scanned_at = str(summary.get("scanned_at") or "")
+    age_hours = None
+    try:
+        # Written as ...Z by date(1); fromisoformat only learned Z in 3.11.
+        stamp = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+        age_hours = round(
+            (datetime.now(timezone.utc) - stamp).total_seconds() / 3600, 1)
+    except Exception:
+        pass
+
+    def leg(exit_key: str, detail: dict) -> dict:
+        rc = summary.get(exit_key)
+        state, note = _SNYK_EXIT.get(rc, ("unknown", f"unexpected exit {rc}"))
+        out = {"state": state, "note": note}
+        # Only decorate a scan that actually ran. Attaching counts to a failed
+        # scan would dress up "we do not know" as "we found nothing".
+        if rc in (0, 1):
+            out.update(detail)
+        return out
+
+    return {
+        "scanned": True,
+        "scanned_at": scanned_at,
+        "age_hours": age_hours,
+        "snyk_version": summary.get("snyk_version") or None,
+        "dependencies": leg("dependencies_exit", _snyk_deps_detail()),
+        "code": leg("code_exit", _snyk_code_detail()),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pipeline state
 # ---------------------------------------------------------------------------
 pipeline_state: dict = {
@@ -2778,6 +2919,7 @@ def health_check() -> JSONResponse:
         "llm_usage":  llm_usage_summary(),
         "printer":    moonraker_status(),
         "graph_memory": falkordb_status(),
+        "security_scan": snyk_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
