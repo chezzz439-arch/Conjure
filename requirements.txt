@@ -23,3 +23,8 @@ linkup-sdk>=0.19.0
 # Pipeline telemetry over Apache Iggy. Optional — imported lazily inside the
 # background worker, so a missing package logs a warning and nothing else.
 laser-sdk>=0.0.1
+
+# RocketRide pipeline client, for the parallel design-brief path behind
+# ROCKETRIDE_ENABLED. Optional — imported lazily, and unreferenced when the
+# flag is off.
+rocketride>=1.3.0

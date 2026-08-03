@@ -92,6 +92,11 @@ LASER_TOPIC          = os.getenv("LASER_TOPIC", "pipeline-events")
 LASER_TIMEOUT        = float(os.getenv("LASER_TIMEOUT", "10"))
 LASER_QUEUE_MAX      = int(os.getenv("LASER_QUEUE_MAX", "500"))
 
+ROCKETRIDE_ENABLED   = os.getenv("ROCKETRIDE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+ROCKETRIDE_URI       = os.getenv("ROCKETRIDE_URI", "")
+ROCKETRIDE_APIKEY    = os.getenv("ROCKETRIDE_APIKEY", "")
+ROCKETRIDE_TIMEOUT   = float(os.getenv("ROCKETRIDE_TIMEOUT", "45"))
+
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
@@ -2613,6 +2618,8 @@ async def startup_event() -> None:
     log.info("Linkup research: %s", "configured" if LINKUP_API_KEY else "not configured")
     log.info("LaserData telemetry: %s", "configured (publish path unverified)"
              if LASER_CONNECTION_STRING else "not configured")
+    log.info("RocketRide parallel path: %s", "ENABLED (unverified, standalone "
+             "endpoint only)" if ROCKETRIDE_ENABLED else "off — original pipeline")
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -3082,6 +3089,7 @@ def health_check() -> JSONResponse:
         "graph_memory": falkordb_status(),
         "security_scan": snyk_status(),
         "telemetry": laserdata_status(),
+        "rocketride": rocketride_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
@@ -3592,6 +3600,137 @@ def design_brief(intent: str, research: dict | None = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# RocketRide — parallel design-brief path (OFF unless ROCKETRIDE_ENABLED)
+#
+# This is deliberately a *sibling* of design_brief(), not a modification of it.
+# design_brief() above is untouched and remains the only thing the Engineer
+# pipeline calls. Nothing here is reachable from run_engineer_pipeline; the one
+# entry point is POST /api/rocketride/design-brief, which exists so the path
+# can be exercised standalone and compared against the real brief before anyone
+# considers wiring it in. If it never works, the flag stays off and the kiosk
+# is byte-for-byte the kiosk it is today.
+#
+# ⚠ UNVERIFIED AGAINST A REAL SERVER. The API shape was read off the installed
+# rocketride 1.3.0 package rather than guessed — use()/send()/terminate() are
+# real coroutines with the signatures used below — but no pipeline has ever
+# been executed, because that needs an API key for cloud.rocketride.ai or a
+# self-hosted engine (Docker, not installed here). Verified: it stays dormant
+# when disabled, and it fails closed rather than hanging when it cannot reach
+# a server. Treat a successful run as untested.
+#
+# Two findings drove this code:
+#
+#   1. request_timeout and max_retry_time do NOT bound connection setup. With
+#      both set to 3s against a black-holed host the client was still blocked
+#      at 25s. That is worse than having no timeout parameter, because the
+#      parameters read as if the problem is handled. asyncio.wait_for is what
+#      actually bounds it.
+#
+#   2. RocketRide's own docs warn that a bare host:port URI silently downgrades
+#      to unencrypted ws://. Since the API key travels over that socket, a typo
+#      in .env would leak it in cleartext. _rocketride_uri() refuses to do that
+#      for anything that is not localhost.
+# ---------------------------------------------------------------------------
+_ROCKETRIDE_BRIEF_PIPELINE = {
+    "description": "Conjure design brief — sizes a printable part from intent",
+    "version": 1,
+    "source": "in",
+    "components": [
+        {"id": "in", "provider": "webhook", "config": {},
+         "name": "Intent"},
+        {"id": "brief", "provider": "ai_chat",
+         "name": "Design brief",
+         "config": {"system": _BRIEF_SYSTEM, "response_format": "json"},
+         "input": [{"from": "in"}]},
+        {"id": "out", "provider": "response", "config": {},
+         "input": [{"from": "brief"}]},
+    ],
+}
+
+
+def rocketride_configured() -> bool:
+    return bool(ROCKETRIDE_ENABLED and ROCKETRIDE_URI and ROCKETRIDE_APIKEY)
+
+
+def _rocketride_uri() -> str:
+    """Normalise the URI, refusing a silent downgrade to cleartext."""
+    uri = ROCKETRIDE_URI.strip()
+    if not uri:
+        return ""
+    local = uri.startswith(("ws://localhost", "ws://127.0.0.1",
+                            "http://localhost", "http://127.0.0.1"))
+    if local:
+        return uri
+    if uri.startswith(("wss://", "https://")):
+        return uri
+    if uri.startswith(("ws://", "http://")):
+        raise ValueError(
+            f"ROCKETRIDE_URI={uri!r} would send the API key over an "
+            f"unencrypted socket — use wss:// or https:// for a remote engine")
+    # A bare host:port is the case their docs call out as silently downgrading.
+    return "wss://" + uri
+
+
+async def _rocketride_brief(intent: str) -> dict:
+    from rocketride import RocketRideClient
+
+    uri = _rocketride_uri()
+    async with RocketRideClient(uri=uri, auth=ROCKETRIDE_APIKEY,
+                                request_timeout=ROCKETRIDE_TIMEOUT) as client:
+        started = await client.use(pipeline=_ROCKETRIDE_BRIEF_PIPELINE)
+        token = started.get("token")
+        if not token:
+            raise RuntimeError(f"no task token in use() response: {started!r}")
+        try:
+            return await client.send(token, intent, mimetype="text/plain")
+        finally:
+            # Server-side tasks outlive the socket, so a leaked token is a
+            # leaked resource on someone else's machine.
+            try:
+                await client.terminate(token)
+            except Exception:
+                pass
+
+
+def rocketride_design_brief(intent: str) -> dict | None:
+    """Run the brief through RocketRide. None on any failure. Never raises.
+
+    Synchronous by design so it is a drop-in shape-match for design_brief();
+    the async client is confined to its own event loop inside this call.
+    """
+    if not rocketride_configured():
+        return None
+    try:
+        return asyncio.run(
+            asyncio.wait_for(_rocketride_brief(intent),
+                             timeout=ROCKETRIDE_TIMEOUT))
+    except asyncio.TimeoutError:
+        log.warning("[RocketRide] timed out after %ss", ROCKETRIDE_TIMEOUT)
+    except ImportError:
+        log.warning("[RocketRide] enabled but the SDK is missing "
+                    "— pip install rocketride")
+    except Exception as e:
+        log.warning("[RocketRide] failed (%s): %s", type(e).__name__, str(e)[:200])
+    return None
+
+
+def rocketride_status() -> dict:
+    if not ROCKETRIDE_ENABLED:
+        return {"enabled": False,
+                "reason": "ROCKETRIDE_ENABLED not set — original pipeline in use"}
+    if not (ROCKETRIDE_URI and ROCKETRIDE_APIKEY):
+        return {"enabled": True, "usable": False,
+                "reason": "ROCKETRIDE_URI or ROCKETRIDE_APIKEY missing"}
+    try:
+        uri = _rocketride_uri()
+    except ValueError as e:
+        return {"enabled": True, "usable": False, "reason": str(e)}
+    return {"enabled": True, "usable": True, "uri": uri,
+            "wired_into_pipeline": False,   # standalone endpoint only
+            "run_verified": False}
+
+
 def generate_scad(intent: str, specs: dict) -> str | None:
     """Claude writes the OpenSCAD. Returns None when it can't — deliberately.
 
@@ -3897,6 +4036,38 @@ async def engineer_trigger(body: dict) -> JSONResponse:
             return JSONResponse({"error": "Engineer pipeline already running"}, status_code=409)
     threading.Thread(target=run_engineer_pipeline, args=(intent,), daemon=True).start()
     return JSONResponse({"ok": True, "status": "started", "intent": intent})
+
+
+@app.post("/api/rocketride/design-brief")
+async def rocketride_design_brief_endpoint(body: dict) -> JSONResponse:
+    """Run one design brief through RocketRide, standalone.
+
+    Intentionally NOT part of /api/engineer/trigger. This exists so the path
+    can be proven equivalent to design_brief() on its own before anything
+    depends on it — and so that while it is unproven, no print can reach it.
+    It never mutates engineer_state, so it cannot disturb a running job.
+    """
+    intent = body.get("intent", "").strip()
+    if not intent:
+        return JSONResponse({"ok": False, "error": "intent is required"},
+                            status_code=400)
+    if not ROCKETRIDE_ENABLED:
+        return JSONResponse({"ok": False, "enabled": False,
+                             "error": "ROCKETRIDE_ENABLED is not set"},
+                            status_code=503)
+    if not (ROCKETRIDE_URI and ROCKETRIDE_APIKEY):
+        return JSONResponse({"ok": False, "enabled": True,
+                             "error": "ROCKETRIDE_URI or ROCKETRIDE_APIKEY missing"},
+                            status_code=503)
+    # Off the event loop: rocketride_design_brief() spins its own loop, and
+    # calling asyncio.run() from inside a running loop raises.
+    result = await asyncio.to_thread(rocketride_design_brief, intent)
+    if result is None:
+        return JSONResponse({"ok": False, "error": "RocketRide run failed "
+                             "— see server log"}, status_code=502)
+    return JSONResponse({"ok": True, "intent": intent, "result": result,
+                         "note": "unverified path — compare against "
+                                 "design_brief() before relying on it"})
 
 
 @app.get("/api/engineer/status")
