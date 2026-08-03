@@ -97,6 +97,16 @@ ROCKETRIDE_URI       = os.getenv("ROCKETRIDE_URI", "")
 ROCKETRIDE_APIKEY    = os.getenv("ROCKETRIDE_APIKEY", "")
 ROCKETRIDE_TIMEOUT   = float(os.getenv("ROCKETRIDE_TIMEOUT", "45"))
 
+# Guild.ai. GUILD_API_KEY is the *combined* "<api_key_id>:<api_key_secret>"
+# string their trigger dialog hands you in one piece — it is used as HTTP Basic
+# credentials, so it is stored exactly as issued rather than split in two.
+GUILD_API_KEY        = os.getenv("GUILD_API_KEY", "")
+GUILD_OWNER          = os.getenv("GUILD_OWNER", "")
+GUILD_WORKSPACE      = os.getenv("GUILD_WORKSPACE", "")
+GUILD_BASE           = os.getenv("GUILD_BASE", "https://app.guild.ai").rstrip("/")
+GUILD_TIMEOUT        = float(os.getenv("GUILD_TIMEOUT", "20"))
+GUILD_QUEUE_MAX      = int(os.getenv("GUILD_QUEUE_MAX", "50"))
+
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
@@ -1856,6 +1866,217 @@ def laserdata_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Guild.ai — one governed session per Engineer build
+#
+# WHICH GUILD: this is Guild.ai the agent control plane (app.guild.ai), NOT
+# `guildai` the ML experiment tracker on PyPI. They are unrelated products with
+# colliding names, and the difference is not cosmetic:
+#
+#   - `guildai` (guildai.org) is an ML run tracker, last released 2023-02-25.
+#     It imports the `imp` module, removed in Python 3.12, so it does not even
+#     import on this venv (3.14) — verified against 3.12 and 3.14 both. It also
+#     creates runs by executing a training script as a subprocess, which does
+#     not map onto a request-driven FastAPI pipeline.
+#   - Guild.ai (this one) has no Python SDK at all — theirs is TypeScript
+#     (@guildai/agents-sdk). So this talks to their REST API with `requests`,
+#     which is why no new dependency appears in requirements.txt.
+#
+# WHAT THIS ACTUALLY IS: Guild has no log_param/log_metric. Its primitive is a
+# *session*, "a log of an agent's run", so starting a session per build gives an
+# auditable trail of what the kiosk built and how it turned out. That is real
+# observability, but it is a build-audit trail, not experiment tracking — do not
+# describe it as the latter.
+#
+# VERIFIED: the endpoint and auth shape are from their published docs
+# (https://docs.guild.ai/platform/triggers.md) and the route was probed live —
+# POST /api/workspaces/probe/probe/sessions returns 401 {"error":"Unauthorized"}
+# while a nonexistent path returns 404, so the route exists and enforces auth.
+#
+# UNVERIFIED: the *response* body of a successful POST. Their docs show the
+# request but never a response payload, and no real credentials existed when
+# this was written. _guild_session_id() therefore tries several plausible keys
+# and records "unknown" rather than inventing a field name. Confirm against a
+# real 200 before trusting the session id surfaced in /api/health.
+#
+# A session always invokes an agent, so this needs a workspace with an agent and
+# an API trigger already created in their web UI. Unconfigured is the default
+# and costs nothing: log_build_to_guild() returns immediately.
+# ---------------------------------------------------------------------------
+_guild_queue: "queue.Queue | None" = None
+_guild_started = False
+_guild_lock = threading.Lock()
+_guild_stats = {"logged": 0, "dropped": 0, "failed": 0,
+                "last_session_id": None, "reason": "not started"}
+
+
+def _guild_set(**kw) -> None:
+    with _guild_lock:
+        _guild_stats.update(kw)
+
+
+def _guild_base() -> str:
+    """Normalise the base URL, refusing a silent downgrade to cleartext.
+
+    The Guild credential is a Basic-auth secret, so it rides in a header on
+    every request. Sending that over http:// to a remote host would leak it,
+    and defaulting quietly to https is friendlier than a stack trace.
+    """
+    base = GUILD_BASE.strip()
+    if not base:
+        return ""
+    if base.startswith(("http://localhost", "http://127.0.0.1")):
+        return base
+    if base.startswith("https://"):
+        return base
+    if base.startswith("http://"):
+        raise ValueError(
+            f"GUILD_BASE={base!r} would send the API key over an unencrypted "
+            f"socket — use https:// for a remote Guild instance")
+    return "https://" + base
+
+
+def get_guild_client():
+    """A requests.Session carrying Guild Basic auth, or None. Never raises.
+
+    Mirrors get_falkordb_client(): unconfigured is the ordinary case, not an
+    error, so the caller gets None and carries on. The one Guild-specific wrinkle
+    is the credential format — their trigger dialog issues a single combined
+    "<api_key_id>:<api_key_secret>" string, so it is split here rather than
+    asking for two env vars that the console never shows separately.
+    """
+    if not (GUILD_API_KEY and GUILD_OWNER and GUILD_WORKSPACE):
+        return None
+    if ":" not in GUILD_API_KEY:
+        log.warning("[Guild] GUILD_API_KEY is not in <api_key_id>:<api_key_secret> "
+                    "form — copy the combined string from the trigger dialog")
+        return None
+    try:
+        base = _guild_base()
+    except ValueError as e:
+        log.warning("[Guild] %s", e)
+        return None
+    if not base:
+        return None
+    try:
+        key_id, secret = GUILD_API_KEY.split(":", 1)
+        s = requests.Session()
+        s.auth = (key_id, secret)
+        s.headers.update({"Content-Type": "application/json"})
+        return s
+    except Exception as e:
+        log.warning("[Guild] client init failed: %s", e)
+        return None
+
+
+def _guild_session_id(body) -> str | None:
+    """Dig the session id out of a response whose shape is undocumented.
+
+    Their docs show no success payload, so rather than assert a field name this
+    tries the shapes an id realistically arrives in and gives up honestly.
+    """
+    if not isinstance(body, dict):
+        return None
+    for key in ("session_id", "id", "sessionId"):
+        val = body.get(key)
+        if isinstance(val, str) and val:
+            return val
+    inner = body.get("data") or body.get("session")
+    if isinstance(inner, dict):
+        return _guild_session_id(inner)
+    return None
+
+
+def _guild_worker(q) -> None:
+    """Drain build records, one session POST each. Outlives any single failure."""
+    while True:
+        record = q.get()
+        if record is None:
+            return
+        client = get_guild_client()
+        if not client:
+            _guild_set(reason="client unavailable")
+            continue
+        url = (f"{_guild_base()}/api/workspaces/"
+               f"{GUILD_OWNER}/{GUILD_WORKSPACE}/sessions")
+        try:
+            r = client.post(
+                url,
+                json={"session_type": "api_trigger", "agent_input": record},
+                timeout=GUILD_TIMEOUT,
+            )
+            if r.status_code >= 400:
+                # Their errors are JSON ({"error":..,"message":..}); keep the
+                # status because 401 (bad key) and 404 (wrong workspace name)
+                # need completely different fixes.
+                _guild_set(reason=f"HTTP {r.status_code}: {r.text[:160]}")
+                with _guild_lock:
+                    _guild_stats["failed"] += 1
+                continue
+            try:
+                sid = _guild_session_id(r.json())
+            except ValueError:
+                sid = None
+            with _guild_lock:
+                _guild_stats["logged"] += 1
+                _guild_stats["last_session_id"] = sid or "unknown"
+                _guild_stats["reason"] = ""
+            log.info("[Guild] build logged as session %s", sid or "(id not found "
+                     "in response — see _guild_session_id)")
+        except Exception as e:
+            with _guild_lock:
+                _guild_stats["failed"] += 1
+                _guild_stats["reason"] = f"{type(e).__name__}: {str(e)[:150]}"
+
+
+def log_build_to_guild(record: dict) -> None:
+    """Queue one build record. Never blocks, never raises, never prints.
+
+    Called from the Engineer pipeline, so the only work on the caller's thread
+    is a non-blocking put. A full queue drops the record: an audit trail that
+    can stall a print is worse than a gap in the audit trail.
+    """
+    if not (GUILD_API_KEY and GUILD_OWNER and GUILD_WORKSPACE):
+        return
+    global _guild_queue, _guild_started
+    try:
+        with _guild_lock:
+            if not _guild_started:
+                _guild_queue = queue.Queue(maxsize=GUILD_QUEUE_MAX)
+                threading.Thread(target=_guild_worker, args=(_guild_queue,),
+                                 daemon=True, name="guild").start()
+                _guild_started = True
+                _guild_stats["reason"] = "starting"
+            q = _guild_queue
+        try:
+            q.put_nowait(record)
+        except queue.Full:
+            with _guild_lock:
+                _guild_stats["dropped"] += 1
+    except Exception:
+        # Same rule as emit_pipeline_event: this runs on the hot path of a
+        # physical machine and has no business raising.
+        pass
+
+
+def guild_status() -> dict:
+    """For /api/health. Total — never raises."""
+    if not (GUILD_API_KEY and GUILD_OWNER and GUILD_WORKSPACE):
+        missing = [n for n, v in (("GUILD_API_KEY", GUILD_API_KEY),
+                                  ("GUILD_OWNER", GUILD_OWNER),
+                                  ("GUILD_WORKSPACE", GUILD_WORKSPACE)) if not v]
+        return {"configured": False,
+                "reason": f"{', '.join(missing)} not set in .env"}
+    with _guild_lock:
+        s = dict(_guild_stats)
+    s["configured"] = True
+    s["workspace"] = f"{GUILD_OWNER}/{GUILD_WORKSPACE}"
+    s["base"] = GUILD_BASE
+    # The POST response shape is undocumented; see the module note.
+    s["response_shape_verified"] = False
+    return s
+
+
+# ---------------------------------------------------------------------------
 # Pipeline state
 # ---------------------------------------------------------------------------
 pipeline_state: dict = {
@@ -2629,6 +2850,9 @@ async def startup_event() -> None:
              if LASER_CONNECTION_STRING else "not configured")
     log.info("RocketRide parallel path: %s", "ENABLED (unverified, standalone "
              "endpoint only)" if ROCKETRIDE_ENABLED else "off — original pipeline")
+    log.info("Guild.ai build audit: %s", f"configured ({GUILD_OWNER}/{GUILD_WORKSPACE}, "
+             "response shape unverified)"
+             if (GUILD_API_KEY and GUILD_OWNER and GUILD_WORKSPACE) else "not configured")
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -3109,6 +3333,7 @@ def health_check() -> JSONResponse:
         "security_scan": snyk_status(),
         "telemetry": laserdata_status(),
         "rocketride": rocketride_status(),
+        "guild": guild_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
@@ -3873,6 +4098,9 @@ def run_engineer_pipeline(intent: str) -> None:
     # Wrapped because a memory layer is never allowed to stop a build: any
     # failure here has to land us on the ordinary design_brief() path.
     specs = None
+    # Records which of the three sizing paths below actually fed this build, for
+    # the Guild audit record at the end. Pure bookkeeping — it is only ever read.
+    research_source = "none"
     try:
         prior = query_similar_builds(intent)
         if prior:
@@ -3882,6 +4110,7 @@ def run_engineer_pipeline(intent: str) -> None:
                 f"({top['score']:.0%} match)", "success")
             if top["score"] >= FALKORDB_REUSE_AT and top["specs"].get("od_mm"):
                 specs = dict(top["specs"])
+                research_source = "graph_memory"
                 engineer_log("Reusing that build's design brief — skipping the "
                              "LLM sizing call", "success")
     except Exception as e:
@@ -3912,6 +4141,7 @@ def run_engineer_pipeline(intent: str) -> None:
         else:
             engineer_log("Linkup not configured — sizing from the model's own "
                          "knowledge", "info")
+        research_source = "linkup" if research else "model_knowledge"
         specs = design_brief(intent, research)
     with engineer_state["lock"]:
         engineer_state["specs"] = specs
@@ -3959,7 +4189,10 @@ def run_engineer_pipeline(intent: str) -> None:
     engineer_set_step(3)
     engineer_log("Step 3 — OrcaSlicer slice", "info")
     gcode_path = OUTPUT_DIR / "model.gcode"
-    orca_slice_sync(stl_path, gcode_path)
+    # Return value bound rather than discarded — it is the only trustworthy
+    # signal that *this* run sliced. A failed slice leaves the previous run's
+    # model.gcode in place, so "the file exists and is large" proves nothing.
+    slice_ok = orca_slice_sync(stl_path, gcode_path)
 
     try:
         model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
@@ -4052,6 +4285,49 @@ def run_engineer_pipeline(intent: str) -> None:
             print(f"[Supabase] Engineer backup error: {e}")
 
     threading.Thread(target=_engineer_supabase_backup, daemon=True).start()
+
+    # Guild.ai audit record — what was asked for, what sized it, what came out.
+    # On its own thread for the same reason the graph and Supabase backups are:
+    # the watertight check reloads the mesh, and no governance trail is worth
+    # delaying a print for. Every field is read from artifacts that already
+    # exist, so nothing above had to change to produce it.
+    def _guild_audit():
+        try:
+            watertight = None
+            try:
+                import trimesh
+                watertight = bool(
+                    trimesh.load(str(stl_path), force="mesh").is_watertight)
+            except Exception as me:
+                # Stays None rather than False — "we did not check" and "the
+                # mesh is open" are different claims and a governance record is
+                # the last place to blur them.
+                log.info("[Guild] watertight check skipped: %s", me)
+            # gcode size is reported only when THIS run actually sliced. A
+            # failed slice leaves the previous build's model.gcode on disk, and
+            # an audit record that credits this build with the last one's
+            # output is worse than one that admits the slice failed.
+            gcode_bytes = (gcode_path.stat().st_size
+                           if slice_ok and gcode_path.exists() else 0)
+            log_build_to_guild({
+                "event":           "engineer_build",
+                "intent":          intent,
+                "specs":           specs,
+                "research_source": research_source,
+                "model_id":        model_id,
+                "outcome": {
+                    "cad_lines":       len(scad_script.splitlines()),
+                    "stl_bytes":       stl_path.stat().st_size if stl_path.exists() else 0,
+                    "watertight":      watertight,
+                    "gcode_bytes":     gcode_bytes,
+                    "slice_succeeded": slice_ok,
+                },
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:
+            log.warning("[Guild] audit record not built: %s", e)
+
+    threading.Thread(target=_guild_audit, daemon=True).start()
 
     engineer_set_status("COMPLETE")
     engineer_log("=== ENGINEER PIPELINE COMPLETE ===", "success")
