@@ -76,6 +76,15 @@ FALKORDB_TIMEOUT     = float(os.getenv("FALKORDB_TIMEOUT", "5"))
 # instead of asking the LLM again. 1.0 disables reuse while still logging hits.
 FALKORDB_REUSE_AT    = float(os.getenv("FALKORDB_REUSE_AT", "0.6"))
 
+# ── Linkup live research (optional) ───────────────────────────────────────
+# Consulted only when graph memory has nothing close enough to reuse, so it
+# costs nothing on a repeat build. "standard" is ~$0.006 a call; "deep" is
+# nearly ten times that and rarely changes the answer for a physical part.
+LINKUP_API_KEY       = os.getenv("LINKUP_API_KEY", "")
+LINKUP_DEPTH         = os.getenv("LINKUP_DEPTH", "standard")
+LINKUP_TIMEOUT       = float(os.getenv("LINKUP_TIMEOUT", "25"))
+LINKUP_MAX_SOURCES   = int(os.getenv("LINKUP_MAX_SOURCES", "5"))
+
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
@@ -2301,6 +2310,7 @@ async def startup_event() -> None:
     log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
     log.info("Graph memory: %s", "configured" if FALKORDB_HOST or FALKORDB_URL else "not configured")
+    log.info("Linkup research: %s", "configured" if LINKUP_API_KEY else "not configured")
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -2761,6 +2771,7 @@ def health_check() -> JSONResponse:
             "insforge":    bool(INSFORGE_API_KEY),
             "anthropic":   bool(ANTHROPIC_API_KEY),
             "thingiverse": bool(THINGIVERSE_APP_TOKEN),
+            "linkup":      bool(LINKUP_API_KEY),
         },
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
         "supabase_connected":  sb_ok,
@@ -3155,13 +3166,105 @@ name the single biggest printability or structural risk and the concrete fix.
 No preamble, no restating the design. If it looks sound, say so briefly."""
 
 
-def design_brief(intent: str) -> dict:
+# ---------------------------------------------------------------------------
+# Linkup — live web research for parts we have no memory of
+# ---------------------------------------------------------------------------
+# Sits between the two things that already exist: graph memory answers "have we
+# built this before", and Claude answers "how big should it be". Linkup covers
+# the gap where the answer is a real-world measurement neither of them knows —
+# the width of a specific phone, the pitch of a standard thread.
+#
+# Only consulted on a memory miss, so a repeat build costs nothing. Same
+# contract as every other optional service here: returns None rather than
+# raising, and the pipeline runs unchanged without it.
+
+
+def get_linkup_client():
+    """A Linkup client, or None. Never raises.
+
+    Unlike FalkorDB, the constructor does no network I/O, so there is no
+    eager-connect trap here — but it *does* raise ValueError when handed no
+    key, which is why the guard runs before construction rather than relying
+    on the try block.
+    """
+    if not LINKUP_API_KEY:
+        return None
+    try:
+        from linkup import LinkupClient
+    except ImportError:
+        log.warning("[Linkup] configured but the client is not installed "
+                    "— pip install linkup-sdk")
+        return None
+    try:
+        return LinkupClient(api_key=LINKUP_API_KEY)
+    except Exception as e:
+        log.warning("[Linkup] Client init failed: %s", e)
+        return None
+
+
+def research_with_linkup(query: str) -> dict | None:
+    """Real measurements for `query`, or None if unavailable.
+
+    Asks for a sourced answer rather than raw results: the design brief needs
+    a number it can act on, and handing Claude ten page snippets to re-read is
+    slower, dearer and less accurate than letting Linkup compose the answer.
+    """
+    client = get_linkup_client()
+    if not client:
+        return None
+
+    # Steer it at dimensions. Left as the bare user prompt it returns shopping
+    # listings for the finished object, which is the wrong half of the web.
+    question = (
+        f"What are the real-world dimensions, standard sizes and material "
+        f"specifications needed to design and 3D print this: {query}. "
+        f"Answer with specific measurements in millimetres where they exist."
+    )
+    try:
+        result = client.search(
+            query=question,
+            depth=LINKUP_DEPTH,
+            output_type="sourcedAnswer",
+            timeout=LINKUP_TIMEOUT,
+        )
+    except Exception as e:
+        # Deliberately one handler. The SDK raises a dozen distinct types
+        # (auth, credit, timeout, rate limit) and every one of them means the
+        # same thing here: carry on without research.
+        log.warning("[Linkup] research failed (%s): %s", type(e).__name__, e)
+        return None
+
+    answer = (getattr(result, "answer", "") or "").strip()
+    if not answer:
+        log.info("[Linkup] returned no answer for %r", query[:60])
+        return None
+    sources = []
+    for s in (getattr(result, "sources", None) or [])[:LINKUP_MAX_SOURCES]:
+        sources.append({
+            "name": getattr(s, "name", "") or "",
+            "url": getattr(s, "url", "") or "",
+            "snippet": (getattr(s, "snippet", "") or "")[:400],
+        })
+    log.info("[Linkup] %d chars, %d sources for %r",
+             len(answer), len(sources), query[:60])
+    return {"query": question, "answer": answer, "sources": sources}
+
+
+def design_brief(intent: str, research: dict | None = None) -> dict:
     """Sizes the part before any geometry exists.
 
-    Replaces the old You.com/Tavily "research" pair, which regex-scraped one
-    number out of a search snippet and otherwise returned its own defaults.
+    `research` is optional live-web context from Linkup. When absent this
+    behaves exactly as it always has — the parameter defaults to None so the
+    no-Linkup path is not merely supported, it is the same code.
     """
-    out = _llm_json(_BRIEF_SYSTEM, intent, _BRIEF_SCHEMA, "DesignBrief")
+    user = intent
+    if research and research.get("answer"):
+        user = (f"{intent}\n\n"
+                f"Web research on real-world dimensions for this part:\n"
+                f"{research['answer']}\n\n"
+                f"Prefer these measured figures over your own estimate where "
+                f"they apply, but keep every value printable on FDM.")
+    out = _llm_json(_BRIEF_SYSTEM, user, _BRIEF_SCHEMA, "DesignBrief")
     if not out:
         engineer_log("Design brief unavailable — using generic defaults", "warning")
         out = {"summary": intent, "primary_dimension_mm": 60.0,
@@ -3305,7 +3408,31 @@ def run_engineer_pipeline(intent: str) -> None:
         log.warning("[FalkorDB] similar-build lookup failed: %s", e)
 
     if specs is None:
-        specs = design_brief(intent)
+        # Memory miss. Before guessing, look the part up — this is the only
+        # branch that spends money on research, which is the point: a part we
+        # have built before never reaches here.
+        research = None
+        if LINKUP_API_KEY:
+            engineer_log("No usable prior build — researching with Linkup", "info")
+            try:
+                research = research_with_linkup(intent)
+            except Exception as e:
+                # research_with_linkup already swallows its own errors; this is
+                # belt and braces so a surprise can never reach the pipeline.
+                log.warning("[Linkup] unexpected failure: %s", e)
+            if research:
+                engineer_log(
+                    f"Linkup: {len(research['sources'])} sources — "
+                    f"{research['answer'][:110]}", "success")
+                for s in research["sources"][:3]:
+                    engineer_log(f"  source: {s['name'][:70]}", "info")
+            else:
+                engineer_log("Linkup returned nothing usable — sizing from the "
+                             "model's own knowledge", "warning")
+        else:
+            engineer_log("Linkup not configured — sizing from the model's own "
+                         "knowledge", "info")
+        specs = design_brief(intent, research)
     with engineer_state["lock"]:
         engineer_state["specs"] = specs
     engineer_log(f"Specs: {specs}", "success")
