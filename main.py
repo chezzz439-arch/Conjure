@@ -2255,6 +2255,96 @@ def _find_usb():
     return None
 
 
+def _usb_drive_info(path: str) -> dict:
+    """One drive's display name and free space. Never raises — a drive that
+    was yanked between enumeration and stat must not 500 the listing."""
+    entry = {"path": path, "name": Path(path).name or path,
+             "free_bytes": None, "free_mb": None, "writable": False}
+    try:
+        usage = shutil.disk_usage(path)
+        entry["free_bytes"] = usage.free
+        entry["free_mb"] = round(usage.free / (1024 * 1024), 1)
+    except Exception:
+        pass
+    try:
+        entry["writable"] = os.access(path, os.W_OK)
+    except Exception:
+        pass
+    return entry
+
+
+def _list_usb_drives() -> list:
+    """Every mounted removable target, not just the first one.
+
+    Deliberately a sibling of _find_usb() rather than a replacement. _find_usb()
+    is what the Speak-mode slice pipeline calls to auto-copy, it works, and its
+    first-match ordering is load-bearing there. Rewriting it to delegate here
+    would put a working print path at risk to save a dozen lines, so the
+    enumeration is duplicated on purpose.
+    """
+    seen, drives = set(), []
+
+    def add(p: str) -> None:
+        rp = str(Path(p))
+        if rp in seen:
+            return
+        seen.add(rp)
+        drives.append(_usb_drive_info(rp))
+
+    for path in [USB_MOUNT_PATH, "/mnt/usb", "/media/usb", "/media/orangepi/usb"]:
+        p = Path(path)
+        try:
+            if p.exists() and p.is_mount():
+                add(str(p))
+        except Exception:
+            continue
+
+    for parent in [Path("/media/orangepi"), Path("/media/pi"), Path("/media")]:
+        try:
+            if parent.exists() and parent.is_dir():
+                for child in sorted(parent.iterdir()):
+                    if child.is_mount():
+                        add(str(child))
+        except Exception:
+            continue
+
+    volumes = Path("/Volumes")
+    if volumes.exists():
+        import plistlib
+        try:
+            vols = sorted(volumes.iterdir())
+        except Exception:
+            vols = []
+        for vol in vols:
+            try:
+                if not vol.is_dir() or vol.name in (".localized",):
+                    continue
+                # -plist, NOT the human-readable text. _find_usb() scrapes that
+                # text with fixed-width literals like "Removable Media:          Yes",
+                # and on this macOS diskutil actually prints eleven spaces and the
+                # word "Removable" — so the match silently fails and a genuinely
+                # mounted stick reads as absent. Measured 2026-08-03:
+                #   actual   '   Removable Media:           Removable'
+                #   expected 'Removable Media:          Yes'
+                # The plist gives the same facts as real booleans, which cannot
+                # drift with a formatting change.
+                info = plistlib.loads(subprocess.run(
+                    ["diskutil", "info", "-plist", str(vol)],
+                    capture_output=True, timeout=10,
+                ).stdout)
+                if info.get("Internal") is True:
+                    continue
+                removable = (info.get("RemovableMedia")
+                             or info.get("Ejectable")
+                             or info.get("RemovableMediaOrExternalDevice"))
+                if removable:
+                    add(str(vol))
+            except Exception:
+                continue
+
+    return drives
+
+
 # ---------------------------------------------------------------------------
 # InsForge storage upload — real bucket/object REST pattern
 # ---------------------------------------------------------------------------
@@ -3282,6 +3372,129 @@ def api_copy_stl() -> JSONResponse:
     return JSONResponse({"status": "ok", "path": str(dest), "size_mb": round(mb, 2)})
 
 
+@app.get("/api/usb/list")
+def api_usb_list() -> JSONResponse:
+    """Every detected removable target, plus whether the current gcode is
+    actually exportable. The UI needs both to decide what to show, and one
+    round trip avoids the two answers disagreeing."""
+    drives = _list_usb_drives()
+    gcode = OUTPUT_DIR / "model.gcode"
+    with engineer_state["lock"]:
+        slice_ok = engineer_state["slice_ok"]
+    exists = gcode.exists()
+    size = gcode.stat().st_size if exists else 0
+    return JSONResponse({
+        "drives": drives,
+        "count": len(drives),
+        "gcode_exists": exists,
+        "gcode_size_mb": round(size / (1024 * 1024), 2) if exists else 0,
+        "slice_ok": slice_ok,
+        "exportable": bool(slice_ok) and exists and size > 0,
+    })
+
+
+@app.post("/api/usb/export-gcode")
+def api_usb_export_gcode(body: dict = None) -> JSONResponse:
+    """Copy this build's gcode to a USB drive.
+
+    Applies the SAME refusal the Moonraker path applies. orca_slice_sync()
+    returns False without deleting its target, so a failed slice leaves the
+    previous build's model.gcode sitting on disk at full size. "The file exists
+    and is 4MB" is therefore not evidence that it belongs to this build.
+    Exporting it would hand someone a USB stick holding the wrong object, which
+    is the same defect as printing it — just with the failure deferred until
+    they walk to the printer.
+    """
+    body = body or {}
+    gcode = OUTPUT_DIR / "model.gcode"
+
+    with engineer_state["lock"]:
+        slice_ok = engineer_state["slice_ok"]
+        status = engineer_state["status"]
+
+    if status == "RUNNING":
+        return JSONResponse({"ok": False, "error": "A build is still running — "
+                             "wait for it to finish before exporting"},
+                            status_code=409)
+    if slice_ok is None:
+        return JSONResponse({"ok": False, "error": "No build has been sliced yet "
+                             "— run a build first"}, status_code=409)
+    if not slice_ok:
+        return JSONResponse({"ok": False, "error": "Slice failed — refusing to "
+                             "export a stale gcode left over from an earlier "
+                             "build"}, status_code=409)
+    if not gcode.exists() or gcode.stat().st_size == 0:
+        return JSONResponse({"ok": False, "error": "No gcode file on disk"},
+                            status_code=409)
+
+    drives = _list_usb_drives()
+    if not drives:
+        return JSONResponse({"ok": False, "error": "No USB drive found — insert "
+                             "a USB drive and try again"}, status_code=503)
+
+    requested = (body.get("path") or "").strip()
+    if requested:
+        # Allowlist, not a path check. Accepting a caller-supplied destination
+        # verbatim would let this endpoint write a multi-megabyte file anywhere
+        # the kiosk user can write, so the target must be one we just detected.
+        match = next((d for d in drives if d["path"] == str(Path(requested))), None)
+        if match is None:
+            return JSONResponse({"ok": False, "error": f"{requested!r} is not a "
+                                 "detected USB drive",
+                                 "drives": [d["path"] for d in drives]},
+                                status_code=400)
+    else:
+        match = drives[0]
+
+    # Checked up front rather than left to the copy. A read-only volume raises
+    # EROFS (errno 30), which is a plain OSError and NOT PermissionError
+    # (errno 13) — so catching PermissionError alone let a mounted read-only
+    # stick fall through to the generic handler and surface as a 500 with a raw
+    # errno string. It is a 403: the request is fine, the destination is not.
+    if not match.get("writable"):
+        return JSONResponse({"ok": False, "error": f"{match['name']} is "
+                             "read-only — unlock the drive or use another one"},
+                            status_code=403)
+
+    size = gcode.stat().st_size
+    free = match.get("free_bytes")
+    if free is not None and free < size:
+        return JSONResponse({"ok": False, "error": "Not enough space on "
+                             f"{match['name']} — need {size/(1024*1024):.1f} MB, "
+                             f"{free/(1024*1024):.1f} MB free",
+                             "free_mb": match.get("free_mb")}, status_code=507)
+
+    dest = Path(match["path"]) / "conjure_print.gcode"
+    try:
+        shutil.copy2(str(gcode), str(dest))
+        written = dest.stat().st_size
+        if written != size:
+            return JSONResponse({"ok": False, "error": "Copy incomplete — wrote "
+                                 f"{written} of {size} bytes"}, status_code=500)
+        # Without this the bytes can still be in the page cache when the user
+        # pulls the stick out, which is the classic way a "successful" export
+        # arrives at the printer truncated.
+        try:
+            subprocess.run(["sync"], timeout=30, check=False)
+        except Exception as se:
+            log.warning("[USB] sync failed: %s", se)
+    except PermissionError:
+        return JSONResponse({"ok": False, "error": f"{match['name']} is not "
+                             "writable (read-only or locked)"}, status_code=403)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"Copy failed: {e}"},
+                            status_code=500)
+
+    after = _usb_drive_info(match["path"])
+    log.info("[USB] exported gcode -> %s (%.1f MB)", dest, size / (1024 * 1024))
+    return JSONResponse({
+        "ok": True, "path": str(dest), "drive": match["name"],
+        "size_mb": round(size / (1024 * 1024), 2),
+        "free_mb_after": after.get("free_mb"),
+        "message": f"Saved conjure_print.gcode to {match['name']} — safe to remove",
+    })
+
+
 @app.get("/api/state")
 def api_state() -> JSONResponse:
     return JSONResponse({k: v for k, v in pipeline_state.items()})
@@ -3691,6 +3904,12 @@ engineer_state = {
     "scad_script": None,
     "specs": None,
     "design_review": None,
+    # slice_ok was a local in run_engineer_pipeline, so nothing outside that
+    # function could tell a real slice from a stale model.gcode left behind by
+    # an earlier build. The USB export endpoint needs exactly that distinction
+    # to apply the same refusal the printer path already applies, so the result
+    # is recorded here. None = no build has sliced yet this process.
+    "slice_ok": None,
     "lock": threading.Lock(),
 }
 
@@ -4205,6 +4424,10 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_state["scad_script"] = None
         engineer_state["specs"] = None
         engineer_state["design_review"] = None
+        # Cleared on entry, not just set on success: a build that crashes before
+        # step 3 must not leave the previous build's True sitting here and make
+        # its stale gcode look exportable.
+        engineer_state["slice_ok"] = None
 
     engineer_log("=== ENGINEER PIPELINE STARTED ===", "success")
     engineer_log(f"Intent: {intent}", "info")
@@ -4312,6 +4535,8 @@ def run_engineer_pipeline(intent: str) -> None:
     # signal that *this* run sliced. A failed slice leaves the previous run's
     # model.gcode in place, so "the file exists and is large" proves nothing.
     slice_ok = orca_slice_sync(stl_path, gcode_path)
+    with engineer_state["lock"]:
+        engineer_state["slice_ok"] = slice_ok
 
     try:
         model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
@@ -4514,6 +4739,7 @@ def engineer_status() -> JSONResponse:
             "scad_script":       engineer_state["scad_script"],
             "specs":             engineer_state["specs"],
             "design_review":     engineer_state["design_review"],
+            "slice_ok":          engineer_state["slice_ok"],
         })
 
 
