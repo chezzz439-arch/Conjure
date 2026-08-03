@@ -976,6 +976,13 @@
   .step-item.error .step-icon { color: var(--red); }
   .step-item.error .step-name { color: var(--red); }
 
+  /* Printability found something the user should know about: the step did
+     finish, so it is not an error — but a green ✓ beside "walls too thin"
+     would misreport it. Amber + "!" keeps the state legible without colour. */
+  .step-item.warn .step-icon { color: var(--amber); }
+  .step-item.warn .step-name { color: var(--amber); }
+  .step-item.warn .step-msg  { color: var(--amber); }
+
   .step-spinner {
     width: 15px;
     height: 15px;
@@ -1300,6 +1307,86 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 16px;
+  }
+
+  /* Library-search results (search-before-generate flow) */
+  .results-searching {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 50px 0;
+    color: var(--text-3);
+  }
+  .source-list { display: flex; flex-direction: column; gap: 14px; min-width: 340px; }
+  .source-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--glass-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .source-marker { width: 18px; display: flex; align-items: center; justify-content: center; }
+  .source-name { flex: 1; color: var(--text-2); font-weight: 500; }
+  /* Status is carried by the text label, never colour alone. */
+  .source-status { font-family: var(--font-mono); font-size: 12px; color: var(--text-3); }
+  .source-row.found .source-status { color: var(--accent); }
+  .source-row.found .source-marker { color: var(--accent); }
+  .source-row.skipped { opacity: 0.6; }
+
+  /* Printability verdict on the model view */
+  .print-check {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    background: var(--glass-1);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-2);
+    max-width: 460px;
+  }
+  .print-check.warn { border-color: var(--amber); }
+  .print-check-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .print-check.warn .print-check-title { color: var(--amber); }
+  .print-check-line { line-height: 1.45; }
+  .results-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .results-hint { color: var(--text-3); font-size: 14px; }
+  .result-card { cursor: pointer; }
+  .result-card:hover { border-color: var(--accent-dim); }
+  .result-card .library-card-thumb {
+    height: 140px;
+    background-size: cover;
+    background-position: center;
+  }
+  .result-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+  }
+  .result-source {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
   }
 
   .library-card {
@@ -1873,6 +1960,38 @@
   </div>
 </div>
 
+<!-- ════════ SCREEN 2.5 — LIBRARY SEARCH RESULTS ════════ -->
+<div id="s-results" class="screen">
+  <div class="library-container">
+    <div class="library-header">
+      <div>
+        <h2 id="results-title">Searching for existing designs…</h2>
+        <p id="results-subtitle">Checking Printables for something ready to print</p>
+      </div>
+      <button class="btn-ghost" onclick="backToCompose()">← Back</button>
+    </div>
+    <div id="results-searching" class="results-searching">
+      <div class="source-list" id="source-list" role="status" aria-live="polite">
+        <div class="source-row" id="src-printables">
+          <div class="source-marker"><div class="step-spinner"></div></div>
+          <span class="source-name">Printables</span>
+          <span class="source-status">searching…</span>
+        </div>
+        <div class="source-row" id="src-thingiverse">
+          <div class="source-marker"><div class="step-spinner"></div></div>
+          <span class="source-name">Thingiverse</span>
+          <span class="source-status">searching…</span>
+        </div>
+      </div>
+    </div>
+    <div id="results-grid" class="library-grid" style="display:none;"></div>
+    <div class="results-actions" id="results-actions" style="display:none;">
+      <span class="results-hint">None of these fit?</span>
+      <button class="btn-primary" onclick="startMeshyGeneration()" style="flex:none;" title="Skip the library and have the AI model it from scratch">✨ Generate with AI instead</button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════ SCREEN 3 — GENERATING ════════ -->
 <div id="s-generating" class="screen">
   <div class="progress-container">
@@ -1907,11 +2026,18 @@
       <div class="step-item" id="g-step-4">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
-          <span class="step-name">Saving to cloud</span>
+          <span class="step-name">Checking printability</span>
           <span class="step-msg"></span>
         </div>
       </div>
       <div class="step-item" id="g-step-5">
+        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
+        <div class="step-info">
+          <span class="step-name">Saving to cloud</span>
+          <span class="step-msg"></span>
+        </div>
+      </div>
+      <div class="step-item" id="g-step-6">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
         <div class="step-info">
           <span class="step-name">Complete</span>
@@ -1933,6 +2059,7 @@
 
   <div class="view-overlay-top">
     <div class="view-prompt-pill" id="view-prompt"></div>
+    <div class="print-check" id="print-check" role="status" aria-live="polite" style="display:none;"></div>
   </div>
 
   <div class="view-overlay-bottom">
@@ -1946,7 +2073,13 @@
     </div>
     <div class="view-actions">
       <button class="view-btn-secondary" onclick="startOver()" title="Discard this model and return to the home screen">Start over</button>
-      <button class="view-btn-primary" id="btn-print" onclick="handlePrint()" title="Slice this model for the printer and export the file to USB">
+      <button class="view-btn-secondary" id="btn-download-stl" onclick="downloadFile('stl')" title="Save the STL to this device — no USB drive needed">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2v8m0 0L5 7m3 3 3-3"/><path d="M2 12v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/>
+        </svg>
+        Download STL
+      </button>
+      <button class="view-btn-primary" id="btn-print" onclick="handlePrint()" title="Slice this model into a printer-ready gcode file">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M4 6V2h8v4"/>
           <path d="M4 12H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-2"/>
@@ -1972,7 +2105,7 @@
       </div>
       <div class="step-item" id="s-step-2">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Slicing for Neptune 4 Pro</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">Slicing for Neptune 4 Plus</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="s-step-3">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
@@ -1994,11 +2127,26 @@
     <div id="usb-ready-msg" class="usb-ready" style="display:none;">
       <div class="usb-ready-icon">✓</div>
       <div class="usb-ready-text">
-        <strong>USB ready</strong>
-        <span>Remove the drive and insert it into your printer</span>
+        <strong id="usb-ready-title">USB ready</strong>
+        <span id="usb-ready-sub">Remove the drive and insert it into your printer</span>
       </div>
     </div>
-    <button id="btn-start-over" class="btn-primary" onclick="startOver()" style="display:none;width:100%;">Start over</button>
+    <!-- Sending straight to the printer is the fast path, so it outranks the
+         download; both stay visible because the printer can be off. -->
+    <button id="btn-print-now" class="btn-primary" onclick="printNow()" style="display:none;width:100%;margin-bottom:10px;" title="Send this file to the printer over the network and start it">
+      🖨 Print on my Neptune 4 Plus
+    </button>
+    <div id="printer-state" class="usb-ready" style="display:none;margin-bottom:10px;">
+      <div class="usb-ready-icon" id="printer-state-icon">•</div>
+      <div class="usb-ready-text">
+        <strong id="printer-state-title">Printer</strong>
+        <span id="printer-state-sub"></span>
+      </div>
+    </div>
+    <button id="btn-download-gcode" class="btn-secondary" onclick="downloadFile('gcode')" style="display:none;width:100%;margin-bottom:10px;" title="Save the printer-ready gcode to this device">
+      ↓ Download print file (.gcode)
+    </button>
+    <button id="btn-start-over" class="btn-ghost" onclick="startOver()" style="display:none;width:100%;">Start over</button>
   </div>
 </div>
 
@@ -2109,35 +2257,27 @@
     <div class="steps-list" role="status" aria-live="polite">
       <div class="step-item" id="eg-step-0">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Kite AI — agent auth</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">Design brief — size the part</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-1">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">You.com — web research</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">Claude — generate parametric CAD</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-2">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Tavily — deep research</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">OpenSCAD — render STL</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-3">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Nebius — CAD generation</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">OrcaSlicer — slice gcode</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-4">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">OpenSCAD — render STL</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">Send to printer</span><span class="step-msg"></span></div>
       </div>
       <div class="step-item" id="eg-step-5">
         <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">CuraEngine — slice gcode</span><span class="step-msg"></span></div>
-      </div>
-      <div class="step-item" id="eg-step-6">
-        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Moonraker — dispatch</span><span class="step-msg"></span></div>
-      </div>
-      <div class="step-item" id="eg-step-7">
-        <div class="step-icon-wrap"><div class="step-icon">⬡</div></div>
-        <div class="step-info"><span class="step-name">Nebius — structural review</span><span class="step-msg"></span></div>
+        <div class="step-info"><span class="step-name">Claude — design review</span><span class="step-msg"></span></div>
       </div>
     </div>
     <div class="progress-track">
@@ -2148,9 +2288,9 @@
     <div id="eg-specs-panel" class="engineer-panel" style="display:none;">
       <div class="engineer-panel-label">Retrieved specs</div>
       <div class="specs-grid">
-        <div class="spec-item"><span class="spec-label">OD</span><span class="spec-value" id="eg-sv-od">—</span></div>
-        <div class="spec-item"><span class="spec-label">Tensile</span><span class="spec-value" id="eg-sv-tensile">—</span></div>
-        <div class="spec-item"><span class="spec-label">Safety</span><span class="spec-value" id="eg-sv-safety">—</span></div>
+        <div class="spec-item"><span class="spec-label">Size</span><span class="spec-value" id="eg-sv-od">—</span></div>
+        <div class="spec-item"><span class="spec-label">Clearance</span><span class="spec-value" id="eg-sv-clearance">—</span></div>
+        <div class="spec-item"><span class="spec-label">Material</span><span class="spec-value" id="eg-sv-safety">PLA</span></div>
         <div class="spec-item"><span class="spec-label">Wall</span><span class="spec-value" id="eg-sv-wall">—</span></div>
       </div>
     </div>
@@ -2293,6 +2433,12 @@ if (SR) {
   recognition.onstart = () => { recognizing = true; };
 
   recognition.onresult = (e) => {
+    // Results can still arrive after the user releases the mic: stopListening()
+    // has already folded the in-flight interim text into `transcript`, so
+    // appending the engine's late final for that same utterance duplicated it
+    // ("make a bow and arrowmake a bow and arrow") — which then broke library
+    // search. Once the user has stopped, ignore anything further.
+    if (!isListening) return;
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const chunk = e.results[i][0].transcript;
@@ -2496,6 +2642,8 @@ function setStep(id, state, msg) {
       marker.outerHTML = '<div class="step-icon">✓</div>';
     } else if (state === 'error') {
       marker.outerHTML = '<div class="step-icon">✗</div>';
+    } else if (state === 'warn') {
+      marker.outerHTML = '<div class="step-icon">!</div>';
     } else {
       marker.outerHTML = '<div class="step-icon">⬡</div>';
     }
@@ -2507,7 +2655,7 @@ function setGenProgress(pct) {
 }
 
 function resetGenSteps() {
-  ['g-step-1', 'g-step-2', 'g-step-3', 'g-step-4', 'g-step-5'].forEach(id => setStep(id, 'pending', ''));
+  ['g-step-1', 'g-step-2', 'g-step-3', 'g-step-4', 'g-step-5', 'g-step-6'].forEach(id => setStep(id, 'pending', ''));
   setGenProgress(0);
 }
 
@@ -2517,11 +2665,20 @@ function setSliceProgress(pct) {
 
 function resetSliceSteps() {
   ['s-step-1', 's-step-2', 's-step-3', 's-step-4', 's-step-5'].forEach(id => setStep(id, 'pending', ''));
+  // Restore the USB wording — a later run may well have a stick plugged in.
+  setStepName('s-step-3', 'Checking USB drive');
+  setStepName('s-step-4', 'Copying to USB');
   setSliceProgress(0);
-  const usb = document.getElementById('usb-ready-msg');
-  if (usb) usb.style.display = 'none';
-  const btn = document.getElementById('btn-start-over');
-  if (btn) btn.style.display = 'none';
+  // Every result-state control goes back to hidden — a second run must not
+  // inherit the previous job's "Printing now" button or printer readout.
+  ['usb-ready-msg', 'btn-start-over', 'btn-download-gcode',
+   'btn-print-now', 'printer-state'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const pn = document.getElementById('btn-print-now');
+  if (pn) { pn.disabled = false; pn.innerHTML = '🖨 Print on my Neptune 4 Plus'; }
+  stopPrinterPolling();
   const cancel = document.getElementById('btn-cancel-slice');
   if (cancel) cancel.style.display = 'inline-flex';
 }
@@ -2531,6 +2688,7 @@ function statusToState(s) {
   if (s === 'complete' || s === 'done') return 'done';
   if (s === 'active') return 'active';
   if (s === 'error') return 'error';
+  if (s === 'warn') return 'warn';
   return 'pending';
 }
 
@@ -2540,8 +2698,9 @@ function handleGenEvent(d) {
     poll: 'g-step-2',
     download_glb: 'g-step-3',
     download_stl: 'g-step-3',
-    insforge: 'g-step-4',
-    complete: 'g-step-5'
+    printability: 'g-step-4',
+    insforge: 'g-step-5',
+    complete: 'g-step-6'
   };
   const id = map[d.step];
   if (id) setStep(id, statusToState(d.status), d.message || '');
@@ -2558,10 +2717,29 @@ function handleSliceEvent(d) {
   };
   const id = map[d.step];
   if (id) setStep(id, statusToState(d.status), d.message || '');
+  // USB is optional now, so on a download-only run these two steps were still
+  // headed "Checking USB drive" / "Copying to USB" while their own messages read
+  // "No USB — download instead". Rename them to match what actually happened.
+  if (d.step === 'usb_check' && /no usb/i.test(d.message || '')) {
+    setStepName('s-step-3', 'No USB drive found');
+    setStepName('s-step-4', 'Preparing download');
+  }
   if (typeof d.progress === 'number') setSliceProgress(d.progress);
 }
 
-/* ════════ GENERATE FLOW ════════ */
+function setStepName(id, text) {
+  const el = document.getElementById(id);
+  const n = el && el.querySelector('.step-name');
+  if (n) n.textContent = text;
+}
+
+/* ════════ GENERATE FLOW ════════
+   Search-before-generate: the transcript is metaprompted server-side
+   (/api/search-models), community libraries are checked for an existing
+   printable design, and Meshy only runs when nothing fits or the user
+   asks for AI generation explicitly. */
+let libraryResults = [];
+
 function handleConfirm() {
   const el = document.getElementById('prompt-input');
   const p = (el ? el.value : '').trim();
@@ -2573,6 +2751,240 @@ function handleConfirm() {
   document.getElementById('gen-prompt').textContent = '"' + p + '"';
   setViewPrompt(p);
 
+  libraryResults = [];
+  document.getElementById('results-title').textContent = 'Searching for existing designs…';
+  document.getElementById('results-subtitle').textContent = 'Checking Printables and Thingiverse for something ready to print';
+  document.getElementById('results-searching').style.display = 'flex';
+  document.getElementById('results-grid').style.display = 'none';
+  document.getElementById('results-actions').style.display = 'none';
+  resetSourceRows();
+  showScreen('s-results');
+  resetIdle();
+  speak('Let me check Printables and Thingiverse for an existing design.');
+
+  fetch('/api/search-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: p })
+  })
+    .then(r => { if (!r.ok) throw new Error('search failed'); return r.json(); })
+    .then(d => {
+      libraryResults = d.results || [];
+      renderSourceRows(d.sources || []);
+      if (!libraryResults.length) {
+        // Say what was actually checked before falling back, so the AI path
+        // never looks like the library step was skipped.
+        document.getElementById('results-title').textContent = 'No existing design found';
+        document.getElementById('results-subtitle').textContent =
+          'Nothing matched "' + (d.matched_query || currentPrompt) + '" — generating a custom model instead'
+          + (d.fit_warning ? '. ' + d.fit_warning : '');
+        // A fitted part with no library match is the case where AI generation is
+        // least likely to be useful — give the user time to read that and back out.
+        setTimeout(startMeshyGeneration, d.fit_warning ? 6000 : 1600);
+        return;
+      }
+      setTimeout(() => renderLibraryResults(d), 400);  // let the ✓ counts register
+    })
+    .catch(() => startMeshyGeneration());  // search is best-effort — never block the kiosk
+}
+
+/* A library with no credentials is hidden outright rather than shown as a dead
+   row — on a public kiosk "needs free API token" is noise aimed at nobody who
+   is standing there. Resolved once at load so the row never flashes
+   "searching…" before disappearing. Paste a token in .env and it returns. */
+let enabledSources = { printables: true, thingiverse: true };
+
+async function hideUnconfiguredSources() {
+  try {
+    const h = await (await fetch('/api/health')).json();
+    enabledSources.thingiverse = !!(h.api_keys && h.api_keys.thingiverse);
+  } catch {
+    return;   // best-effort: on failure leave every row visible
+  }
+  Object.keys(enabledSources).forEach(k => {
+    const row = document.getElementById('src-' + k);
+    if (row && !enabledSources[k]) row.style.display = 'none';
+  });
+}
+
+/* Per-source progress rows — the kiosk shows which libraries it is checking. */
+function resetSourceRows() {
+  ['printables', 'thingiverse'].forEach(k => {
+    const row = document.getElementById('src-' + k);
+    if (!row || !enabledSources[k]) return;
+    row.className = 'source-row';
+    row.querySelector('.source-marker').innerHTML = '<div class="step-spinner"></div>';
+    row.querySelector('.source-status').textContent = 'searching…';
+  });
+}
+
+function renderSourceRows(sources) {
+  sources.forEach(s => {
+    const row = document.getElementById('src-' + s.name.toLowerCase());
+    if (!row) return;
+    const marker = row.querySelector('.source-marker');
+    const status = row.querySelector('.source-status');
+    if (s.status === 'ok') {
+      row.className = 'source-row found';
+      marker.innerHTML = '<div class="step-icon">✓</div>';
+      status.textContent = s.count + (s.count === 1 ? ' design' : ' designs');
+    } else if (s.status === 'no_key') {
+      // Thingiverse is the only source that can't be searched anonymously — its
+      // API 401s without a token. Say what to do about it rather than leaving a
+      // permanently dead row that looks like a bug.
+      row.className = 'source-row skipped';
+      marker.innerHTML = '<div class="step-icon">⊘</div>';
+      status.textContent = 'needs free API token';
+      row.title = 'Thingiverse search requires a free app token. Create one at '
+                + 'thingiverse.com/developers, then add THINGIVERSE_APP_TOKEN to .env and restart.';
+    } else if (s.status === 'error') {
+      row.className = 'source-row skipped';
+      marker.innerHTML = '<div class="step-icon">✗</div>';
+      status.textContent = 'unavailable';
+    } else {
+      row.className = 'source-row';
+      marker.innerHTML = '<div class="step-icon">—</div>';
+      status.textContent = 'no matches';
+    }
+  });
+}
+
+/* Printability verdict, shown on the model view after every build. */
+function showPrintabilityVerdict() {
+  fetch('/api/state').then(r => r.json()).then(s => {
+    const box = document.getElementById('print-check');
+    if (!box) return;
+    const p = s.printability;
+    if (!p || p.error) { box.style.display = 'none'; return; }
+    const warns = p.warnings || [];
+    const notes = p.notes || [];
+    const dims = (p.dimensions_mm || []).join(' × ');
+    box.className = 'print-check' + (warns.length ? ' warn' : '');
+    let html = '<div class="print-check-title">' +
+      (warns.length ? 'Printability — check before printing' : 'Printability — looks good') + '</div>';
+    html += '<div class="print-check-line">' + dims + ' mm · walls ≈' + p.thickness_mm + ' mm · ' +
+      (p.scale_note || '') + '</div>';
+    warns.concat(notes).forEach(w => {
+      html += '<div class="print-check-line">• ' + w + '</div>';
+    });
+    box.innerHTML = html;
+    box.style.display = 'flex';
+    if (warns.length) speak('Heads up — this design may be hard to print. ' + warns[0]);
+  }).catch(() => {});
+}
+
+function backToCompose() {
+  closeEvents();
+  showScreen(lastComposeScreen || 's-speak');
+}
+
+function renderLibraryResults(d) {
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
+  libraryResults.forEach((m, i) => {
+    const card = document.createElement('div');
+    card.className = 'library-card result-card';
+    card.onclick = () => chooseLibraryModel(i);
+    card.title = 'Tap to download and print this design';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'library-card-thumb';
+    if (m.thumbnail) {
+      thumb.classList.add('has-thumb');
+      thumb.style.backgroundImage = "url('" + m.thumbnail.replace(/'/g, '') + "')";
+    } else {
+      thumb.innerHTML = '<div class="thumb-hex">⬡</div><div class="thumb-label">No preview</div>';
+    }
+    card.appendChild(thumb);
+
+    const body = document.createElement('div');
+    body.className = 'library-card-body';
+
+    const source = document.createElement('div');
+    source.className = 'result-source';
+    source.textContent = m.source + (m.author ? ' · by ' + m.author : '');
+    body.appendChild(source);
+
+    const name = document.createElement('div');
+    name.className = 'library-card-prompt';
+    name.textContent = m.name;
+    body.appendChild(name);
+
+    const meta = document.createElement('div');
+    meta.className = 'result-meta';
+    const stats = [];
+    if (m.likes) stats.push('♥ ' + m.likes.toLocaleString());
+    if (m.downloads) stats.push('⬇ ' + m.downloads.toLocaleString());
+    if (m.rating) stats.push('★ ' + m.rating);
+    meta.textContent = stats.join('   ');
+    body.appendChild(meta);
+
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+
+  document.getElementById('results-title').textContent = 'Found ready-to-print designs';
+  document.getElementById('results-subtitle').textContent =
+    (d.fit_warning ? d.fit_warning : 'Matches for "' + (d.search_query || currentPrompt) + '" — tap one to print it, or generate your own');
+  document.getElementById('results-searching').style.display = 'none';
+  grid.style.display = 'grid';
+  document.getElementById('results-actions').style.display = 'flex';
+  resetIdle();
+  speak('I found some existing designs. Pick one, or I can generate a custom model.');
+}
+
+function chooseLibraryModel(idx) {
+  const m = libraryResults[idx];
+  if (!m) return;
+
+  document.getElementById('gen-prompt').textContent = '"' + m.name + '"';
+  setViewPrompt(currentPrompt || m.name);
+  showScreen('s-generating');
+  resetGenSteps();
+  resetIdle();
+
+  closeEvents();
+  evtSource = new EventSource('/events');
+  evtSource.onmessage = (e) => {
+    let d;
+    try { d = JSON.parse(e.data); } catch (_) { return; }
+    handleGenEvent(d);
+    if (d.step === 'complete' && (d.status === 'complete' || d.status === 'done')) {
+      closeEvents();
+      showScreen('s-view');
+      initViewer();
+      // Library models are STL-first; the GLB preview conversion can fail,
+      // so ask the backend which file actually exists.
+      fetch('/api/state').then(r => r.json()).then(s => {
+        if (s.glb_path) loadModel('/api/model/glb?' + Date.now());
+        else loadSTL('/api/model/stl?' + Date.now());
+      }).catch(() => loadSTL('/api/model/stl?' + Date.now()));
+      celebrateModelReady('Design ready');
+      showPrintabilityVerdict();
+      resetIdle();
+      speak('Design downloaded. Drag to rotate, then tap print this.');
+    } else if (d.status === 'error') {
+      closeEvents();
+      showError(d.message || 'Download failed.');
+    }
+  };
+  evtSource.onerror = () => {};
+
+  fetch('/api/use-library-model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: m.source, model_id: m.model_id, name: m.name, prompt: currentPrompt })
+  }).catch(() => {
+    closeEvents();
+    showError('Could not reach the server.');
+  });
+}
+
+function startMeshyGeneration() {
+  const p = currentPrompt;
+  if (!p) return;
+
+  document.getElementById('gen-prompt').textContent = '"' + p + '"';
   showScreen('s-generating');
   resetGenSteps();
   resetIdle();
@@ -2590,6 +3002,7 @@ function handleConfirm() {
       initViewer();
       loadModel('/api/model/glb?' + Date.now());
       celebrateModelReady('Model ready');
+      showPrintabilityVerdict();
       resetIdle();
       speak('Your model is ready. Drag to rotate, then tap print this.');
     } else if (d.status === 'error') {
@@ -2624,9 +3037,15 @@ function handlePrint() {
     handleSliceEvent(d);
     if (d.step === 'usb_ready' && (d.status === 'complete' || d.status === 'done')) {
       closeEvents();
-      showUsbReady();
+      // The backend no longer requires a USB stick, so the wording has to follow
+      // whichever route actually happened rather than always saying "remove the
+      // drive" to someone who never inserted one.
+      const usedUsb = !/download/i.test(d.message || '');
+      showUsbReady(usedUsb);
       resetIdle();
-      speak('Your model is ready to print. Remove the USB drive and insert it into the printer.');
+      speak(usedUsb
+        ? 'Your model is ready to print. Remove the USB drive and insert it into the printer.'
+        : 'Your print file is ready. Tap download to save it.');
     } else if (d.status === 'error') {
       closeEvents();
       showError(d.message || 'Slicing failed.');
@@ -2640,14 +3059,134 @@ function handlePrint() {
   });
 }
 
-function showUsbReady() {
+function showUsbReady(usedUsb) {
   const usb = document.getElementById('usb-ready-msg');
   if (usb) usb.style.display = 'flex';
+  const title = document.getElementById('usb-ready-title');
+  const sub   = document.getElementById('usb-ready-sub');
+  if (title) title.textContent = usedUsb ? 'USB ready' : 'Print file ready';
+  if (sub) sub.textContent = usedUsb
+    ? 'Remove the drive and insert it into your printer'
+    : 'Download it below, then load it on your Neptune 4 Plus';
+  // Offered either way — with a USB the download is still the easier route if
+  // the stick is going back into a laptop.
+  const dl = document.getElementById('btn-download-gcode');
+  if (dl) dl.style.display = 'block';
   const btn = document.getElementById('btn-start-over');
   if (btn) btn.style.display = 'block';
   // The job is done — a lingering Cancel would only confuse.
   const cancel = document.getElementById('btn-cancel-slice');
   if (cancel) cancel.style.display = 'none';
+  refreshPrinter();
+}
+
+/* ════════ PRINT OVER THE NETWORK (Moonraker / Fluidd) ════════ */
+let printerPoll = null;
+
+/* The button only appears once we know a printer is actually there. Showing a
+   "Print on my Neptune" button that always errors is worse than not showing it,
+   and the kiosk is meant to work with no printer configured at all. */
+async function refreshPrinter() {
+  let s;
+  try {
+    s = await (await fetch('/api/printer')).json();
+  } catch { return; }
+
+  const box   = document.getElementById('printer-state');
+  const icon  = document.getElementById('printer-state-icon');
+  const title = document.getElementById('printer-state-title');
+  const sub   = document.getElementById('printer-state-sub');
+  const btn   = document.getElementById('btn-print-now');
+  if (!box || !btn) return;
+
+  if (!s.configured) { box.style.display = 'none'; btn.style.display = 'none'; return; }
+
+  box.style.display = 'flex';
+  if (!s.online) {
+    icon.textContent = '!';
+    title.textContent = 'Printer offline';
+    sub.textContent = s.message || 'Not reachable right now — download the file instead';
+    btn.style.display = 'none';
+    return;
+  }
+
+  if (s.busy) {
+    icon.textContent = '⟳';
+    title.textContent = 'Printer is busy';
+    sub.textContent = s.state + ' — ' + s.progress + '% of ' + (s.filename || 'a job');
+    btn.style.display = 'none';
+    startPrinterPolling();   // it'll free up; re-enable the button when it does
+    return;
+  }
+
+  icon.textContent = '✓';
+  title.textContent = 'Printer ready';
+  sub.textContent = 'Nozzle ' + s.nozzle_c + '°C · bed ' + s.bed_c + '°C';
+  btn.style.display = 'block';
+  btn.disabled = false;
+}
+
+function startPrinterPolling() {
+  if (printerPoll) return;
+  printerPoll = setInterval(refreshPrinter, 5000);
+}
+function stopPrinterPolling() {
+  if (printerPoll) { clearInterval(printerPoll); printerPoll = null; }
+}
+
+async function printNow() {
+  const btn = document.getElementById('btn-print-now');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Sending to printer…';
+  try {
+    const r = await fetch('/api/print-now', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ('Printer error ' + r.status));
+    btn.innerHTML = '✓ ' + (d.started ? 'Printing now' : 'Sent to printer');
+    const sub = document.getElementById('printer-state-sub');
+    if (sub) sub.textContent = d.message || '';
+    speak(d.started ? 'Your print has started.' : 'The file is on the printer. Start it from Fluidd.');
+    startPrinterPolling();   // switch the box over to live job progress
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = '✕ ' + (e.message || 'Could not reach the printer');
+    setTimeout(() => { btn.innerHTML = orig; }, 5000);
+  }
+  resetIdle();
+}
+
+/* ════════ BROWSER DOWNLOAD ════════ */
+/* Navigating an <a download> rather than fetch()-ing into a Blob: the gcode can
+   be tens of MB and the browser's own download manager streams it without
+   holding the whole file in the kiosk tab's memory. */
+async function downloadFile(kind) {
+  const btn = document.getElementById(kind === 'gcode' ? 'btn-download-gcode' : 'btn-download-stl');
+  const orig = btn ? btn.innerHTML : '';
+  try {
+    // HEAD first so a missing file surfaces as a message instead of the browser
+    // silently downloading a JSON error page named conjure-something.stl.
+    const head = await fetch('/api/download/' + kind, { method: 'HEAD' });
+    if (!head.ok) throw new Error(kind === 'gcode'
+      ? 'Slice the model first — there is no print file yet.'
+      : 'No model yet.');
+    const a = document.createElement('a');
+    a.href = '/api/download/' + kind;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    if (btn) {
+      btn.innerHTML = '✓ Downloaded';
+      setTimeout(() => { btn.innerHTML = orig; }, 2500);
+    }
+  } catch (e) {
+    if (btn) {
+      btn.innerHTML = '✕ ' + (e.message || 'Download failed');
+      setTimeout(() => { btn.innerHTML = orig; }, 3000);
+    }
+  }
+  resetIdle();
 }
 
 /* ════════ ERROR ════════ */
@@ -2709,6 +3248,7 @@ function resetAll() {
   // an exception here left "Start over" silently stuck on the viewer screen.
   try { closeEvents(); }   catch (e) { console.error('resetAll: closeEvents failed', e); }
   try { stopListening(); } catch (e) { console.error('resetAll: stopListening failed', e); }
+  try { stopPrinterPolling(); } catch (e) { console.error('resetAll: stopPrinterPolling failed', e); }
   try { handleRedo(); }    catch (e) { console.error('resetAll: handleRedo failed', e); }
   currentPrompt = '';
   fetch('/api/reset', { method: 'POST' }).catch(() => {});
@@ -2968,6 +3508,10 @@ async function selectModelFromLibrary(id) {
     if (pm.glb_available === true) loadModel('/api/models/' + id + '/glb?' + Date.now());
     else loadSTL('/api/models/' + id + '/stl?' + Date.now());
     setViewPrompt(pm.prompt ? pm.prompt : '');
+    // Reprinting an older gallery model: it never went through this session's
+    // printability pass, so hide the box rather than show the last model's verdict.
+    const pc = document.getElementById('print-check');
+    if (pc) pc.style.display = 'none';
     showScreen('s-view');
     speak('Model loaded. Rotate to inspect it. Tap print when ready.');
   } catch(e) {
@@ -3056,7 +3600,7 @@ async function handleEngineerConfirm() {
 }
 
 function resetEngineerSteps() {
-  for (let i = 0; i <= 7; i++) {
+  for (let i = 0; i <= 5; i++) {
     setStep('eg-step-' + i, 'pending', '');
   }
   const pb = document.getElementById('eg-progress-bar');
@@ -3070,11 +3614,11 @@ function resetEngineerSteps() {
 
 function updateEngineerScreen(data) {
   const step = data.current_step || 0;
-  const progress = Math.min(100, Math.round((step / 8) * 100));
+  const progress = Math.min(100, Math.round((step / 6) * 100));
   const pb = document.getElementById('eg-progress-bar');
   if (pb) pb.style.width = progress + '%';
 
-  for (let i = 0; i <= 7; i++) {
+  for (let i = 0; i <= 5; i++) {
     if (data.status === 'COMPLETE') {
       setStep('eg-step-' + i, 'done', '');
     } else if (i < step) {
@@ -3090,12 +3634,10 @@ function updateEngineerScreen(data) {
     const sp = document.getElementById('eg-specs-panel');
     if (sp) sp.style.display = 'block';
     const svOd = document.getElementById('eg-sv-od');
-    const svT = document.getElementById('eg-sv-tensile');
-    const svS = document.getElementById('eg-sv-safety');
+    const svC = document.getElementById('eg-sv-clearance');
     const svW = document.getElementById('eg-sv-wall');
     if (svOd) svOd.textContent = data.specs.od_mm != null ? data.specs.od_mm + 'mm' : '—';
-    if (svT) svT.textContent = data.specs.tensile_mpa != null ? data.specs.tensile_mpa + 'MPa' : '—';
-    if (svS) svS.textContent = data.specs.safety_factor != null ? data.specs.safety_factor + 'x' : '—';
+    if (svC) svC.textContent = data.specs.clearance_mm != null ? data.specs.clearance_mm + 'mm' : '—';
     if (svW) svW.textContent = data.specs.wall_mm != null ? data.specs.wall_mm + 'mm' : '—';
   }
 
@@ -3106,12 +3648,12 @@ function updateEngineerScreen(data) {
     if (sc) sc.textContent = data.scad_script;
   }
 
-  if (data.nebius_analysis) {
+  if (data.design_review) {
     const ap = document.getElementById('eg-analysis-panel');
     const ac = document.getElementById('eg-analysis-content');
     if (ap) ap.style.display = 'block';
     if (ac) {
-      const lines = data.nebius_analysis.split('\n').filter(l => l.trim());
+      const lines = data.design_review.split('\n').filter(l => l.trim());
       ac.innerHTML = lines.map(line => {
         line = line.trim();
         if (line.startsWith('OK:')) return '<div class="analysis-line analysis-ok">' + escapeHtml(line) + '</div>';
@@ -3913,7 +4455,12 @@ function appBgFrame() {
 window.addEventListener('load', () => {
   // Start the persistent background first — it lives on every screen, so it
   // must come up regardless of which screen the boot logic below lands on.
-  appBgInit();
+  // Both guarded: appBgInit() builds a WebGL context, and on a machine with no
+  // working GL driver THREE throws right here. Unguarded, that exception aborted
+  // the rest of this handler — no screen was ever shown and the kiosk booted to
+  // a blank page. A decorative background must never be able to do that.
+  try { appBgInit(); } catch (e) { console.error('boot: appBgInit failed', e); }
+  try { hideUnconfiguredSources(); } catch (e) { console.error('boot: hideUnconfiguredSources failed', e); }
   // Every SVG in this app is decorative — it either sits inside a text-labelled
   // or aria-labelled control, or repeats adjacent text. Hide them all from the
   // a11y tree so screen readers don't double-announce the icon and its label.
@@ -3957,7 +4504,7 @@ window.addEventListener('load', () => {
       } else if (st && st.status === 'usb_ready') {
         showScreen('s-slicing');
         resetSliceSteps();
-        showUsbReady();
+        showUsbReady(st.usb_used === true);
       } else {
         showScreen('s-idle');
       }

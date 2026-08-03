@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import json
 import time
 import logging
@@ -14,6 +15,7 @@ from typing import AsyncGenerator
 
 import requests
 import aiofiles
+import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -38,10 +40,10 @@ MESHY_API_KEY        = os.getenv("MESHY_API_KEY", "")
 INSFORGE_API_KEY     = os.getenv("INSFORGE_API_KEY", "")
 INSFORGE_BASE_URL    = os.getenv("INSFORGE_BASE_URL", "https://api.insforge.dev")
 ORCASLICER_PATH      = os.getenv("ORCASLICER_PATH", "/usr/bin/orcaslicer")
-ORCASLICER_PROFILE   = os.getenv("ORCASLICER_PROFILE", str(BASE_DIR / "profiles" / "neptune4pro_orca.json"))
+ORCASLICER_PROFILE   = os.getenv("ORCASLICER_PROFILE", str(BASE_DIR / "profiles" / "neptune4plus_orca.json"))
 CURAENGINE_PATH      = os.getenv("CURAENGINE_PATH", "/usr/bin/CuraEngine")
 CURA_RESOURCES_PATH  = os.getenv("CURA_RESOURCES_PATH", "/usr/share/cura/resources")
-PRINTER_PROFILE      = os.getenv("PRINTER_PROFILE", "neptune4pro")
+PRINTER_PROFILE      = os.getenv("PRINTER_PROFILE", "neptune4plus")
 USB_MOUNT_PATH       = os.getenv("USB_MOUNT_PATH", "/media/usb")
 OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
 DB_PATH              = BASE_DIR / "conjure.db"
@@ -55,14 +57,17 @@ SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
 
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
-YOUCOM_API_KEY       = os.getenv("YOUCOM_API_KEY", "")
-TAVILY_API_KEY       = os.getenv("TAVILY_API_KEY", "")
-KITE_API_KEY         = os.getenv("KITE_API_KEY", "")
-NEBIUS_API_KEY       = os.getenv("NEBIUS_API_KEY", "")
-NEBIUS_MODEL         = os.getenv("NEBIUS_MODEL", "meta-llama/Llama-3.3-70B-Instruct")
+ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL      = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 OPENSCAD_PATH        = os.getenv("OPENSCAD_PATH", "/usr/bin/openscad")
 PRINTER_IP           = os.getenv("PRINTER_IP", "")
 MOONRAKER_PORT       = os.getenv("MOONRAKER_PORT", "7125")
+# Fluidd is only a web UI — the thing that actually accepts files and starts
+# prints is Moonraker underneath it, so that is what the kiosk talks to.
+# MOONRAKER_URL overrides IP+port outright, for a reverse proxy or https.
+MOONRAKER_URL        = os.getenv("MOONRAKER_URL", "").rstrip("/")
+MOONRAKER_API_KEY    = os.getenv("MOONRAKER_API_KEY", "")
+MOONRAKER_TIMEOUT    = float(os.getenv("MOONRAKER_TIMEOUT", "20"))
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "models").mkdir(exist_ok=True)
@@ -70,19 +75,60 @@ PROFILES_DIR = BASE_DIR / "profiles"
 PROFILES_DIR.mkdir(exist_ok=True)
 
 MESHY_BASE    = "https://api.meshy.ai"
+# Meshy occasionally stalls a request for well over 15 s while a generation is in
+# flight. A single stall used to abort the whole build ("Read timed out") two
+# minutes into a job that was still running fine server-side, so every call gets
+# a longer ceiling and transient failures are retried instead of surfaced.
+MESHY_TIMEOUT = float(os.getenv("MESHY_TIMEOUT", "60"))
+MESHY_RETRIES = int(os.getenv("MESHY_RETRIES", "4"))
 MESHY_HEADERS = {
     "Authorization": f"Bearer {MESHY_API_KEY}",
     "Content-Type": "application/json",
 }
 
+
+def meshy_request(method: str, url: str, **kw):
+    """Meshy call that survives a transient network hiccup.
+
+    Retries timeouts, connection drops and 5xx/429 with a backoff; raises
+    immediately on 4xx, which means the request itself is wrong and retrying
+    would only burn the user's time on a spinner.
+    """
+    kw.setdefault("timeout", MESHY_TIMEOUT)
+    last = None
+    for attempt in range(1, MESHY_RETRIES + 1):
+        try:
+            resp = requests.request(method, url, **kw)
+            if resp.status_code < 500 and resp.status_code != 429:
+                return resp
+            last = Exception(f"HTTP {resp.status_code} — {resp.text[:160]}")
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = e
+        if attempt < MESHY_RETRIES:
+            backoff = 2 ** attempt          # 2s, 4s, 8s
+            log.warning("[Meshy] %s %s failed (%s) — retry %d/%d in %ds",
+                        method, url.rsplit("/", 1)[-1], last, attempt, MESHY_RETRIES, backoff)
+            time.sleep(backoff)
+    raise Exception(f"Meshy unreachable after {MESHY_RETRIES} attempts: {last}")
+
 # ---------------------------------------------------------------------------
 # Prompt cleaner — strips voice filler, extracts the object, builds Meshy prompt
 # ---------------------------------------------------------------------------
+# Appended to every generation prompt. Text-to-3D happily produces display
+# geometry — hair-thin bowstrings, floating accessories — that is impossible to
+# extrude, so the print constraints are stated up front rather than discovered
+# at the slicer.
+PRINTABILITY_CLAUSE = (
+    "designed as one solid connected piece with thick sturdy walls at least 3mm thick, "
+    "a flat stable base that sits on the print bed, no thin strings wires or hairs, "
+    "no separate floating parts, no fragile spikes, minimal overhangs"
+)
 _FILLER = re.compile(
     r"^\s*(?:"
-    r"can you (?:please )?(?:make|create|generate|build|design|print|give me|show me)\s+(?:me\s+)?"
+    r"(?:can|could|would|will) you (?:please )?(?:make|create|generate|build|design|print|give me|show me)\s+(?:me\s+)?"
     r"|please (?:make|create|generate|build|design|print)\s+(?:me\s+)?"
     r"|you (?:can\s+)?(?:make|create|generate|build|design|print)\s+(?:me\s+)?"
+    r"|i (?:want|need|would like) you to (?:make|create|generate|build|design|print)\s+(?:me\s+)?"
     r"|(?:make|create|generate|build|design|print)\s+(?:me\s+)?"
     r"|i (?:want|need|would like)\s+(?:a\s+|an\s+|to have\s+a\s+|to have\s+an\s+)?"
     r"|give me\s+(?:a\s+|an\s+)?"
@@ -90,6 +136,30 @@ _FILLER = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+# Dictated speech rarely starts cleanly. _FILLER is anchored at the start of the
+# string, so one leading "uhh" used to defeat the entire cleaner: "uhh can you
+# make me a wolf figurine" survived intact, got truncated to its first six words
+# and searched Printables for "can you make" — which returns Lego bricks and
+# barrels, not wolves. This runs first, and both are applied repeatedly because
+# the phrases layer ("ok so can you please make me a ...").
+_LEAD_NOISE = re.compile(
+    r"^\s*(?:uh+|um+|erm?|hm+|ah+|oh+|ok(?:ay)?|so|well|like|hey|hi|hello|"
+    r"yeah|yep|yes|please|now|just|actually|maybe|i think|let'?s)\b[\s,.]*",
+    re.IGNORECASE,
+)
+_LEAD_ARTICLE = re.compile(r"^\s*(?:a|an|the|some)\s+", re.IGNORECASE)
+
+
+def _strip_request_prefix(text: str) -> str:
+    """Peels leading disfluency, politeness and 'make me a' phrasing, repeatedly."""
+    prev = None
+    while prev != text:
+        prev = text
+        for pattern in (_LEAD_NOISE, _FILLER, _LEAD_ARTICLE):
+            text = pattern.sub("", text).lstrip()
+    return text.strip().rstrip(".,!?")
+
 
 _STAND_RE = re.compile(
     r"\b(stand|holder|mount|rack|dock|cradle|tray|organizer|hanger|hook)\b",
@@ -100,6 +170,17 @@ _STAND_ITEM_RE = re.compile(
     re.IGNORECASE,
 )
 _WITH_RE = re.compile(r"\s+with\b.+$", re.IGNORECASE)
+
+# "a phone case for my iPhone 17 Pro Max" wraps four words of glue around the two
+# things that actually matter. Left in, the six-word keyword cap spent its budget
+# on "for my" and truncated to "phone case for my iPhone 17" — dropping the exact
+# model designation the listing titles are keyed on, which found one unrelated
+# dock. Removing the glue gives "phone case iPhone 17 Pro Max", which matches.
+_OWNER_GLUE = re.compile(
+    r"\s+\b(?:for|to\s+fit|that\s+fits|which\s+fits|fitting)\s+"
+    r"(?:my|me|a|an|the|our|his|her|their)\b\s*",
+    re.IGNORECASE,
+)
 
 # Strips trailing noise phrases that users append when speaking naturally
 _DECO_NOISE = re.compile(
@@ -169,8 +250,7 @@ _OBJECT_SHAPES = {
 
 
 def build_meshy_prompt(raw: str) -> str:
-    cleaned = _FILLER.sub("", raw).strip().rstrip(".,!?")
-    cleaned = re.sub(r"^(?:a|an|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+    cleaned = _strip_request_prefix(raw)
     if not cleaned:
         cleaned = raw.strip()
 
@@ -180,10 +260,14 @@ def build_meshy_prompt(raw: str) -> str:
     base_object = _WITH_RE.sub("", cleaned).strip() if with_match else cleaned
 
     # Look up a structural description — match longest key first to avoid partial hits
+    # Whole words only. A plain substring test matched "box" inside "gearbox"
+    # and told Meshy a planetary gearbox was a "hollow rectangular container
+    # with a flat lid" — actively describing the wrong object. The optional
+    # plural keeps "boxes"/"vases" matching.
     shape_hint = ""
     base_lower = base_object.lower()
     for key in sorted(_OBJECT_SHAPES, key=len, reverse=True):
-        if key in base_lower:
+        if re.search(rf"\b{re.escape(key)}(?:e?s)?\b", base_lower):
             shape_hint = _OBJECT_SHAPES[key]
             break
 
@@ -229,12 +313,701 @@ def build_meshy_prompt(raw: str) -> str:
         else:
             parts.append("empty stand with nothing placed on it")
 
-    parts.append(
+    # These two are ours, not the user's, so they yield first when space is tight.
+    return _fit_meshy_prompt(parts, [
         "single isolated object, clean manifold mesh, no scene, "
-        "no background objects, suitable for FDM 3D printing"
-    )
+        "no background objects, suitable for FDM 3D printing",
+        PRINTABILITY_CLAUSE,
+    ])
 
-    return ", ".join(parts)
+
+# Meshy rejects anything longer than this outright (HTTP 400), and our own
+# boilerplate is ~400 of those characters — so a detailed request like a
+# planetary gearbox blew the limit on the suffix, not on the user's own words.
+MESHY_PROMPT_MAX = 800
+
+
+def _fit_meshy_prompt(essential: list[str], optional: list[str] = ()) -> str:
+    """Joins the prompt clauses so the result always fits Meshy's cap.
+
+    `essential` is what the user actually asked for and is never dropped — only
+    truncated, at a word boundary, if it alone overflows. `optional` is our own
+    printability boilerplate, added only while there is room.
+
+    Deliberately fills the budget rather than shedding until it fits: dropping a
+    whole 700-character description to satisfy an 800-character limit throws away
+    the request to save the hints about how to print it, which is backwards.
+    """
+    text = ", ".join(p for p in essential if p)
+    if len(text) > MESHY_PROMPT_MAX:
+        hard = text[:MESHY_PROMPT_MAX]
+        word = hard.rsplit(" ", 1)[0].rstrip(" ,;-—")
+        # Backing up to a word boundary is nicer to read, but one unbroken
+        # 1200-character "word" would back all the way up to "3D printable".
+        # Below half the budget, keep the blunt cut — more of the request
+        # survives, and Meshy tolerates a clipped final token.
+        text = word if len(word) >= MESHY_PROMPT_MAX // 2 else hard
+        log.warning("[Meshy] description alone exceeds %d chars — truncated to %d",
+                    MESHY_PROMPT_MAX, len(text))
+        return text
+
+    for clause in optional:
+        if not clause:
+            continue
+        if len(text) + 2 + len(clause) <= MESHY_PROMPT_MAX:
+            text += ", " + clause
+        else:
+            log.info("[Meshy] no room for printability clause (%d chars used) — dropped %r",
+                     len(text), clause[:60])
+    return text
+
+
+# ---------------------------------------------------------------------------
+# LLM metaprompt — Claude rewrites the raw transcript into a strong Meshy
+# prompt + a short search query for the model-library lookup.
+# Falls back to the regex build_meshy_prompt() pipeline when the key is
+# missing or the API call fails, so voice → print never breaks on LLM outages.
+# ---------------------------------------------------------------------------
+_QUERY_SYSTEM = """You read raw voice transcripts from a 3D-printing kiosk and name the object.
+
+"search_query" — 2-4 plain keywords for searching 3D model libraries like Printables
+(e.g. "phone stand", "dragon planter", "bow and arrow"). Strip filler ("uhh", "can you
+make me..."), collapse any stuttered repetition, and drop decoration adjectives unless
+they are essential to what the object IS. Library titles name the object, not its
+modifiers, so keep it short.
+
+"object_name" — the same thing as a short human-readable label (e.g. "Phone stand")."""
+
+_MESHY_SYSTEM = """You turn a raw voice transcript from a 3D-printing kiosk into a prompt
+for the Meshy text-to-3D API. Rules:
+ - Describe ONE single isolated object with its structural form spelled out
+   (e.g. "phone stand: vertical back support with a front lip groove to hold a phone upright").
+ - Strip filler ("can you make me...", "I want..."); collapse stuttered repetition.
+ - Keep every functional/decorative detail the user asked for. Surface decoration
+   (patterns, logos, engravings) should be described as embossed on the surface without
+   changing the overall shape; structural features ("with a handle") as real 3D geometry.
+ - It must describe a PRINTABLE PART, not just a nice 3D model. Re-express anything
+   that cannot be FDM printed: a bow's string becomes a thick solid bar joining the
+   limbs, an arrow is fused to the bow or omitted, thin blades/spikes become chunky.
+   Never describe strings, wires, hairs, cloth, separate floating pieces or hollow shells.
+ - End with: "single isolated object, clean manifold mesh, no scene, no background objects,
+   suitable for FDM 3D printing, one solid connected piece with walls at least 3mm thick,
+   flat stable base, no thin strings or floating parts"."""
+
+
+# The kiosk speaks while this runs, so it is latency-sensitive but short and
+# well-scoped — low effort keeps it quick without dropping to a smaller model.
+_QUERY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "search_query": {"type": "string"},
+        "object_name":  {"type": "string"},
+    },
+    "required": ["search_query", "object_name"],
+    "additionalProperties": False,
+}
+
+_MESHY_SCHEMA = {
+    "type": "object",
+    "properties": {"meshy_prompt": {"type": "string"}},
+    "required": ["meshy_prompt"],
+    "additionalProperties": False,
+}
+
+_anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+
+# USD per token, input/output. Anything not listed falls back to Sonnet pricing
+# and is flagged in the response so an unpriced model reads as an estimate rather
+# than silently reporting a wrong number.
+MODEL_PRICING = {
+    "claude-opus-4-8":   (5.00 / 1e6, 25.00 / 1e6),
+    "claude-opus-4-7":   (5.00 / 1e6, 25.00 / 1e6),
+    "claude-opus-4-6":   (5.00 / 1e6, 25.00 / 1e6),
+    "claude-sonnet-4-6": (3.00 / 1e6, 15.00 / 1e6),
+    "claude-haiku-4-5":  (1.00 / 1e6,  5.00 / 1e6),
+}
+_DEFAULT_PRICING = MODEL_PRICING["claude-sonnet-4-6"]
+
+
+def _llm_cost(model: str, tokens_in: int, tokens_out: int) -> tuple[float, bool]:
+    """Returns (usd, priced) — priced is False when the model isn't in the table."""
+    pricing = MODEL_PRICING.get(model)
+    rate_in, rate_out = pricing or _DEFAULT_PRICING
+    return tokens_in * rate_in + tokens_out * rate_out, pricing is not None
+
+
+def record_llm_usage(label: str, model: str, tokens_in: int, tokens_out: int,
+                     cached_in: int = 0) -> None:
+    """Appends one call to the usage ledger.
+
+    Deliberately never raises: a bookkeeping failure must not take down a
+    generation the user is waiting on.
+    """
+    cost, priced = _llm_cost(model, tokens_in, tokens_out)
+    log.info("[Usage] %s %s — in=%d out=%d cached=%d $%.6f%s",
+             label, model, tokens_in, tokens_out, cached_in, cost,
+             "" if priced else " (est: unpriced model)")
+    try:
+        with _db_lock:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.execute(
+                "INSERT INTO llm_usage (ts, label, model, tokens_in, tokens_out, "
+                "cached_in, cost_usd) VALUES (?,?,?,?,?,?,?)",
+                (datetime.now().isoformat(timespec="seconds"), label, model,
+                 tokens_in, tokens_out, cached_in, cost),
+            )
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        log.warning("[Usage] could not record: %s", e)
+
+
+def _llm_json(system: str, raw: str, schema: dict, label: str) -> dict | None:
+    """One structured-output call. Returns the parsed object, or None on any
+    failure so every caller can fall back to the regex pipeline."""
+    if not _anthropic_client:
+        log.info("[%s] no ANTHROPIC_API_KEY — using regex fallback", label)
+        return None
+    try:
+        response = _anthropic_client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=1000,
+            system=system,
+            messages=[{"role": "user", "content": raw.strip()}],
+            output_config={
+                "format": {"type": "json_schema", "schema": schema},
+                "effort": "low",
+            },
+        )
+        # Billed whether or not the body parses, so record before anything can
+        # return early — otherwise the ledger quietly under-reports on failures.
+        u = response.usage
+        record_llm_usage(label, ANTHROPIC_MODEL, u.input_tokens, u.output_tokens,
+                         getattr(u, "cache_read_input_tokens", 0) or 0)
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        if not text:
+            log.warning("[%s] empty reply (stop_reason=%s)", label, response.stop_reason)
+            return None
+        return json.loads(text)
+    except Exception as e:
+        log.warning("[%s] failed (%s) — using regex fallback", label, e)
+        return None
+
+
+def _llm_text(system: str, user: str, label: str, max_tokens: int = 2000) -> str | None:
+    """A plain-text completion. Same accounting as _llm_json, but the engineer
+    pipeline wants OpenSCAD source, which is code — not a JSON payload."""
+    if not _anthropic_client:
+        log.info("[%s] no ANTHROPIC_API_KEY", label)
+        return None
+    try:
+        response = _anthropic_client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user.strip()}],
+        )
+        u = response.usage
+        record_llm_usage(label, ANTHROPIC_MODEL, u.input_tokens, u.output_tokens,
+                         getattr(u, "cache_read_input_tokens", 0) or 0)
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        if not text:
+            log.warning("[%s] empty reply (stop_reason=%s)", label, response.stop_reason)
+            return None
+        return text
+    except Exception as e:
+        log.warning("[%s] failed (%s)", label, e)
+        return None
+
+
+def llm_search_query(raw: str) -> dict | None:
+    """Kiosk-blocking call: the user is watching a spinner, so this asks for
+    only the few keywords the library search needs. Keeping the paragraph-long
+    meshy_prompt out of this response is what makes the results screen fast."""
+    out = _llm_json(_QUERY_SYSTEM, raw, _QUERY_SCHEMA, "SearchQuery")
+    if not out or not out.get("search_query"):
+        return None
+    log.info("[SearchQuery] %r → %r", raw[:60], out["search_query"])
+    return out
+
+
+def llm_meshy_prompt(raw: str) -> str | None:
+    """Only needed once the user opts into AI generation, where it is hidden
+    inside the ~2 minute Meshy wait — so it can take its time and be verbose."""
+    out = _llm_json(_MESHY_SYSTEM, raw, _MESHY_SCHEMA, "MeshyPrompt")
+    if not out or not out.get("meshy_prompt"):
+        return None
+    log.info("[MeshyPrompt] %r → %s", raw[:40], out["meshy_prompt"][:80])
+    return out["meshy_prompt"]
+
+
+# ---------------------------------------------------------------------------
+# Model-library search — checked BEFORE Meshy so the kiosk can print a proven
+# community design instead of generating from scratch.
+#   • Printables — keyless unofficial GraphQL (operation names pinned below;
+#     they are undocumented and may change — every call degrades gracefully).
+#   • Thingiverse — optional, needs THINGIVERSE_APP_TOKEN in .env
+#     (free: https://www.thingiverse.com/developers).
+# ---------------------------------------------------------------------------
+THINGIVERSE_APP_TOKEN = os.getenv("THINGIVERSE_APP_TOKEN", "")
+
+PRINTABLES_GQL   = "https://api.printables.com/graphql/"
+PRINTABLES_MEDIA = "https://media.printables.com/"
+_LIBRARY_UA      = {"User-Agent": "ConjureKiosk/1.0", "Content-Type": "application/json"}
+
+_PRINTABLES_SEARCH_Q = """query SearchModels($query: String!, $limit: Int, $ordering: SearchChoicesEnum) {
+  result: searchPrints2(query: $query, printType: print, limit: $limit, ordering: $ordering) {
+    items { id name slug ratingAvg likesCount downloadCount user { publicUsername } image { filePath } }
+  }
+}"""
+_PRINTABLES_FILES_Q = """query ModelFiles($id: ID!) {
+  model: print(id: $id) { id stls { id name fileSize } }
+}"""
+_PRINTABLES_LINK_M = """mutation GetDownloadLink($id: ID!, $modelId: ID!, $fileType: DownloadFileTypeEnum!, $source: DownloadSourceEnum!) {
+  getDownloadLink(id: $id, printId: $modelId, fileType: $fileType, source: $source) {
+    ok errors { field messages } output { link count ttl }
+  }
+}"""
+
+
+def _printables_gql(operation: str, query: str, variables: dict) -> dict | None:
+    try:
+        r = requests.post(
+            PRINTABLES_GQL,
+            headers=_LIBRARY_UA,
+            json={"operationName": operation, "query": query, "variables": variables},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            log.warning("[Printables] HTTP %s: %s", r.status_code, r.text[:150])
+            return None
+        body = r.json()
+        if body.get("errors"):
+            log.warning("[Printables] GraphQL errors: %s", str(body["errors"])[:200])
+            return None
+        return body.get("data")
+    except Exception as e:
+        log.warning("[Printables] request failed: %s", e)
+        return None
+
+
+def printables_search(query: str, limit: int = 6) -> list[dict]:
+    data = _printables_gql(
+        "SearchModels", _PRINTABLES_SEARCH_Q,
+        {"query": query, "limit": limit, "ordering": "best_match"},
+    )
+    items = ((data or {}).get("result") or {}).get("items") or []
+    results = []
+    for it in items:
+        img = (it.get("image") or {}).get("filePath") or ""
+        results.append({
+            "source":    "printables",
+            "model_id":  str(it["id"]),
+            "name":      it.get("name") or "Untitled",
+            "author":    (it.get("user") or {}).get("publicUsername") or "",
+            "thumbnail": (PRINTABLES_MEDIA + img) if img else None,
+            "likes":     it.get("likesCount") or 0,
+            "downloads": it.get("downloadCount") or 0,
+            "rating":    round(float(it.get("ratingAvg") or 0), 1),
+            "url":       f"https://www.printables.com/model/{it['id']}-{it.get('slug', '')}",
+        })
+    return results
+
+
+def printables_stl_files(model_id: str) -> list[dict]:
+    data = _printables_gql("ModelFiles", _PRINTABLES_FILES_Q, {"id": model_id})
+    return ((data or {}).get("model") or {}).get("stls") or []
+
+
+def printables_download_url(file_id: str, model_id: str) -> str | None:
+    data = _printables_gql(
+        "GetDownloadLink", _PRINTABLES_LINK_M,
+        {"id": file_id, "modelId": model_id, "fileType": "stl", "source": "model_detail"},
+    )
+    out = ((data or {}).get("getDownloadLink") or {})
+    if out.get("ok") and out.get("output", {}).get("link"):
+        return out["output"]["link"]
+    log.warning("[Printables] getDownloadLink failed: %s", str(out)[:200])
+    return None
+
+
+def thingiverse_search(query: str, limit: int = 6) -> list[dict]:
+    if not THINGIVERSE_APP_TOKEN:
+        return []
+    try:
+        r = requests.get(
+            f"https://api.thingiverse.com/search/{requests.utils.quote(query)}/",
+            params={"type": "things", "per_page": limit},
+            headers={"Authorization": f"Bearer {THINGIVERSE_APP_TOKEN}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            log.warning("[Thingiverse] HTTP %s: %s", r.status_code, r.text[:150])
+            return []
+        hits = (r.json() or {}).get("hits") or []
+        return [{
+            "source":    "thingiverse",
+            "model_id":  str(h["id"]),
+            "name":      h.get("name") or "Untitled",
+            "author":    (h.get("creator") or {}).get("name") or "",
+            "thumbnail": h.get("thumbnail"),
+            "likes":     h.get("like_count") or 0,
+            "downloads": h.get("download_count") or 0,
+            "rating":    0,
+            "url":       h.get("public_url") or "",
+        } for h in hits]
+    except Exception as e:
+        log.warning("[Thingiverse] search failed: %s", e)
+        return []
+
+
+def thingiverse_stl_url(thing_id: str) -> tuple[str | None, str | None]:
+    """Returns (download_url, file_name) for the first STL of a thing."""
+    try:
+        r = requests.get(
+            f"https://api.thingiverse.com/things/{thing_id}/files",
+            headers={"Authorization": f"Bearer {THINGIVERSE_APP_TOKEN}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return None, None
+        for f in r.json() or []:
+            if (f.get("name") or "").lower().endswith(".stl"):
+                return f.get("download_url"), f.get("name")
+        return None, None
+    except Exception as e:
+        log.warning("[Thingiverse] files failed: %s", e)
+        return None, None
+
+
+def search_model_libraries(query: str, limit: int = 6) -> tuple[list[dict], list[dict]]:
+    """Searches every library and reports per-source status for the kiosk UI.
+
+    Returns (results, sources) where sources is
+    [{"name","status","count"}] with status ok | empty | error | no_key.
+    """
+    sources: list[dict] = []
+
+    try:
+        p_results = printables_search(query, limit=limit)
+        sources.append({"name": "Printables", "status": "ok" if p_results else "empty",
+                        "count": len(p_results)})
+    except Exception as e:
+        log.warning("[Library] Printables failed: %s", e)
+        p_results = []
+        sources.append({"name": "Printables", "status": "error", "count": 0})
+
+    remaining = max(0, limit - len(p_results))
+    if not THINGIVERSE_APP_TOKEN:
+        t_results = []
+        sources.append({"name": "Thingiverse", "status": "no_key", "count": 0})
+    else:
+        try:
+            t_results = thingiverse_search(query, limit=remaining) if remaining else []
+            sources.append({"name": "Thingiverse", "status": "ok" if t_results else "empty",
+                            "count": len(t_results)})
+        except Exception as e:
+            log.warning("[Library] Thingiverse failed: %s", e)
+            t_results = []
+            sources.append({"name": "Thingiverse", "status": "error", "count": 0})
+
+    return p_results + t_results, sources
+
+
+_TRAILING_STOPWORDS = {"for", "with", "to", "my", "the", "a", "an", "of", "in",
+                       "on", "that", "and", "or", "it", "me"}
+
+
+def _trim_stopwords(text: str) -> str:
+    words = text.split()
+    while words and words[-1].lower() in _TRAILING_STOPWORDS:
+        words.pop()
+    return " ".join(words)
+
+
+def _query_variants(query: str) -> list[str]:
+    """Progressively shorter queries, so a wordy request still finds the
+    standard object ("miniature bow and arrow for a toy" → "bow and arrow")."""
+    q = _trim_stopwords(_dedupe_phrases(query))
+    variants = [q]
+    words = q.split()
+    # Drop leading adjectives one at a time, then keep only the last two words —
+    # library titles are named after the object, not its modifiers.
+    for start in range(1, min(len(words), 4)):
+        tail = _trim_stopwords(" ".join(words[start:]))
+        if tail and tail not in variants:
+            variants.append(tail)
+    if len(words) > 2:
+        tail2 = _trim_stopwords(" ".join(words[-2:]))
+        if tail2 and tail2 not in variants:
+            variants.append(tail2)
+    return variants
+
+
+def search_with_fallback(query: str, limit: int = 6) -> tuple[list[dict], list[dict], str]:
+    """Tries progressively shorter queries until a library returns something."""
+    sources: list[dict] = []
+    for attempt in _query_variants(query):
+        results, sources = search_model_libraries(attempt, limit=limit)
+        if results:
+            if attempt != query:
+                log.info("[Library] %r found nothing — matched on %r", query, attempt)
+            return results, sources, attempt
+    return [], sources, query
+
+
+def _dedupe_phrases(text: str) -> str:
+    """Collapses an immediately repeated phrase, e.g. a stuttering speech engine
+    emitting "make a bow and arrowmake a bow and arrow"."""
+    s = " ".join(text.split())
+    # Whole string is the same phrase twice, with or without a space between.
+    m = re.fullmatch(r"(.{3,}?)\s*\1", s, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # Same phrase repeated back-to-back inside a longer string.
+    words = s.split()
+    for size in range(len(words) // 2, 1, -1):
+        for i in range(len(words) - 2 * size + 1):
+            a = [w.lower() for w in words[i:i + size]]
+            b = [w.lower() for w in words[i + size:i + 2 * size]]
+            if a == b:
+                return " ".join(words[:i + size] + words[i + 2 * size:])
+    return s
+
+
+def _fallback_search_query(raw: str) -> str:
+    """Regex-only search keywords when the LLM metaprompt is unavailable."""
+    cleaned = _strip_request_prefix(_dedupe_phrases(raw))
+    cleaned = _WITH_RE.sub("", cleaned).strip()
+    cleaned = _OWNER_GLUE.sub(" ", cleaned).strip()
+    # Long dictated sentences never match library titles — keep it to keywords.
+    words = cleaned.split()
+    if len(words) > 6:
+        cleaned = " ".join(words[:6])
+    cleaned = _trim_stopwords(cleaned)
+    return cleaned or raw.strip()
+
+
+# Meshy is a decorative text-to-3D generator: it has no notion of a real device's
+# dimensions, so "phone case for my iPhone 17 Pro Max" comes back as a solid
+# phone, not a case that fits one. No prompt wording fixes that. These parts only
+# work when someone has measured the thing they clip onto, which is exactly what
+# the community libraries have and Meshy doesn't — so say so before the user
+# spends Meshy credits on a model that cannot fit.
+_FITTED_PART = re.compile(
+    r"\b(?:case|cover|sleeve|holster|bracket|mount|adapter|enclosure|lid|cap|"
+    r"gasket|insert|clip|shim|spacer|bushing|coupler|thread|screw|bolt|nut)\b",
+    re.IGNORECASE,
+)
+
+
+def fitted_part_warning(raw: str) -> str | None:
+    """A caution for parts whose whole job is matching another object's size."""
+    if not _FITTED_PART.search(raw or ""):
+        return None
+    return ("A part like this has to match real measurements to fit, and AI "
+            "generation only guesses at shape — pick a library match if there "
+            "is one, since those were modelled from the actual dimensions.")
+
+
+# ---------------------------------------------------------------------------
+# Printability — makes sure what leaves the kiosk is a printable PART, not just
+# a 3D model. Meshy emits arbitrary units, and the slicer only ever scales DOWN
+# to fill the bed, so a generated bow arrived 1.9 m tall and got squashed to fit
+# — leaving a sub-nozzle bowstring that no printer can extrude. Generated meshes
+# are therefore repaired and normalized to a real physical size here, then
+# measured; library STLs are already authored in mm and keep their scale.
+# ---------------------------------------------------------------------------
+# Elegoo Neptune 4 Plus. Elegoo's own OrcaSlicer profile declares 325×325×385;
+# a few mm are shaved off each axis so a part that measures exactly bed-size
+# doesn't collide with the clips at the edge.
+BED_X_MM = float(os.getenv("BED_X_MM", "320"))
+BED_Y_MM = float(os.getenv("BED_Y_MM", "320"))
+BED_Z_MM = float(os.getenv("BED_Z_MM", "380"))
+NOZZLE_MM        = 0.4
+MIN_WALL_MM      = 2 * NOZZLE_MM       # two perimeters — below this won't extrude
+TARGET_LONGEST_MM = float(os.getenv("TARGET_LONGEST_MM", "120"))
+
+# A community STL whose longest edge lands outside this band is almost certainly
+# not authored in mm — Printables hosts plenty of files exported in cm, inches or
+# metres. Below the floor nothing is printable at all (a 3 mm wolf is a speck);
+# above the ceiling nothing fits any bed.
+SANE_MIN_MM = 15.0
+SANE_MAX_MM = 1000.0
+
+# Tried largest-first: an inch-authored file and a cm-authored one can both land
+# in the sane band, and inches is by far the more common export mistake.
+UNIT_GUESSES = [("inches", 25.4), ("cm", 10.0), ("metres", 1000.0)]
+
+
+# glTF/GLB is Y-up; STL is Z-up. Neither format records which convention its
+# author used, so trimesh copies vertices across untouched and the 90° is lost.
+# That is why library models showed up lying on their side in the viewer while
+# Meshy models (already Y-up) looked fine — and why a Meshy GLB converted to STL
+# reaches the slicer tipped over. Both directions have to be applied explicitly.
+def _rotate_x(mesh, degrees: float):
+    import trimesh
+    mesh.apply_transform(
+        trimesh.transformations.rotation_matrix(math.radians(degrees), [1, 0, 0])
+    )
+    return mesh
+
+
+def _z_up_to_y_up(mesh):
+    """STL/slicer convention → viewer convention. (x, y, z) → (x, z, -y)."""
+    return _rotate_x(mesh, -90.0)
+
+
+def _y_up_to_z_up(mesh):
+    """Viewer/Meshy convention → STL convention. (x, y, z) → (x, -z, y)."""
+    return _rotate_x(mesh, 90.0)
+
+
+def _mesh_report(mesh, scale_note: str, generated: bool) -> dict:
+    """Measures a mesh (already in mm) and flags what will not print.
+
+    Severity depends on provenance. A community design with thousands of
+    successful prints is allowed to be multi-part and slightly leaky — slicers
+    handle both routinely — so those are notes, not warnings. The same traits
+    in a freshly generated mesh are real defects.
+    """
+    warnings: list[str] = []
+    notes: list[str] = []
+    ext = [round(float(v), 1) for v in mesh.extents]
+
+    # Mean wall thickness: for a slab of thickness t, area ≈ 2×face area, so
+    # 2·V/A ≈ t. Cheap, dependency-free, and it cleanly separates a hair-thin
+    # bowstring (~0.4 mm) from a phone stand (~3 mm) or a figurine (~12 mm).
+    thickness = (2.0 * float(mesh.volume) / float(mesh.area)) if mesh.area > 0 else 0.0
+
+    if thickness < MIN_WALL_MM:
+        warnings.append(
+            f"Very thin walls (~{thickness:.1f} mm). The nozzle is {NOZZLE_MM} mm, "
+            f"so the thinnest parts may not print at all."
+        )
+    if ext[0] > BED_X_MM or ext[1] > BED_Y_MM or ext[2] > BED_Z_MM:
+        warnings.append(f"Larger than the build plate ({ext[0]}×{ext[1]}×{ext[2]} mm).")
+    if not mesh.is_watertight:
+        (warnings if generated else notes).append(
+            "Mesh has holes — the slicer will close small ones automatically."
+        )
+
+    parts = 1
+    try:
+        # Disconnected chunks = pieces that aren't joined (the arrow floating
+        # beside the bow). Needs a trimesh graph engine; skip if unavailable.
+        comps = mesh.split(only_watertight=False)
+        parts = len(comps)
+        if parts > 1:
+            loose = [c for c in comps if float(c.extents.min()) < MIN_WALL_MM]
+            if generated:
+                warnings.append(
+                    f"{parts} separate pieces that aren't joined — they print as "
+                    f"loose parts" + (f", {len(loose)} too thin to print" if loose else "")
+                )
+            else:
+                notes.append(f"Multi-part design — {parts} pieces on the plate.")
+    except Exception as e:
+        log.info("[Printability] component split unavailable: %s", e)
+
+    return {
+        "dimensions_mm": ext,
+        "thickness_mm":  round(thickness, 2),
+        "watertight":    bool(mesh.is_watertight),
+        "parts":         parts,
+        "scale_note":    scale_note,
+        "warnings":      warnings,
+        "notes":         notes,
+        "printable":     not warnings,
+    }
+
+
+def make_printable(stl_path: Path, generated: bool) -> dict:
+    """Repairs, scales and seats an STL on the bed, rewriting it in place.
+
+    generated=True  — Meshy output in arbitrary units: normalize the longest
+                      edge to TARGET_LONGEST_MM so the part is a sensible object
+                      instead of a plate-filling blow-up.
+    generated=False — community STL already authored in mm: keep the designer's
+                      scale, only shrink if it overflows the bed.
+    """
+    import trimesh
+
+    mesh = trimesh.load(str(stl_path), force="mesh")
+    if mesh.is_empty or len(mesh.faces) == 0:
+        raise Exception("Mesh is empty")
+
+    # Repair — cheap fixes that make a mesh sliceable.
+    mesh.merge_vertices()
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.update_faces(mesh.unique_faces())
+    mesh.remove_infinite_values()
+    try:
+        # fix_normals() reaches for scipy via body_count; networkx alone doesn't
+        # satisfy it. Winding is a nicety, not a blocker — skip it if unavailable.
+        mesh.fix_normals()
+    except Exception as e:
+        log.info("[Printability] fix_normals skipped: %s", e)
+    if not mesh.is_watertight:
+        try:
+            mesh.fill_holes()
+        except Exception as e:
+            log.info("[Printability] fill_holes skipped: %s", e)
+
+    longest = float(max(mesh.extents))
+    if longest <= 0:
+        raise Exception("Mesh has zero size")
+
+    if generated:
+        factor = TARGET_LONGEST_MM / longest
+        scale_note = f"scaled to {TARGET_LONGEST_MM:.0f} mm longest edge"
+    elif longest < SANE_MIN_MM or longest > SANE_MAX_MM:
+        # "Community STLs are authored in mm" is only mostly true. A Printables
+        # wolf figurine arrived 2.4 × 1.8 × 3.0 — kept at "original designer
+        # scale" it sliced into a 3 mm speck with sub-nozzle walls. Recover the
+        # intended size by testing the usual wrong units, and fall back to the
+        # generated-model normalization when none of them fit.
+        for unit_name, mult in UNIT_GUESSES:
+            if SANE_MIN_MM <= longest * mult <= SANE_MAX_MM:
+                factor = mult
+                scale_note = f"rescaled from {unit_name} — the file wasn't authored in mm"
+                break
+        else:
+            factor = TARGET_LONGEST_MM / longest
+            scale_note = f"odd units — normalized to {TARGET_LONGEST_MM:.0f} mm longest edge"
+        log.info("[Printability] %s: longest %.2f mm is implausible — %s",
+                 stl_path.name, longest, scale_note)
+    else:
+        # Only intervene when a community model genuinely won't fit.
+        ex, ey, ez = (float(v) for v in mesh.extents)
+        factor = min(BED_X_MM / ex, BED_Y_MM / ey, BED_Z_MM / ez, 1.0)
+        scale_note = "original designer scale" if factor == 1.0 else "shrunk to fit the build plate"
+
+    if factor != 1.0:
+        mesh.apply_scale(factor)
+
+    # Unit recovery multiplies by up to 1000, so re-check the plate afterwards —
+    # otherwise a metre-authored file trades "3 mm speck" for "won't fit".
+    ex, ey, ez = (float(v) for v in mesh.extents)
+    fit = min(BED_X_MM / ex, BED_Y_MM / ey, BED_Z_MM / ez, 1.0)
+    if fit < 1.0:
+        mesh.apply_scale(fit)
+        scale_note += ", shrunk to fit the build plate"
+
+    # Seat on the bed and centre in XY so the slicer starts from a sane pose.
+    bounds = mesh.bounds
+    mesh.apply_translation([
+        -(bounds[0][0] + bounds[1][0]) / 2.0,
+        -(bounds[0][1] + bounds[1][1]) / 2.0,
+        -bounds[0][2],
+    ])
+
+    mesh.export(str(stl_path))
+    report = _mesh_report(mesh, scale_note, generated)
+    log.info("[Printability] %s — %s mm, wall≈%s mm, parts=%s, warnings=%d",
+             stl_path.name, report["dimensions_mm"], report["thickness_mm"],
+             report["parts"], len(report["warnings"]))
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +1029,21 @@ def init_db() -> None:
                 stl_path      TEXT
             )
         """)
+        # One row per Anthropic call. Kept in the gallery DB so the running total
+        # survives restarts — the log alone resets every time uvicorn reloads.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts         TEXT    NOT NULL,
+                label      TEXT    NOT NULL,
+                model      TEXT    NOT NULL,
+                tokens_in  INTEGER NOT NULL,
+                tokens_out INTEGER NOT NULL,
+                cached_in  INTEGER NOT NULL DEFAULT 0,
+                cost_usd   REAL    NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts)")
         conn.commit()
         conn.close()
 
@@ -452,7 +1240,10 @@ pipeline_state: dict = {
     "stl_path": None,
     "glb_path": None,
     "gcode_path": None,
+    "usb_used": None,     # None = not sliced yet; False = download-only run
+    "sent_to_printer": False,
     "error": None,
+    "printability": None,    # report from make_printable() for the current model
 }
 
 # ---------------------------------------------------------------------------
@@ -600,18 +1391,55 @@ def upload_to_insforge_storage(file_path: Path, bucket: str = INSFORGE_BUCKET):
 
 
 # ---------------------------------------------------------------------------
+# Printability step shared by both pipelines
+# ---------------------------------------------------------------------------
+async def _apply_printability(active_path: Path, model_path: Path, generated: bool) -> dict:
+    """Rewrites the active STL in place, mirrors it into the model dir, and
+    records the report on pipeline_state. Never fatal — a failed check must not
+    cost the user a model they just waited two minutes for."""
+    try:
+        report = await asyncio.to_thread(make_printable, active_path, generated)
+        await asyncio.to_thread(shutil.copy2, str(active_path), str(model_path))
+    except Exception as e:
+        log.warning("[Printability] check failed: %s", e)
+        report = {"printable": True, "warnings": [], "notes": [], "error": str(e)}
+    pipeline_state["printability"] = report
+    return report
+
+
+def _printability_message(report: dict) -> str:
+    if report.get("error"):
+        return "Printability check skipped"
+    dims = report.get("dimensions_mm") or []
+    size = "×".join(str(d) for d in dims) + " mm" if dims else "sized"
+    if report.get("warnings"):
+        return f"{size} — {report['warnings'][0]}"
+    return f"Printable — {size}, walls ≈{report.get('thickness_mm')} mm"
+
+
+# ---------------------------------------------------------------------------
 # Generation background task
 # ---------------------------------------------------------------------------
-async def run_generation(prompt: str) -> None:
+async def run_generation(prompt: str, meshy_prompt_override: str | None = None) -> None:
     _clear_event_buffer()
     try:
         # ── Step 1: Create Meshy task ──────────────────────────────────────
         await push_event("create", "active", "Sending prompt to Meshy AI...", 2)
         threading.Thread(target=speak, args=("Got it. Conjuring your model now.",), daemon=True).start()
-        meshy_prompt = build_meshy_prompt(prompt)
-        log.info("[Meshy] prompt → %s", meshy_prompt)
+        # Written here rather than during the library search so the user isn't
+        # held on a spinner for it; the regex cleaner covers LLM failures.
+        meshy_prompt = meshy_prompt_override
+        if not meshy_prompt:
+            meshy_prompt = await asyncio.to_thread(llm_meshy_prompt, prompt) \
+                           or build_meshy_prompt(prompt)
+        # Last line of defence on the length cap. build_meshy_prompt() already
+        # fits itself, but the LLM path and the precomputed override both reach
+        # Meshy through here, and a 400 this late costs the user the whole wait.
+        meshy_prompt = _fit_meshy_prompt([meshy_prompt])
+        log.info("[Meshy] prompt (%d chars) → %s", len(meshy_prompt), meshy_prompt)
         r = await asyncio.to_thread(
-            requests.post,
+            meshy_request,
+            "POST",
             f"{MESHY_BASE}/v2/text-to-3d",
             headers=MESHY_HEADERS,
             json={
@@ -620,7 +1448,6 @@ async def run_generation(prompt: str) -> None:
                 "art_style": "realistic",
                 "negative_prompt": "low quality, low resolution, ugly, deformed, scene, environment, multiple objects, people, hands, text, labels",
             },
-            timeout=20,
         )
         if r.status_code not in (200, 201, 202):
             raise Exception(f"Meshy create failed: HTTP {r.status_code} — {r.text[:200]}")
@@ -645,10 +1472,10 @@ async def run_generation(prompt: str) -> None:
         while True:
             await asyncio.sleep(3)
             poll_r = await asyncio.to_thread(
-                requests.get,
+                meshy_request,
+                "GET",
                 f"{MESHY_BASE}/v2/text-to-3d/{task_id}",
                 headers={"Authorization": f"Bearer {MESHY_API_KEY}"},
-                timeout=15,
             )
             if poll_r.status_code != 200:
                 raise Exception(f"Meshy poll HTTP {poll_r.status_code}")
@@ -713,6 +1540,8 @@ async def run_generation(prompt: str) -> None:
             def _convert_glb_to_stl() -> None:
                 import trimesh
                 mesh = trimesh.load(str(glb_model_path), force="mesh")
+                # Meshy GLBs are Y-up; the slicer wants Z-up or the part lies down.
+                _y_up_to_z_up(mesh)
                 mesh.export(str(stl_model_path))
 
             await asyncio.to_thread(_convert_glb_to_stl)
@@ -722,6 +1551,13 @@ async def run_generation(prompt: str) -> None:
             await push_event("download_stl", "complete", f"STL converted — {stl_kb} KB", 75)
 
         pipeline_state["stl_path"] = str(stl_active_path)
+
+        # ── Step 4b: Make it printable ────────────────────────────────────
+        await push_event("printability", "active", "Checking printability...", 76)
+        report = await _apply_printability(stl_active_path, stl_model_path, generated=True)
+        await push_event("printability",
+                         "complete" if report.get("printable", True) else "warn",
+                         _printability_message(report), 78)
 
         # Persist final paths to SQLite
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
@@ -796,6 +1632,123 @@ async def run_generation(prompt: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Library-model download background task — the "found it, print that" path.
+# Emits the same SSE step ids as run_generation so the existing progress UI
+# works unchanged.
+# ---------------------------------------------------------------------------
+async def run_library_download(prompt: str, source: str, model_id: str, name: str) -> None:
+    _clear_event_buffer()
+    try:
+        await push_event("create", "active", f"Fetching design from {source.title()}...", 5)
+        threading.Thread(target=speak, args=("Great choice. Fetching that design now.",), daemon=True).start()
+
+        # ── Resolve an STL download URL ───────────────────────────────────
+        if source == "printables":
+            stls = await asyncio.to_thread(printables_stl_files, model_id)
+            if not stls:
+                raise Exception("No STL files listed for this design")
+            # Multi-part models: grab the largest STL — usually the main body.
+            main = max(stls, key=lambda f: f.get("fileSize") or 0)
+            stl_url = await asyncio.to_thread(printables_download_url, str(main["id"]), model_id)
+            file_name = main.get("name") or "model.stl"
+        elif source == "thingiverse":
+            stl_url, file_name = await asyncio.to_thread(thingiverse_stl_url, model_id)
+        else:
+            raise Exception(f"Unknown library source: {source}")
+
+        if not stl_url:
+            raise Exception("Could not get a download link for this design")
+        await push_event("create", "complete", "Download link ready", 15)
+
+        # ── Download STL ──────────────────────────────────────────────────
+        await push_event("download_stl", "active", f"Downloading {file_name}...", 20)
+        # Thingiverse's file CDN 403s a bare request even with a valid token —
+        # it wants a browser-shaped one with a Referer.
+        headers = ({"Authorization": f"Bearer {THINGIVERSE_APP_TOKEN}",
+                    "User-Agent": _LIBRARY_UA["User-Agent"],
+                    "Referer": "https://www.thingiverse.com/"}
+                   if source == "thingiverse" else {"User-Agent": _LIBRARY_UA["User-Agent"]})
+        stl_resp = await asyncio.to_thread(requests.get, stl_url, timeout=120, headers=headers)
+        stl_resp.raise_for_status()
+        if len(stl_resp.content) < 100:
+            raise Exception("Downloaded file is empty")
+
+        row_id = db_insert_model(prompt or name, f"{source}:{model_id}")
+        pipeline_state["model_id"] = row_id
+        model_dir = OUTPUT_DIR / "models" / str(row_id)
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        stl_model_path  = model_dir / "model.stl"
+        stl_active_path = OUTPUT_DIR / "model.stl"
+        async with aiofiles.open(stl_model_path, "wb") as f:
+            await f.write(stl_resp.content)
+        async with aiofiles.open(stl_active_path, "wb") as f:
+            await f.write(stl_resp.content)
+        pipeline_state["stl_path"] = str(stl_active_path)
+        stl_kb = len(stl_resp.content) // 1024
+        await push_event("download_stl", "complete", f"STL downloaded — {stl_kb} KB", 55)
+
+        # ── Printability pass — community STLs are authored in real mm, so
+        #    this repairs and seats the part without touching the scale. ──
+        await push_event("printability", "active", "Checking printability...", 57)
+        report = await _apply_printability(stl_active_path, stl_model_path, generated=False)
+        await push_event("printability",
+                         "complete" if report.get("printable", True) else "warn",
+                         _printability_message(report), 58)
+
+        # ── Convert STL → GLB so the 3D viewer + gallery previews work ────
+        await push_event("download_glb", "active", "Preparing 3D preview...", 60)
+        glb_model_path  = model_dir / "model.glb"
+        glb_active_path = OUTPUT_DIR / "model.glb"
+        glb_ok = False
+        try:
+            def _convert_stl_to_glb() -> None:
+                import trimesh
+                mesh = trimesh.load(str(stl_model_path), force="mesh")
+                # Preview only — the STL on disk stays Z-up for the slicer.
+                _z_up_to_y_up(mesh)
+                mesh.export(str(glb_model_path))
+
+            await asyncio.to_thread(_convert_stl_to_glb)
+            shutil.copy2(str(glb_model_path), str(glb_active_path))
+            pipeline_state["glb_path"] = str(glb_active_path)
+            glb_ok = True
+            await push_event("download_glb", "complete", "3D preview ready", 70)
+        except Exception as e:
+            # Viewer falls back to loading the STL directly — non-fatal. The
+            # previous run's model.glb must go, or /api/model/glb would serve
+            # a stale model to anything that reaches for it.
+            log.warning("[Library] STL→GLB conversion failed: %s", e)
+            glb_active_path.unlink(missing_ok=True)
+            pipeline_state["glb_path"] = None
+            await push_event("download_glb", "complete", "Preview uses STL directly", 70)
+
+        db_update_model_paths(row_id, str(glb_model_path) if glb_ok else None, str(stl_model_path))
+
+        # ── Upload to cloud (same as generated models) ────────────────────
+        await push_event("insforge", "active", "Uploading to cloud...", 78)
+        try:
+            cloud_url = await asyncio.to_thread(upload_to_insforge_storage, stl_active_path)
+            await push_event("insforge", "complete",
+                             "Saved to cloud" if cloud_url else "Cloud upload skipped", 90)
+        except Exception as e:
+            await push_event("insforge", "complete", f"Cloud upload skipped: {e}", 90)
+
+        # ── Done ──────────────────────────────────────────────────────────
+        pipeline_state["status"] = "model_ready"
+        log.info("[Library] complete — model_id=%s source=%s:%s (%s)", row_id, source, model_id, name)
+        await push_event("complete", "complete", "Design ready — tap PRINT THIS to slice", 100)
+        threading.Thread(target=speak, args=("Your design is ready. Tap Print This to slice it.",), daemon=True).start()
+
+    except Exception as exc:
+        log.error("[Library] download error: %s", exc)
+        pipeline_state["status"] = "error"
+        pipeline_state["error"] = str(exc)
+        await push_event("error", "error", str(exc), 0)
+        threading.Thread(target=speak, args=("Something went wrong. Please try again.",), daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
 # Slicing background task
 # ---------------------------------------------------------------------------
 async def run_slicing() -> None:
@@ -823,18 +1776,18 @@ async def run_slicing() -> None:
 
         sliced = False
 
-        # ── Step 2a: Slice with OrcaSlicer (Neptune 4 Pro system presets) ──
+        # ── Step 2a: Slice with OrcaSlicer (Neptune 4 Plus system presets) ──
         # OrcaSlicer 2.4.x CLI needs a full flattened preset bundle (machine +
         # process + filament, inheritance pre-resolved), a per-model --scale
-        # (Meshy/OpenSCAD STLs are often larger than the 235mm bed), --arrange +
+        # (a safety net — make_printable already fits the mesh), --arrange +
         # --ensure-on-bed to center/seat the part, and it always writes
         # plate_1.gcode into --outputdir. The old --slice/--export-gcode/--load
         # form is not valid in this version.
         if orca_path and Path(orca_path).exists():
             await push_event("slice", "active", "Slicing with OrcaSlicer...", 18)
-            orca_machine  = PROFILES_DIR / "flat_machine_neptune4pro_04.json"
-            orca_process  = PROFILES_DIR / "flat_process_0.20mm_standard_n4pro_04.json"
-            orca_filament = PROFILES_DIR / "flat_filament_elegoo_pla_en4.json"
+            orca_machine  = PROFILES_DIR / "flat_machine_neptune4plus_04.json"
+            orca_process  = PROFILES_DIR / "flat_process_0.20mm_standard_n4plus_04.json"
+            orca_filament = PROFILES_DIR / "flat_filament_elegoo_pla_en4plus.json"
             orca_out      = OUTPUT_DIR / "orca_out"
             proc = None
             try:
@@ -855,7 +1808,7 @@ async def run_slicing() -> None:
                         sx = dims.get("x") or 1.0
                         sy = dims.get("y") or 1.0
                         sz = dims.get("z") or 1.0
-                        scale = min(220.0 / sx, 220.0 / sy, 260.0 / sz, 1.0)
+                        scale = min(BED_X_MM / sx, BED_Y_MM / sy, BED_Z_MM / sz, 1.0)
                 except Exception as se:
                     log.warning("[Slice] OrcaSlicer --info failed (%s) — using scale 1.0", se)
 
@@ -967,43 +1920,54 @@ async def run_slicing() -> None:
             daemon=True
         ).start()
 
-        # ── Step 3: Detect USB ─────────────────────────────────────────────
+        # ── Step 3: Detect USB (optional) ──────────────────────────────────
+        # A missing USB stick used to fail the whole build, throwing away a
+        # perfectly good slice. The gcode already exists on disk at this point,
+        # so USB is just one of two ways to collect it — the browser download is
+        # always available.
         await push_event("usb_check", "active", "Checking USB drive...", 65)
         usb_path = _find_usb()
         if usb_path is None:
-            raise Exception(
-                f"USB drive not mounted — insert USB and ensure it mounts at "
-                f"{USB_MOUNT_PATH} or /mnt/usb"
+            log.info("[Slice] no USB mounted — download-only")
+            await push_event("usb_check", "complete", "No USB — download instead", 72)
+        else:
+            log.info("[Slice] USB found at %s", usb_path)
+            await push_event("usb_check", "complete", f"USB found at {usb_path}", 72)
+
+        # ── Step 4: Copy gcode to USB, when there is one ──────────────────
+        if usb_path is not None:
+            await push_event("copy_usb", "active", "Copying gcode to USB...", 78)
+            dest = Path(usb_path) / "conjure_print.gcode"
+            await asyncio.to_thread(shutil.copy2, str(gcode_path), str(dest))
+
+            sync_proc = await asyncio.create_subprocess_exec(
+                "sync",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-        log.info("[Slice] USB found at %s", usb_path)
-        await push_event("usb_check", "complete", f"USB found at {usb_path}", 72)
+            await sync_proc.wait()
+            await asyncio.sleep(1)
+            log.info("[Slice] gcode written to USB — %.1f MB", gcode_mb)
+            await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.1f} MB", 92)
 
-        # ── Step 4: Copy gcode to USB ─────────────────────────────────────
-        await push_event("copy_usb", "active", "Copying gcode to USB...", 78)
-        dest = Path(usb_path) / "conjure_print.gcode"
-        await asyncio.to_thread(shutil.copy2, str(gcode_path), str(dest))
-
-        sync_proc = await asyncio.create_subprocess_exec(
-            "sync",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await sync_proc.wait()
-        await asyncio.sleep(1)
-        log.info("[Slice] gcode written to USB — %.1f MB", gcode_mb)
-        await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.1f} MB", 92)
-
-        threading.Thread(
-            target=log_supabase_event,
-            args=("usb_exported",),
-            kwargs={"message": "gcode exported to USB"},
-            daemon=True
-        ).start()
+            threading.Thread(
+                target=log_supabase_event,
+                args=("usb_exported",),
+                kwargs={"message": "gcode exported to USB"},
+                daemon=True
+            ).start()
+        else:
+            await push_event("copy_usb", "complete", f"Gcode ready to download — {gcode_mb:.1f} MB", 92)
 
         # ── Done ──────────────────────────────────────────────────────────
         pipeline_state["status"] = "usb_ready"
-        await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
-        threading.Thread(target=speak, args=("Done. Remove the USB drive and insert it into your printer.",), daemon=True).start()
+        pipeline_state["usb_used"] = usb_path is not None
+        if usb_path is not None:
+            await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
+            threading.Thread(target=speak, args=("Done. Remove the USB drive and insert it into your printer.",), daemon=True).start()
+        else:
+            await push_event("usb_ready", "complete", "Print file ready — tap download", 100)
+            threading.Thread(target=speak, args=("Your print file is ready. Tap download to save it.",), daemon=True).start()
 
     except Exception as exc:
         log.error("[Slice] pipeline error: %s", exc)
@@ -1050,6 +2014,7 @@ def get_app() -> HTMLResponse:
 
 class GenerateRequest(BaseModel):
     prompt: str
+    meshy_prompt: str | None = None  # precomputed by /api/search-models
 
 
 @app.post("/api/generate")
@@ -1066,9 +2031,78 @@ async def api_generate(req: GenerateRequest, background_tasks: BackgroundTasks) 
         "stl_path":       None,
         "glb_path":       None,
         "gcode_path":     None,
+        "usb_used":       None,
+        "sent_to_printer": False,
     })
-    background_tasks.add_task(run_generation, req.prompt.strip())
+    background_tasks.add_task(run_generation, req.prompt.strip(), req.meshy_prompt)
     return JSONResponse({"status": "started", "prompt": req.prompt.strip()})
+
+
+# ---------------------------------------------------------------------------
+# Library search-before-generate flow
+# ---------------------------------------------------------------------------
+class SearchModelsRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/search-models")
+def api_search_models(req: SearchModelsRequest) -> JSONResponse:
+    """Metaprompt the transcript, then search model libraries for an existing
+    printable design. The kiosk offers matches before falling back to Meshy."""
+    raw = req.prompt.strip()
+    if not raw:
+        raise HTTPException(400, "Prompt cannot be empty")
+
+    # Only the search keywords are computed here. The full Meshy prompt is
+    # deferred to /api/generate, where it hides inside the generation wait
+    # instead of holding the user on a spinner.
+    meta = llm_search_query(raw) or {}
+    search_query = meta.get("search_query") or _fallback_search_query(raw)
+    object_name  = meta.get("object_name") or search_query.title()
+
+    try:
+        results, sources, matched_query = search_with_fallback(search_query, limit=6)
+    except Exception as e:
+        log.warning("[Library] search failed: %s", e)
+        results, sources, matched_query = [], [], search_query
+
+    return JSONResponse({
+        "results":       results,
+        "sources":       sources,
+        "search_query":  search_query,
+        "matched_query": matched_query,
+        "object_name":   object_name,
+        "llm_used":      bool(meta),
+        "fit_warning":   fitted_part_warning(raw),
+    })
+
+
+class LibraryModelRequest(BaseModel):
+    source: str
+    model_id: str
+    name: str = ""
+    prompt: str = ""
+
+
+@app.post("/api/use-library-model")
+async def api_use_library_model(req: LibraryModelRequest, background_tasks: BackgroundTasks) -> JSONResponse:
+    if req.source not in ("printables", "thingiverse"):
+        raise HTTPException(400, f"Unknown source: {req.source}")
+    pipeline_state.update({
+        "status":         "generating",
+        "prompt":         req.prompt.strip() or req.name,
+        "task_id":        f"{req.source}:{req.model_id}",
+        "model_id":       None,
+        "meshy_progress": 0,
+        "error":          None,
+        "stl_path":       None,
+        "glb_path":       None,
+        "gcode_path":     None,
+        "usb_used":       None,
+        "sent_to_printer": False,
+    })
+    background_tasks.add_task(run_library_download, req.prompt.strip(), req.source, req.model_id, req.name)
+    return JSONResponse({"status": "started", "source": req.source, "model_id": req.model_id})
 
 
 @app.get("/api/status/{task_id}")
@@ -1100,6 +2134,183 @@ def api_serve_stl() -> FileResponse:
     if not p.exists():
         raise HTTPException(404, "STL not found — run generation first")
     return FileResponse(str(p), media_type="application/octet-stream", filename="model.stl")
+
+
+# ---------------------------------------------------------------------------
+# Moonraker — sending the sliced gcode straight to the printer, so the kiosk
+# doesn't depend on someone carrying a USB stick across the room. Fluidd is the
+# web UI the user knows it by; Moonraker is the HTTP API it sits on.
+# ---------------------------------------------------------------------------
+def moonraker_base() -> str | None:
+    """The printer's API root, or None when no printer has been configured."""
+    if MOONRAKER_URL:
+        return MOONRAKER_URL
+    if PRINTER_IP:
+        return f"http://{PRINTER_IP}:{MOONRAKER_PORT}"
+    return None
+
+
+def _moonraker_headers() -> dict:
+    # Moonraker only demands a key when the kiosk's IP isn't in its
+    # trusted_clients list; sending an empty one would be rejected outright.
+    return {"X-Api-Key": MOONRAKER_API_KEY} if MOONRAKER_API_KEY else {}
+
+
+def moonraker_request(method: str, path: str, **kw):
+    base = moonraker_base()
+    if not base:
+        raise Exception("No printer configured — set PRINTER_IP in .env")
+    kw.setdefault("timeout", MOONRAKER_TIMEOUT)
+    headers = dict(kw.pop("headers", {}))
+    headers.update(_moonraker_headers())
+    return requests.request(method, f"{base}{path}", headers=headers, **kw)
+
+
+# Klipper states that mean the printer cannot accept a new job right now.
+_BUSY_STATES = {"printing", "paused"}
+
+
+def moonraker_status() -> dict:
+    """Whether the printer is reachable and what it's doing.
+
+    Deliberately total — the UI polls this, and a printer that is merely off
+    should render as "offline", never as a stack trace.
+    """
+    base = moonraker_base()
+    if not base:
+        return {"configured": False, "online": False,
+                "message": "No printer set up yet — add PRINTER_IP to .env"}
+    try:
+        r = moonraker_request(
+            "GET",
+            "/printer/objects/query?print_stats&display_status&extruder&heater_bed",
+            timeout=6,
+        )
+        if r.status_code == 401:
+            return {"configured": True, "online": False,
+                    "message": "Printer rejected the kiosk — set MOONRAKER_API_KEY in .env"}
+        r.raise_for_status()
+        s = (r.json().get("result") or {}).get("status") or {}
+        stats = s.get("print_stats") or {}
+        state = (stats.get("state") or "unknown").lower()
+        # print_stats.progress only counts sliced-move progress; display_status
+        # is what Fluidd shows, so prefer it and fall back.
+        progress = (s.get("display_status") or {}).get("progress")
+        if progress is None:
+            progress = stats.get("progress") or 0.0
+        return {
+            "configured": True,
+            "online":     True,
+            "state":      state,
+            "busy":       state in _BUSY_STATES,
+            "filename":   stats.get("filename") or "",
+            "progress":   round(float(progress) * 100, 1),
+            "nozzle_c":   round(float((s.get("extruder") or {}).get("temperature") or 0), 1),
+            "bed_c":      round(float((s.get("heater_bed") or {}).get("temperature") or 0), 1),
+            "message":    "",
+        }
+    except (requests.Timeout, requests.ConnectionError):
+        # Deliberately not surfacing the exception text: urllib3's version is a
+        # paragraph of retry internals, and this renders on a kiosk touchscreen.
+        # The real detail still goes to the log for whoever is debugging.
+        log.warning("[Moonraker] %s unreachable", base, exc_info=True)
+        return {"configured": True, "online": False,
+                "message": f"No answer from the printer at {base} — "
+                           "check it's powered on and on the same network"}
+    except Exception as e:
+        log.warning("[Moonraker] status query failed: %s", e)
+        return {"configured": True, "online": False,
+                "message": f"Can't read the printer at {base}: {type(e).__name__}"}
+
+
+@app.get("/api/printer")
+def api_printer_status() -> JSONResponse:
+    return JSONResponse(moonraker_status())
+
+
+@app.post("/api/print-now")
+def api_print_now() -> JSONResponse:
+    """Uploads the sliced gcode to the printer and starts it."""
+    gcode = OUTPUT_DIR / "model.gcode"
+    if not gcode.exists():
+        raise HTTPException(400, "No gcode yet — slice the model first")
+
+    status = moonraker_status()
+    if not status.get("configured"):
+        raise HTTPException(400, status.get("message") or "No printer configured")
+    if not status.get("online"):
+        raise HTTPException(502, status.get("message") or "Printer is offline")
+    # Refusing here rather than letting Moonraker queue it: silently interrupting
+    # or stacking onto someone else's running print is the one failure mode of
+    # this feature that wastes filament and ruins a part.
+    if status.get("busy"):
+        raise HTTPException(409,
+            f"The printer is already {status.get('state')} "
+            f"({status.get('progress')}% of {status.get('filename') or 'a job'}). "
+            "Wait for it to finish, or stop it in Fluidd first.")
+
+    name = _download_name("gcode")
+    try:
+        with open(gcode, "rb") as fh:
+            r = moonraker_request(
+                "POST", "/server/files/upload",
+                # print=true makes Moonraker start the job as part of the upload.
+                # Uploading and then calling /printer/print/start separately races
+                # against Klipper's metadata scan and intermittently 404s.
+                files={"file": (name, fh, "application/octet-stream")},
+                data={"root": "gcodes", "print": "true"},
+                timeout=max(MOONRAKER_TIMEOUT, 120),  # multi-MB over Wi-Fi
+            )
+        if r.status_code == 401:
+            raise HTTPException(502, "Printer rejected the kiosk — set MOONRAKER_API_KEY in .env")
+        if not r.ok:
+            raise HTTPException(502, f"Printer refused the file (HTTP {r.status_code}): {r.text[:200]}")
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    except HTTPException:
+        raise
+    except requests.Timeout:
+        raise HTTPException(504, "Upload to the printer timed out — check the Wi-Fi signal")
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't send to the printer: {e}")
+
+    started = str((body.get("result") or {}).get("print_started", "")).lower() == "true" \
+        or (body.get("result") or {}).get("print_started") is True
+    log.info("[Moonraker] uploaded %s (%.1f MB), print_started=%s",
+             name, gcode.stat().st_size / 1e6, started)
+    pipeline_state["sent_to_printer"] = True
+    return JSONResponse({"status": "ok", "filename": name, "started": started,
+                         "message": "Printing now — watch it on the printer or in Fluidd"
+                                    if started else
+                                    "Uploaded to the printer. Start it from Fluidd."})
+
+
+def _download_name(ext: str) -> str:
+    """A filename the user can recognise in their Downloads folder — 38 files
+    all called model.stl is useless once more than one has been made."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(pipeline_state.get("prompt") or "model").lower()).strip("-")
+    return f"conjure-{slug[:40] or 'model'}.{ext}"
+
+
+# HEAD as well as GET. Starlette adds HEAD to a GET route automatically but
+# FastAPI's APIRoute does not, so the UI's "is the file there yet?" pre-check was
+# getting 405 and reporting "no print file yet" for a gcode sitting on disk.
+@app.api_route("/api/download/stl", methods=["GET", "HEAD"])
+def api_download_stl() -> FileResponse:
+    p = OUTPUT_DIR / "model.stl"
+    if not p.exists():
+        raise HTTPException(404, "No STL yet — make a model first")
+    return FileResponse(str(p), media_type="application/octet-stream",
+                        filename=_download_name("stl"))
+
+
+@app.api_route("/api/download/gcode", methods=["GET", "HEAD"])
+def api_download_gcode() -> FileResponse:
+    """The sliced, printer-ready file — the thing that used to only reach a USB."""
+    p = OUTPUT_DIR / "model.gcode"
+    if not p.exists():
+        raise HTTPException(404, "No gcode yet — slice the model first")
+    return FileResponse(str(p), media_type="text/plain",
+                        filename=_download_name("gcode"))
 
 
 @app.post("/api/slice")
@@ -1137,6 +2348,61 @@ def api_state() -> JSONResponse:
     return JSONResponse({k: v for k, v in pipeline_state.items()})
 
 
+def llm_usage_summary() -> dict:
+    """Running Anthropic spend, read straight from the ledger."""
+    empty = {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
+    try:
+        with _db_lock:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.row_factory = sqlite3.Row
+
+            def agg(where: str = "", args: tuple = ()) -> dict:
+                r = conn.execute(
+                    "SELECT COUNT(*) c, COALESCE(SUM(tokens_in),0) ti, "
+                    "COALESCE(SUM(tokens_out),0) to_, COALESCE(SUM(cost_usd),0) cost "
+                    f"FROM llm_usage {where}", args).fetchone()
+                return {"calls": r["c"], "tokens_in": r["ti"],
+                        "tokens_out": r["to_"], "cost_usd": round(r["cost"], 6)}
+
+            total = agg()
+            today = agg("WHERE ts >= ?", (datetime.now().strftime("%Y-%m-%d"),))
+            by_label = {
+                row["label"]: {"calls": row["c"], "cost_usd": round(row["cost"], 6),
+                               "avg_usd": round(row["cost"] / row["c"], 6) if row["c"] else 0.0}
+                for row in conn.execute(
+                    "SELECT label, COUNT(*) c, SUM(cost_usd) cost FROM llm_usage GROUP BY label")
+            }
+            conn.close()
+    except Exception as e:
+        log.warning("[Usage] summary failed: %s", e)
+        return {"total": empty, "today": empty, "by_label": {}, "model": ANTHROPIC_MODEL}
+
+    return {
+        "model":    ANTHROPIC_MODEL,
+        "priced":   ANTHROPIC_MODEL in MODEL_PRICING,
+        "total":    total,
+        "today":    today,
+        "by_label": by_label,
+    }
+
+
+@app.get("/api/usage")
+def api_usage(limit: int = 20) -> JSONResponse:
+    """Spend summary plus the most recent calls, for eyeballing what costs what."""
+    out = llm_usage_summary()
+    try:
+        with _db_lock:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.row_factory = sqlite3.Row
+            out["recent"] = [dict(r) for r in conn.execute(
+                "SELECT ts, label, model, tokens_in, tokens_out, cost_usd "
+                "FROM llm_usage ORDER BY id DESC LIMIT ?", (max(1, min(limit, 200)),))]
+            conn.close()
+    except Exception:
+        out["recent"] = []
+    return JSONResponse(out)
+
+
 @app.get("/api/health")
 def health_check() -> JSONResponse:
     disk = shutil.disk_usage(str(BASE_DIR))
@@ -1161,12 +2427,16 @@ def health_check() -> JSONResponse:
         "model_count": model_count,
         "disk_free_gb": round(disk.free / (1024 ** 3), 2),
         "api_keys": {
-            "meshy":      bool(MESHY_API_KEY),
-            "elevenlabs": bool(ELEVENLABS_API_KEY),
-            "insforge":   bool(INSFORGE_API_KEY),
+            "meshy":       bool(MESHY_API_KEY),
+            "elevenlabs":  bool(ELEVENLABS_API_KEY),
+            "insforge":    bool(INSFORGE_API_KEY),
+            "anthropic":   bool(ANTHROPIC_API_KEY),
+            "thingiverse": bool(THINGIVERSE_APP_TOKEN),
         },
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
         "supabase_connected":  sb_ok,
+        "llm_usage":  llm_usage_summary(),
+        "printer":    moonraker_status(),
         "output_dir": str(OUTPUT_DIR),
         "db_path":    str(DB_PATH),
     })
@@ -1223,7 +2493,10 @@ async def api_reset() -> JSONResponse:
         "stl_path":       None,
         "glb_path":       None,
         "gcode_path":     None,
+        "usb_used":       None,
+        "sent_to_printer": False,
         "error":          None,
+        "printability":   None,
     })
     # Clear active working copies only — gallery data in output/models/ is preserved
     for fname in ("model.glb", "model.stl", "model.gcode"):
@@ -1472,52 +2745,18 @@ engineer_state = {
     "logs": [],
     "scad_script": None,
     "specs": None,
-    "nebius_analysis": None,
+    "design_review": None,
     "lock": threading.Lock(),
 }
 
 ENGINEER_STEP_NAMES = [
-    "Kite AI Auth",
-    "You.com Research",
-    "Tavily Research",
-    "Nebius CAD Generation",
+    "Design Brief",
+    "CAD Generation",
     "OpenSCAD Render",
-    "CuraEngine Slice",
-    "Moonraker Dispatch",
-    "Nebius Analysis",
+    "OrcaSlicer Slice",
+    "Send to Printer",
+    "Design Review",
 ]
-
-FALLBACK_SCAD = """pipe_od = 60.325;
-wall = 5;
-bolt_d = 4.5;
-clamp_h = 30;
-inner_r = pipe_od / 2 + 0.4;
-outer_r = inner_r + wall;
-
-module clamp() {
-    difference() {
-        cylinder(h=clamp_h, r=outer_r, $fn=64);
-        cylinder(h=clamp_h, r=inner_r, $fn=64);
-        translate([-(outer_r+1), -bolt_d/2, clamp_h/2-bolt_d/2])
-            cube([outer_r*2+2, bolt_d, bolt_d]);
-    }
-}
-
-module mount_face() {
-    difference() {
-        translate([-30, outer_r-2, 0]) cube([60, 8, 40]);
-        translate([-15, outer_r-3, 10]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
-        translate([15, outer_r-3, 10]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
-        translate([-15, outer_r-3, 30]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
-        translate([15, outer_r-3, 30]) rotate([-90,0,0]) cylinder(h=12, d=bolt_d, $fn=32);
-    }
-}
-
-union() {
-    clamp();
-    mount_face();
-}"""
-
 
 def engineer_log(message: str, level: str = "info") -> None:
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -1538,211 +2777,166 @@ def engineer_set_status(s: str) -> None:
         engineer_state["status"] = s
 
 
-def research_specs_youcom(intent: str) -> dict:
-    specs = {"od_mm": 60.325, "tensile_mpa": 37.0, "wall_mm": 5.0, "source": "default"}
-    if not YOUCOM_API_KEY:
-        engineer_log("You.com: no API key — using safe defaults", "warning")
-        return specs
-    try:
-        r = requests.get(
-            "https://ydc-index.io/search",
-            headers={"X-API-Key": YOUCOM_API_KEY},
-            params={
-                "query": f"{intent} engineering specifications dimensions mm",
-                "num_web_results": 5,
-            },
-            timeout=20,
-        )
-        engineer_log(f"You.com: HTTP {r.status_code}", "info")
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}")
-        blobs = []
-        source_url = ""
-        data = r.json()
-        for key in ("hits", "web", "results", "organic_results"):
-            items = data.get(key, [])
-            if isinstance(items, dict):
-                items = items.get("results", [])
-            for item in (items if isinstance(items, list) else []):
-                if not isinstance(item, dict):
-                    continue
-                for field in ("snippet", "description", "body", "content", "text"):
-                    v = item.get(field, "")
-                    if isinstance(v, list):
-                        blobs.extend(str(x) for x in v)
-                    elif isinstance(v, str) and v:
-                        blobs.append(v)
-                if not source_url:
-                    source_url = item.get("url", item.get("link", ""))
-        blob = " ".join(blobs)
-        for m in re.findall(r"(\d{2,3}(?:\.\d+)?)\s*mm", blob):
-            val = float(m)
-            if 20.0 <= val <= 200.0:
-                specs["od_mm"] = val
-                engineer_log(f"You.com: found dimension {val}mm from {source_url}", "success")
-                break
-        specs["source"] = "you.com"
-    except Exception as e:
-        engineer_log(f"You.com failed ({e}) — using defaults", "warning")
-    return specs
+# PLA material properties. These were previously "discovered" by a web search
+# that shipped these exact numbers as its fallback anyway — so they were always
+# constants wearing a research costume. Named here so they can be corrected.
+PLA_TENSILE_MPA      = 37.0
+DESIGN_SAFETY_FACTOR = 2.5
+
+_BRIEF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary":              {"type": "string"},
+        "primary_dimension_mm": {"type": "number"},
+        "wall_mm":              {"type": "number"},
+        "clearance_mm":         {"type": "number"},
+    },
+    "required": ["summary", "primary_dimension_mm", "wall_mm", "clearance_mm"],
+    "additionalProperties": False,
+}
+
+_BRIEF_SYSTEM = """You size parts for a 0.4mm-nozzle FDM printer before they are modelled.
+
+Given what the user wants, return:
+ - summary: one sentence naming the part and how it is meant to work.
+ - primary_dimension_mm: the part's main overall dimension in mm. Use a real
+   figure when the object has one (an M8 nut is 13mm across flats; a 2-inch pipe
+   is 60.3mm OD); otherwise choose a sensible size for a desk object, 20-200mm.
+ - wall_mm: structural wall thickness, at least 1.2 (three 0.4mm perimeters).
+ - clearance_mm: gap between parts that must move independently when printed in
+   place. 0.3-0.5 is the usable band on FDM; use 0 if nothing has to move."""
+
+_SCAD_SYSTEM = """You are a parametric CAD engineer. Output ONLY raw OpenSCAD code:
+no markdown, no backticks, no prose, no explanation.
+
+Rules:
+ - Open with named parameter variables, then modules, then one top-level call.
+ - Every dimension in millimetres.
+ - $fn on every curved primitive (48-64) so the mesh is smooth but not enormous.
+ - The result must be manifold and printable on FDM with no supports: a flat
+   base on the bed, no unsupported overhang past ~45 degrees, no wall thinner
+   than the given wall_mm.
+ - For parts printed pre-assembled, separate every moving surface by exactly the
+   given clearance_mm — do not let solids touch or intersect, or it fuses solid.
+ - Prefer difference()/union()/hull() over huge polyhedron() vertex lists."""
+
+_REVIEW_SYSTEM = """You review OpenSCAD for a 0.4mm-nozzle FDM printer. In 2-3 sentences
+name the single biggest printability or structural risk and the concrete fix.
+No preamble, no restating the design. If it looks sound, say so briefly."""
 
 
-def research_specs_tavily(intent: str) -> dict:
-    result = {"tensile_mpa": 37.0, "safety_factor": 2.5}
-    if not TAVILY_API_KEY:
-        engineer_log("Tavily: no API key — using safe defaults", "warning")
-        return result
-    try:
-        r = requests.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key": TAVILY_API_KEY,
-                "query": f"{intent} material strength MPa load bearing safety factor",
-                "search_depth": "advanced",
-                "max_results": 5,
-            },
-            timeout=25,
-        )
-        engineer_log(f"Tavily: HTTP {r.status_code}", "info")
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}")
-        results = r.json().get("results", [])
-        for res in results:
-            content = res.get("content", "") + " " + res.get("title", "")
-            url = res.get("url", "")
-            for m in re.findall(r"(\d{2,3}(?:\.\d+)?)\s*MPa", content, re.IGNORECASE):
-                val = float(m)
-                if 20.0 <= val <= 200.0:
-                    result["tensile_mpa"] = val
-                    engineer_log(f"Tavily: tensile {val}MPa from {url}", "success")
-                    break
-            for m in re.findall(r"safety\s+factor[^\d]{0,20}(\d+(?:\.\d+)?)", content, re.IGNORECASE):
-                val = float(m)
-                if 1.0 <= val <= 10.0:
-                    result["safety_factor"] = val
-                    engineer_log(f"Tavily: safety factor {val}x from {url}", "success")
-                    break
-    except Exception as e:
-        engineer_log(f"Tavily failed ({e}) — using defaults", "warning")
-    return result
+def design_brief(intent: str) -> dict:
+    """Sizes the part before any geometry exists.
+
+    Replaces the old You.com/Tavily "research" pair, which regex-scraped one
+    number out of a search snippet and otherwise returned its own defaults.
+    """
+    out = _llm_json(_BRIEF_SYSTEM, intent, _BRIEF_SCHEMA, "DesignBrief")
+    if not out:
+        engineer_log("Design brief unavailable — using generic defaults", "warning")
+        out = {"summary": intent, "primary_dimension_mm": 60.0,
+               "wall_mm": 3.0, "clearance_mm": 0.4}
+    else:
+        engineer_log(f"Brief: {out['summary']}", "success")
+    return {
+        "od_mm":         float(out["primary_dimension_mm"]),
+        "inner_r":       round(float(out["primary_dimension_mm"]) / 2 + 0.4, 4),
+        "wall_mm":       max(float(out["wall_mm"]), MIN_WALL_MM),
+        "clearance_mm":  float(out["clearance_mm"]),
+        "tensile_mpa":   PLA_TENSILE_MPA,
+        "safety_factor": DESIGN_SAFETY_FACTOR,
+        "summary":       out["summary"],
+    }
 
 
-def generate_scad_nebius(intent: str, specs: dict) -> str:
-    od_mm = specs.get("od_mm", 60.325)
-    inner_r = od_mm / 2 + 0.4
-    tensile = specs.get("tensile_mpa", 37.0)
-    sf = specs.get("safety_factor", 2.5)
-    wall_mm = specs.get("wall_mm", 5.0)
+def generate_scad(intent: str, specs: dict) -> str | None:
+    """Claude writes the OpenSCAD. Returns None when it can't — deliberately.
 
-    system_content = (
-        "You are a parametric CAD engineer. Output ONLY raw valid OpenSCAD code. "
-        "No markdown. No backticks. No explanation. No comments. Just the OpenSCAD script.\n\n"
-        f"Engineering specs from live web research:\n"
-        f"- Object dimension: {od_mm}mm\n"
-        f"- Inner radius: {inner_r}mm\n"
-        f"- Material tensile strength: {tensile}MPa\n"
-        f"- Safety factor: {sf}x\n"
-        f"- Wall thickness: {wall_mm}mm\n\n"
-        f"User intent: {intent}\n\n"
-        "Generate a parametric OpenSCAD script for this object. "
-        "Use difference() and union() correctly. All dimensions in millimeters."
+    The old version fell back to a hardcoded pipe clamp, so asking for a
+    planetary gearbox with no API key produced a pipe clamp and reported
+    success. Returning None lets the pipeline fail honestly instead.
+    """
+    user = (
+        f"Part: {specs['summary']}\n"
+        f"Main dimension: {specs['od_mm']}mm\n"
+        f"Wall thickness: {specs['wall_mm']}mm\n"
+        f"Moving-part clearance: {specs['clearance_mm']}mm\n"
+        f"Material: PLA, {specs['tensile_mpa']}MPa tensile, "
+        f"{specs['safety_factor']}x safety factor\n\n"
+        f"Original request: {intent}\n\n"
+        "Write the OpenSCAD script."
     )
-
-    if not NEBIUS_API_KEY:
-        engineer_log("Nebius: no API key — using fallback SCAD", "warning")
-        return FALLBACK_SCAD
-
-    try:
-        r = requests.post(
-            "https://api.studio.nebius.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {NEBIUS_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": NEBIUS_MODEL,
-                "temperature": 0,
-                "max_tokens": 1500,
-                "messages": [
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": "Generate the OpenSCAD script now."},
-                ],
-            },
-            timeout=60,
-        )
-        engineer_log(f"Nebius: HTTP {r.status_code}", "info")
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
-        raw = r.json()["choices"][0]["message"]["content"]
-        cleaned = re.sub(r"```[a-zA-Z]*", "", raw).strip("`").strip()
-        keywords = ["cylinder", "cube", "difference", "union", "sphere"]
-        if any(kw in cleaned for kw in keywords):
-            engineer_log(f"Nebius: SCAD validated ({len(cleaned.splitlines())} lines)", "success")
-            return cleaned
-        else:
-            engineer_log("Nebius: SCAD failed validation — using fallback", "warning")
-            return FALLBACK_SCAD
-    except Exception as e:
-        engineer_log(f"Nebius failed ({e}) — using fallback SCAD", "warning")
-        return FALLBACK_SCAD
+    raw = _llm_text(_SCAD_SYSTEM, user, "EngineerCAD", max_tokens=4000)
+    if not raw:
+        return None
+    # Strip a markdown fence if one slips through despite the instruction.
+    cleaned = re.sub(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$", "", raw).strip()
+    if not any(k in cleaned for k in ("cylinder", "cube", "difference", "union", "sphere", "polygon")):
+        engineer_log("CAD output contained no OpenSCAD geometry — rejected", "error")
+        return None
+    engineer_log(f"CAD generated: {len(cleaned.splitlines())} lines", "success")
+    return cleaned
 
 
-def analyze_with_nebius(scad_script: str, specs: dict) -> None:
-    if not NEBIUS_API_KEY:
+def review_design(scad_script: str, specs: dict) -> None:
+    text = _llm_text(
+        _REVIEW_SYSTEM,
+        f"Specs: {specs}\n\nOpenSCAD:\n{scad_script[:6000]}",
+        "EngineerReview",
+        max_tokens=400,
+    )
+    if not text:
         return
+    with engineer_state["lock"]:
+        engineer_state["design_review"] = text
+    engineer_log(f"Review: {text}", "info")
+
+
+def orca_slice_sync(stl_path: Path, gcode_path: Path) -> bool:
+    """Blocking OrcaSlicer slice for the engineer pipeline.
+
+    A sync twin of the async path in run_slicing() — same flattened Neptune 4
+    Plus preset bundle and same CLI form, which is what the speak-mode pipeline
+    already proves works. Engineer mode used CuraEngine at a Linux-only path
+    that does not exist on the dev Mac, so this step never ran here.
+    """
+    orca = ORCASLICER_PATH
+    if not orca or not Path(orca).exists():
+        engineer_log(f"OrcaSlicer not found at {orca} — skipping slice", "warning")
+        return False
+    orca_out = OUTPUT_DIR / "orca_out_engineer"
+    shutil.rmtree(orca_out, ignore_errors=True)
+    orca_out.mkdir(parents=True, exist_ok=True)
     try:
-        r = requests.post(
-            "https://api.studio.nebius.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {NEBIUS_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": NEBIUS_MODEL,
-                "temperature": 0,
-                "max_tokens": 200,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a structural engineering reviewer. "
-                            "Analyze this OpenSCAD design for structural integrity. "
-                            "Be extremely concise — 3 bullet points maximum. "
-                            "Format: each bullet starts with OK: or WARN: or FAIL:"
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Specs: OD={specs.get('od_mm')}mm, "
-                            f"wall={specs.get('wall_mm')}mm, "
-                            f"tensile={specs.get('tensile_mpa')}MPa\n\n"
-                            f"SCAD:\n{scad_script[:800]}"
-                        ),
-                    },
-                ],
-            },
-            timeout=30,
+        result = subprocess.run(
+            [
+                orca,
+                "--load-settings",
+                f"{PROFILES_DIR / 'flat_machine_neptune4plus_04.json'};"
+                f"{PROFILES_DIR / 'flat_process_0.20mm_standard_n4plus_04.json'}",
+                "--load-filaments", str(PROFILES_DIR / "flat_filament_elegoo_pla_en4plus.json"),
+                "--ensure-on-bed",
+                "--arrange", "1",
+                "--slice", "0",
+                "--outputdir", str(orca_out),
+                str(stl_path),
+            ],
+            capture_output=True, timeout=300, cwd=str(BASE_DIR),
         )
-        if r.status_code == 200:
-            feedback = r.json()["choices"][0]["message"]["content"].strip()
-            engineer_log("Nebius structural review:", "success")
-            for line in feedback.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("OK:"):
-                    engineer_log(f"  {line}", "success")
-                elif line.startswith("WARN:"):
-                    engineer_log(f"  {line}", "warning")
-                elif line.startswith("FAIL:"):
-                    engineer_log(f"  {line}", "error")
-                else:
-                    engineer_log(f"  {line}", "info")
-            with engineer_state["lock"]:
-                engineer_state["nebius_analysis"] = feedback
+        plate = orca_out / "plate_1.gcode"        # CLI always writes this name
+        if result.returncode != 0 or not plate.exists() or plate.stat().st_size < 5000:
+            tail = result.stderr.decode("utf-8", "ignore")[-300:]
+            engineer_log(f"OrcaSlicer failed (rc={result.returncode}) {tail}", "warning")
+            return False
+        shutil.move(str(plate), str(gcode_path))
+        engineer_log(f"Gcode sliced: {gcode_path.stat().st_size / (1024*1024):.1f}MB", "success")
+        return True
+    except subprocess.TimeoutExpired:
+        engineer_log("OrcaSlicer timed out", "warning")
+        return False
     except Exception as e:
-        engineer_log(f"Nebius analysis failed ({e})", "warning")
+        engineer_log(f"OrcaSlicer error: {e}", "warning")
+        return False
 
 
 def run_engineer_pipeline(intent: str) -> None:
@@ -1753,52 +2947,29 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_state["logs"] = []
         engineer_state["scad_script"] = None
         engineer_state["specs"] = None
-        engineer_state["nebius_analysis"] = None
+        engineer_state["design_review"] = None
 
     engineer_log("=== ENGINEER PIPELINE STARTED ===", "success")
     engineer_log(f"Intent: {intent}", "info")
 
     engineer_set_step(0)
-    engineer_log("Step 0 — Kite AI agent authentication", "info")
-    try:
-        if KITE_API_KEY:
-            r = requests.post(
-                "https://api.kite.ai/v1/agents/authenticate",
-                headers={"Authorization": f"Bearer {KITE_API_KEY}"},
-                json={"agent_id": "conjure-engineer", "permissions": ["compute", "fabricate"]},
-                timeout=10,
-            )
-            if r.status_code == 200:
-                engineer_log("Kite AI: agent authenticated", "success")
-            else:
-                engineer_log(f"Kite AI: auth failed ({r.status_code}) — continuing", "warning")
-        else:
-            engineer_log("Kite AI: no key — continuing without agent identity", "warning")
-    except Exception as e:
-        engineer_log(f"Kite AI: unreachable ({e}) — continuing", "warning")
-
-    engineer_set_step(1)
-    engineer_log("Step 1 — You.com research", "info")
-    youcom_specs = research_specs_youcom(intent)
-
-    engineer_set_step(2)
-    engineer_log("Step 2 — Tavily deep research", "info")
-    tavily_specs = research_specs_tavily(intent)
-
-    specs = {
-        "od_mm": youcom_specs.get("od_mm", 60.325),
-        "inner_r": round(youcom_specs.get("od_mm", 60.325) / 2 + 0.4, 4),
-        "tensile_mpa": tavily_specs.get("tensile_mpa", 37.0),
-        "safety_factor": tavily_specs.get("safety_factor", 2.5),
-        "wall_mm": youcom_specs.get("wall_mm", 5.0),
-    }
+    engineer_log("Step 0 — design brief", "info")
+    specs = design_brief(intent)
     with engineer_state["lock"]:
         engineer_state["specs"] = specs
-    engineer_log(f"Specs merged: {specs}", "success")
+    engineer_log(f"Specs: {specs}", "success")
 
-    engineer_set_step(3)
-    engineer_log("Step 3 — Nebius CAD generation", "info")
-    scad_script = generate_scad_nebius(intent, specs)
+    engineer_set_step(1)
+    engineer_log("Step 1 — CAD generation", "info")
+    scad_script = generate_scad(intent, specs)
+    if not scad_script:
+        # Stopping here on purpose. The old pipeline substituted a hardcoded
+        # pipe clamp and reported success, so every unanswerable request
+        # silently produced the same wrong part.
+        engineer_log("No CAD could be generated — engineer mode needs an "
+                     "Anthropic API key with available credit", "error")
+        engineer_set_status("ERROR")
+        return
 
     scad_path = OUTPUT_DIR / "engineer_bracket.scad"
     scad_path.write_text(scad_script)
@@ -1806,8 +2977,8 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_state["scad_script"] = scad_script
     engineer_log(f"SCAD saved: {len(scad_script.splitlines())} lines", "success")
 
-    engineer_set_step(4)
-    engineer_log(f"Step 4 — OpenSCAD render (binary: {OPENSCAD_PATH})", "info")
+    engineer_set_step(2)
+    engineer_log(f"Step 2 — OpenSCAD render (binary: {OPENSCAD_PATH})", "info")
     stl_path = OUTPUT_DIR / "model.stl"
     try:
         result = subprocess.run(
@@ -1827,38 +2998,10 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_set_status("ERROR")
         return
 
-    engineer_set_step(5)
-    engineer_log(f"Step 5 — CuraEngine slice (binary: {CURAENGINE_PATH})", "info")
+    engineer_set_step(3)
+    engineer_log("Step 3 — OrcaSlicer slice", "info")
     gcode_path = OUTPUT_DIR / "model.gcode"
-    profile_path = BASE_DIR / "profiles" / "neptune4pro.json"
-    if not Path(CURAENGINE_PATH).exists():
-        engineer_log(f"CuraEngine not found at {CURAENGINE_PATH} — skipping slice (deploy to Orange Pi for full pipeline)", "warning")
-    else:
-        try:
-            cura_env = {**os.environ, "CURA_ENGINE_SEARCH_PATH": CURA_RESOURCES_PATH}
-            result = subprocess.run(
-                [
-                    CURAENGINE_PATH, "slice",
-                    "-j", str(profile_path),
-                    "-l", str(stl_path),
-                    "-o", str(gcode_path),
-                    "-s", "layer_height=0.2",
-                    "-s", "infill_sparse_density=20",
-                    "-s", "support_enable=false",
-                ],
-                capture_output=True,
-                timeout=180,
-                cwd=str(BASE_DIR),
-                env=cura_env,
-            )
-            if result.returncode != 0:
-                raise Exception(result.stderr.decode("utf-8", errors="replace")[:500])
-            if not gcode_path.exists() or gcode_path.stat().st_size < 5000:
-                raise Exception("Gcode too small — slice likely failed")
-            gcode_kb = gcode_path.stat().st_size / 1024
-            engineer_log(f"Gcode sliced: {gcode_kb:.1f}KB", "success")
-        except Exception as e:
-            engineer_log(f"CuraEngine failed: {e} — skipping slice", "warning")
+    orca_slice_sync(stl_path, gcode_path)
 
     try:
         model_id = db_insert_model(intent, "engineer-" + datetime.now().strftime("%Y%m%d%H%M%S"))
@@ -1903,33 +3046,29 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_log(f"DB save failed: {e}", "warning")
         model_id = None
 
-    engineer_set_step(6)
-    engineer_log(f"Step 6 — Moonraker dispatch ({PRINTER_IP}:{MOONRAKER_PORT})", "info")
+    engineer_set_step(4)
+    engineer_log(f"Step 4 — send to printer ({moonraker_base() or 'no printer configured'})", "info")
     try:
-        if not PRINTER_IP:
+        if not moonraker_base():
             raise Exception("PRINTER_IP not set")
-        moonraker_base = f"http://{PRINTER_IP}:{MOONRAKER_PORT}"
         with open(gcode_path, "rb") as f:
-            up = requests.post(
-                f"{moonraker_base}/server/files/upload",
+            up = moonraker_request(
+                "POST", "/server/files/upload",
                 files={"file": ("model.gcode", f, "application/octet-stream")},
-                timeout=30,
+                data={"root": "gcodes", "print": "true"},
+                timeout=120,
             )
         up.raise_for_status()
-        time.sleep(2)
-        sp = requests.post(
-            f"{moonraker_base}/printer/print/start",
-            json={"filename": "model.gcode"},
-            timeout=15,
-        )
-        sp.raise_for_status()
         engineer_log("Moonraker: print started", "success")
     except Exception as e:
-        engineer_log("Moonraker unreachable — gcode saved to output/model.gcode for USB transfer", "warning")
+        # The reason matters — "printer is off" and "wrong API key" need
+        # different fixes, and the old message claimed neither.
+        engineer_log(f"Moonraker dispatch failed ({e}) — gcode saved to "
+                     "output/model.gcode for USB transfer or browser download", "warning")
 
-    engineer_set_step(7)
-    engineer_log("Step 7 — Nebius structural analysis", "info")
-    analyze_with_nebius(scad_script, specs)
+    engineer_set_step(5)
+    engineer_log("Step 5 — design review", "info")
+    review_design(scad_script, specs)
 
     def _engineer_supabase_backup():
         try:
@@ -1973,7 +3112,7 @@ def engineer_status() -> JSONResponse:
             "logs":              list(engineer_state["logs"]),
             "scad_script":       engineer_state["scad_script"],
             "specs":             engineer_state["specs"],
-            "nebius_analysis":   engineer_state["nebius_analysis"],
+            "design_review":     engineer_state["design_review"],
         })
 
 
@@ -1986,7 +3125,7 @@ def engineer_reset() -> JSONResponse:
         engineer_state["logs"] = []
         engineer_state["scad_script"] = None
         engineer_state["specs"] = None
-        engineer_state["nebius_analysis"] = None
+        engineer_state["design_review"] = None
     return JSONResponse({"ok": True})
 
 
