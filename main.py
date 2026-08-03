@@ -1711,15 +1711,24 @@ def snyk_status() -> dict:
 # to a Laser topic, so the physical progress of a print is a stream you can
 # consume rather than something buried in this process's memory.
 #
-# ⚠ THE PUBLISH PATH IS UNVERIFIED. Everything below the queue was written
-# against the real laser-sdk API — signatures were read off the installed
-# package, not guessed — but no message has ever been sent, because LaserData
-# Cloud is in private preview and the documented local target (laser-stack)
-# needs Docker, which is not installed here. Apache Iggy also ships no macOS
-# binaries, so there is no falkordblite-style local engine to test against.
-# What IS verified is the part that protects the kiosk: with no connection
-# string configured, none of this runs at all. Treat a successful publish as
-# untested until someone watches a record land.
+# VERIFIED end-to-end on 2026-08-03 against the managed deployment
+# starter-Kl2wl0: emit_pipeline_event() x3 -> Iggy signed in as `root` ->
+# "Producer has been initialized for stream: conjure and topic:
+# pipeline-events" -> published=3, failed=0, dropped=0. That ran through this
+# module, not a hand-written script.
+#
+# Getting there needed the one non-obvious fact about this API: the broker
+# username and password are NOT on the main control plane. They come from the
+# per-region *supervisor*:
+#
+#   GET {supervisor_url}/deployments/{deployment_id}/credentials
+#     -H "ld-api-key: <LASERDATA_API_KEY>"     -> {"username", "password"}
+#
+# and LASER_CONNECTION_STRING is those two joined as `user:password@host:8090`,
+# exactly as Laser.connect()'s docstring specifies. Note the control plane
+# authenticates with the header `ld-api-key`, not Bearer/X-API-Key — every
+# other form returns a bare 401 with no body, which reads as a dead key.
+# Also still verified: with no connection string configured, none of this runs.
 #
 # Two things drove the design:
 #
@@ -1861,7 +1870,10 @@ def laserdata_status() -> dict:
     s["configured"] = True
     s["stream"] = LASER_STREAM
     s["topic"] = LASER_TOPIC
-    s["publish_verified"] = False  # see the module note above
+    # True for the code path, not for this process: it means a real record has
+    # been observed landing on the broker through these exact functions. The
+    # live counters above are what describe *this* run.
+    s["publish_verified"] = True
     return s
 
 
@@ -1892,11 +1904,17 @@ def laserdata_status() -> dict:
 # POST /api/workspaces/probe/probe/sessions returns 401 {"error":"Unauthorized"}
 # while a nonexistent path returns 404, so the route exists and enforces auth.
 #
-# UNVERIFIED: the *response* body of a successful POST. Their docs show the
-# request but never a response payload, and no real credentials existed when
-# this was written. _guild_session_id() therefore tries several plausible keys
-# and records "unknown" rather than inventing a field name. Confirm against a
-# real 200 before trusting the session id surfaced in /api/health.
+# ALSO VERIFIED (2026-08-03, real credentials, workspace hackathonsweats/wisp):
+# a successful POST returns **201**, not 200, and the session id is the
+# top-level "id". There is no "session_id" key — the guess list in
+# _guild_session_id() below happens to cover it, but "id" is the real one:
+#
+#   {"id": "019fc979-...", "session_type": "api", "context_id": "...",
+#    "session_url": "https://app.guild.ai/sessions/019fc979-...",
+#    "root_task": {"status": "DISPATCHED", ...}, "trigger": {"agent": {...}}}
+#
+# Note the request sends session_type "api_trigger" and the response echoes it
+# back as "api" — that asymmetry is theirs, not a bug here.
 #
 # A session always invokes an agent, so this needs a workspace with an agent and
 # an API trigger already created in their web UI. Unconfigured is the default
@@ -1969,14 +1987,16 @@ def get_guild_client():
 
 
 def _guild_session_id(body) -> str | None:
-    """Dig the session id out of a response whose shape is undocumented.
+    """Dig the session id out of a 201 body.
 
-    Their docs show no success payload, so rather than assert a field name this
-    tries the shapes an id realistically arrives in and gives up honestly.
+    "id" is the confirmed field (see the module note); the others stay as
+    fallbacks because their docs still publish no response schema, so the shape
+    is observed rather than promised. Returning None is a valid answer — the
+    caller records "unknown" instead of inventing an id.
     """
     if not isinstance(body, dict):
         return None
-    for key in ("session_id", "id", "sessionId"):
+    for key in ("id", "session_id", "sessionId"):
         val = body.get(key)
         if isinstance(val, str) and val:
             return val
@@ -2013,12 +2033,18 @@ def _guild_worker(q) -> None:
                     _guild_stats["failed"] += 1
                 continue
             try:
-                sid = _guild_session_id(r.json())
+                body = r.json()
             except ValueError:
-                sid = None
+                body = None
+            sid = _guild_session_id(body)
+            # Their 201 carries a ready-made console link. Surfacing it in
+            # /api/health turns "a session was logged" into something a judge
+            # can actually click through to.
+            url_out = body.get("session_url") if isinstance(body, dict) else None
             with _guild_lock:
                 _guild_stats["logged"] += 1
                 _guild_stats["last_session_id"] = sid or "unknown"
+                _guild_stats["last_session_url"] = url_out
                 _guild_stats["reason"] = ""
             log.info("[Guild] build logged as session %s", sid or "(id not found "
                      "in response — see _guild_session_id)")
@@ -2071,8 +2097,9 @@ def guild_status() -> dict:
     s["configured"] = True
     s["workspace"] = f"{GUILD_OWNER}/{GUILD_WORKSPACE}"
     s["base"] = GUILD_BASE
-    # The POST response shape is undocumented; see the module note.
-    s["response_shape_verified"] = False
+    # Confirmed against a real 201 rather than their docs, which still publish
+    # no response schema. See the module note for the observed body.
+    s["response_shape_verified"] = True
     return s
 
 
