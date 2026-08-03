@@ -96,6 +96,8 @@ ROCKETRIDE_ENABLED   = os.getenv("ROCKETRIDE_ENABLED", "").strip().lower() in ("
 ROCKETRIDE_URI       = os.getenv("ROCKETRIDE_URI", "")
 ROCKETRIDE_APIKEY    = os.getenv("ROCKETRIDE_APIKEY", "")
 ROCKETRIDE_TIMEOUT   = float(os.getenv("ROCKETRIDE_TIMEOUT", "45"))
+# Must be one of llm_anthropic's profile enum values, not a free-form model id.
+ROCKETRIDE_MODEL     = os.getenv("ROCKETRIDE_MODEL", "claude-sonnet-4-6")
 
 # Guild.ai. GUILD_API_KEY is the *combined* "<api_key_id>:<api_key_secret>"
 # string their trigger dialog hands you in one piece — it is used as HTTP Basic
@@ -3903,21 +3905,47 @@ def design_brief(intent: str, research: dict | None = None) -> dict:
 #      in .env would leak it in cleartext. _rocketride_uri() refuses to do that
 #      for anything that is not localhost.
 # ---------------------------------------------------------------------------
-_ROCKETRIDE_BRIEF_PIPELINE = {
-    "description": "Conjure design brief — sizes a printable part from intent",
-    "version": 1,
-    "source": "in",
-    "components": [
-        {"id": "in", "provider": "webhook", "config": {},
-         "name": "Intent"},
-        {"id": "brief", "provider": "ai_chat",
-         "name": "Design brief",
-         "config": {"system": _BRIEF_SYSTEM, "response_format": "json"},
-         "input": [{"from": "in"}]},
-        {"id": "out", "provider": "response", "config": {},
-         "input": [{"from": "brief"}]},
-    ],
-}
+def _rocketride_brief_pipeline() -> dict:
+    """The design-brief graph, rebuilt per call so the LLM key is read live.
+
+    Every field here was corrected against the live server on 2026-08-03; the
+    first draft was written from plausible-looking guesses and every one of them
+    was wrong. The server rejects each mistake with a distinct message, so this
+    was walked out one error at a time:
+
+      - provider "ai_chat" DOES NOT EXIST. get_services() lists 140 real
+        services; the Anthropic one is "llm_anthropic".
+      - input connections require a "lane". {"from": "in"} alone is rejected
+        with 'input lane must be a non-empty string'.
+      - lane names are not free-form, they are declared per service. webhook
+        emits ["tags","text","json","audio","video","image","questions"] and
+        llm_anthropic accepts only "questions" -> "answers". Guessing "output"
+        got 'unknown lane output'.
+      - llm_anthropic is BYO-key: config is a profile discriminator plus a
+        per-model object, {"profile": M, M: {"apikey": ...}}, and the model name
+        is an enum. Omitting it fails with 'Invalid Anthropic API key format'.
+
+    NOTE this hands OUR Anthropic key to RocketRide so their server can make the
+    call on our behalf. That is how their LLM components work — they proxy, they
+    do not supply credit — which is worth weighing: this path bills the same key
+    design_brief() already uses, just via a third party.
+    """
+    return {
+        "description": "Conjure design brief — sizes a printable part from intent",
+        "version": 1,
+        "source": "in",
+        "components": [
+            {"id": "in", "provider": "webhook", "config": {},
+             "name": "Intent"},
+            {"id": "brief", "provider": "llm_anthropic",
+             "name": "Design brief",
+             "config": {"profile": ROCKETRIDE_MODEL,
+                        ROCKETRIDE_MODEL: {"apikey": ANTHROPIC_API_KEY}},
+             "input": [{"from": "in", "lane": "questions"}]},
+            {"id": "out", "provider": "response", "config": {},
+             "input": [{"from": "brief", "lane": "answers"}]},
+        ],
+    }
 
 
 def rocketride_configured() -> bool:
@@ -3948,13 +3976,31 @@ async def _rocketride_brief(intent: str) -> dict:
 
     uri = _rocketride_uri()
     async with RocketRideClient(uri=uri, auth=ROCKETRIDE_APIKEY,
-                                request_timeout=ROCKETRIDE_TIMEOUT) as client:
-        started = await client.use(pipeline=_ROCKETRIDE_BRIEF_PIPELINE)
+                                # MILLISECONDS. Passing seconds here meant a 45ms
+                                # budget, which aborted every request as
+                                # "Connection time out" 0.29s in and looked
+                                # exactly like an unreachable server.
+                                request_timeout=int(ROCKETRIDE_TIMEOUT * 1000)) as client:
+        started = await client.use(pipeline=_rocketride_brief_pipeline())
         token = started.get("token")
         if not token:
             raise RuntimeError(f"no task token in use() response: {started!r}")
         try:
-            return await client.send(token, intent, mimetype="text/plain")
+            got = await client.send(token, intent, mimetype="text/plain")
+            # send() acknowledges; it does NOT return the model's answer. Against
+            # the live server on 2026-08-03 it returned {'name', 'path',
+            # 'objectId'} in 0.35s while get_task_status showed the task still
+            # at state 3 thirty seconds later, so the result arrives on some
+            # channel not yet identified. That handle is a truthy dict, and
+            # returning it would hand run_engineer_pipeline something it would
+            # treat as a design brief and size a physical part from. Refuse
+            # anything that does not carry the one field the caller needs.
+            if not isinstance(got, dict) or not isinstance(got.get("od_mm"), (int, float)):
+                raise RuntimeError(
+                    f"no design brief in send() response — got keys "
+                    f"{sorted(got)[:6] if isinstance(got, dict) else type(got).__name__}. "
+                    f"Result retrieval is unsolved; see the module note.")
+            return got
         finally:
             # Server-side tasks outlive the socket, so a leaked token is a
             # leaked resource on someone else's machine.
