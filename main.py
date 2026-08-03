@@ -3903,15 +3903,16 @@ def design_brief(intent: str, research: dict | None = None) -> dict:
 # considers wiring it in. If it never works, the flag stays off and the kiosk
 # is byte-for-byte the kiosk it is today.
 #
-# ⚠ UNVERIFIED AGAINST A REAL SERVER. The API shape was read off the installed
-# rocketride 1.3.0 package rather than guessed — use()/send()/terminate() are
-# real coroutines with the signatures used below — but no pipeline has ever
-# been executed, because that needs an API key for cloud.rocketride.ai or a
-# self-hosted engine (Docker, not installed here). Verified: it stays dormant
-# when disabled, and it fails closed rather than hanging when it cannot reach
-# a server. Treat a successful run as untested.
+# ⚠ STILL OFF, but no longer unverified. As of 2026-08-03 this runs against the
+# live api.rocketride.ai with a real key: authenticated, use() returns a task
+# token, and a pipeline HAS now executed (totalCount 1, completedCount 1,
+# failedCount 0). What is still missing is the *result* — see finding 3 below.
+# Until that is solved the flag stays off, and the code below correctly refuses
+# to return anything that is not a real brief. Verified: it stays dormant when
+# disabled, and it fails closed rather than hanging when it cannot reach a
+# server.
 #
-# Two findings drove this code:
+# Three findings drove this code:
 #
 #   1. request_timeout and max_retry_time do NOT bound connection setup. With
 #      both set to 3s against a black-holed host the client was still blocked
@@ -3923,6 +3924,32 @@ def design_brief(intent: str, research: dict | None = None) -> dict:
 #      to unencrypted ws://. Since the API key travels over that socket, a typo
 #      in .env would leak it in cleartext. _rocketride_uri() refuses to do that
 #      for anything that is not localhost.
+#
+#   3. client.send() IS THE WRONG INGRESS FOR A `webhook` SOURCE. This cost the
+#      most time because it fails silently: send() returns HTTP-OK-ish in 0.4s
+#      with {'name','path','objectId'}, raises nothing, and get_task_status()
+#      then sits at state 3 "Webhook ready" with totalCount 0 — the data never
+#      entered the pipeline at all. There is no error because nothing is wrong;
+#      the pipeline is simply still waiting to be fed.
+#
+#      A `webhook` source is fed over plain HTTP, not over the SDK socket. The
+#      task's own get_task_status()["notes"][0] hands you everything needed:
+#
+#        POST {ROCKETRIDE_URI}/webhook
+#          Authorization: Bearer <notes["auth-key"]>   # the pk_… public key,
+#          Content-Type: text/plain                    # NOT the rr_… API key
+#          <intent as the body>
+#
+#      Confirmed 2026-08-03: HTTP 200 in 0.28s, {"objectsRequested":1,
+#      "objectsCompleted":1}, and totalCount went 0 -> 1 with 0 failures.
+#
+#      WHAT IS STILL UNSOLVED is only the last hop: that 200 carries
+#      "resultTypes":{} and an object handle with an empty "path", so the brief
+#      itself is not in the reply. Per rocketride.types.data, a populated
+#      result_types is what marks a response as carrying processed content, and
+#      an absent one means no content came back on *this* channel — the answer
+#      is presumably reachable via the returned objectId. That is the one open
+#      question; ingress and execution are no longer in doubt.
 # ---------------------------------------------------------------------------
 def _rocketride_brief_pipeline() -> dict:
     """The design-brief graph, rebuilt per call so the LLM key is read live.
