@@ -1681,6 +1681,9 @@ def _printability_message(report: dict) -> str:
 # ---------------------------------------------------------------------------
 async def run_generation(prompt: str, meshy_prompt_override: str | None = None) -> None:
     _clear_event_buffer()
+    # A Speak-mode mesh has no parametric dimensions — clear any Engineer script
+    # from earlier in the session so its parameters don't attach to this model.
+    clear_engineer_scad()
     try:
         # ── Step 1: Create Meshy task ──────────────────────────────────────
         await push_event("create", "active", "Sending prompt to Meshy AI...", 2)
@@ -3345,6 +3348,11 @@ def select_model(model_id: int) -> JSONResponse:
         if model.get("stl_path") and Path(model["stl_path"]).exists():
             shutil.copy2(model["stl_path"], OUTPUT_DIR / "model.stl")
 
+        # A library model carries no parametric script, so drop any Engineer
+        # script left over from this session — otherwise its parameters would
+        # attach to this model in the dimension editor.
+        clear_engineer_scad()
+
         pipeline_state["status"] = "model_ready"
         pipeline_state["active_model_id"] = model_id
 
@@ -3875,6 +3883,23 @@ def _current_scad(original: bool = False) -> tuple[str | None, str | None]:
     except OSError as e:
         log.warning("Could not read %s: %s", path, e)
     return None, None
+
+
+def clear_engineer_scad() -> None:
+    """Forget the Engineer parametric script so its dimensions never attach to a
+    different model. Without this, after an Engineer build the last part's
+    parameters (shelf/tray/feet, etc.) show up in the dimension editor for a
+    Speak-mode mesh that has none — and 'Apply' re-renders that old CAD over the
+    current model. Called when a Speak mesh is generated or a library model is
+    selected."""
+    with engineer_state["lock"]:
+        engineer_state["scad_script"] = None
+        engineer_state["scad_original"] = None
+    for name in ("engineer_bracket.scad", "engineer_edit.scad"):
+        try:
+            (OUTPUT_DIR / name).unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("Could not clear %s: %s", name, e)
 
 
 @app.get("/api/model/parameters")
