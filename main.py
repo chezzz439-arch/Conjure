@@ -3181,8 +3181,41 @@ Given what the user wants, return:
 _SCAD_SYSTEM = """You are a parametric CAD engineer. Output ONLY raw OpenSCAD code:
 no markdown, no backticks, no prose, no explanation.
 
+Open with a Customizer parameter block, then modules, then one top-level call.
+
+That block is a contract, not decoration: the kiosk parses it and builds the
+dimension-editing UI out of it, so anything it cannot read is a dimension the
+user cannot adjust. OpenSCAD only treats a variable as a parameter when it sits
+before the first "{" in the file and holds a plain literal — so:
+ - Every user-meaningful dimension is a top-level variable assigned a bare
+   number. No expressions, no arithmetic, no references to other variables.
+ - One descriptive comment directly above each, starting at column 0, naming
+   what it controls and its unit: "// Overall length in mm".
+ - A range annotation trailing each numeric variable — // [min:max], or
+   // [min:step:max] where a coarse step reads better. Bracket the sensible
+   design envelope, not the physical extremes.
+ - Group with /* [Group Name] */ headers: Dimensions, Holes, Fit, and so on.
+ - Everything the user must not touch — $fn, derived values, internal
+   constants — goes after a /* [Hidden] */ header or inside a module.
+ - Every declared parameter must actually drive geometry. An orphaned variable
+   is a slider that moves nothing.
+
+Shape of the block:
+
+/* [Dimensions] */
+// Overall length in mm
+length = 40; // [20:100]
+// Wall thickness in mm
+wall_thickness = 3; // [1:0.5:10]
+
+/* [Holes] */
+// Mounting hole diameter in mm
+hole_diameter = 4; // [2:0.5:12]
+
+/* [Hidden] */
+$fn = 64;
+
 Rules:
- - Open with named parameter variables, then modules, then one top-level call.
  - Every dimension in millimetres.
  - $fn on every curved primitive (48-64) so the mesh is smooth but not enormous.
  - The result must be manifold and printable on FDM with no supports: a flat
@@ -3248,6 +3281,240 @@ def generate_scad(intent: str, specs: dict) -> str | None:
         return None
     engineer_log(f"CAD generated: {len(cleaned.splitlines())} lines", "success")
     return cleaned
+
+
+# ── OpenSCAD Customizer parameter block ──────────────────────────────────────
+# Parsed to the rules in the OpenSCAD manual rather than to a convenient
+# approximation of them, because the LLM writes to those rules and OpenSCAD
+# itself reads by them. A variable is a parameter only when it is assigned in
+# the main file, sits before the first "{" syntax element, and holds a plain
+# literal — number, bool, string, or a list of up to four numbers. Expressions
+# are skipped, not evaluated. Anything under /* [Hidden] */ is excluded.
+#
+# Every failure here degrades to "no parameters". A script without a block is
+# an ordinary script, not an error: Speak mode has no SCAD at all, and older
+# Engineer builds predate the prompt that emits annotations.
+
+_SCAD_GROUP_RE  = re.compile(r"^\s*/\*\s*\[([^\]]+)\]\s*\*/\s*$")
+_SCAD_DESC_RE   = re.compile(r"^\s*//\s?(.*)$")
+_SCAD_ASSIGN_RE = re.compile(
+    r"^\s*(\$?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*;\s*(?://\s*(.*?)\s*)?$"
+)
+_SCAD_NUM_RE    = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
+
+
+def _scad_customizer_head(src: str) -> str:
+    """Source up to the first "{" that is real code — the customizer cutoff.
+
+    Tracked through strings and comments so a brace inside either does not end
+    the block early. That is the actual rule; "before the first module" is the
+    folklore version of it and gets scripts wrong.
+    """
+    i, n = 0, len(src)
+    line_comment = block_comment = in_string = False
+    while i < n:
+        c   = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if line_comment:
+            if c == "\n":
+                line_comment = False
+        elif block_comment:
+            if c == "*" and nxt == "/":
+                block_comment = False
+                i += 1
+        elif in_string:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_string = False
+        elif c == "/" and nxt == "/":
+            line_comment = True
+            i += 1
+        elif c == "/" and nxt == "*":
+            block_comment = True
+            i += 1
+        elif c == '"':
+            in_string = True
+        elif c == "{":
+            return src[:i]
+        i += 1
+    return src
+
+
+def _scad_literal(raw: str):
+    """(value, type) for a literal, or (None, None) for anything else."""
+    t = raw.strip()
+    if t in ("true", "false"):
+        return t == "true", "bool"
+    if _SCAD_NUM_RE.match(t):
+        v = float(t)
+        keep_int = v.is_integer() and "." not in t and "e" not in t.lower()
+        return (int(v) if keep_int else v), "number"
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"' and '"' not in t[1:-1]:
+        return t[1:-1], "string"
+    if t.startswith("[") and t.endswith("]"):
+        items = [p.strip() for p in t[1:-1].split(",") if p.strip()]
+        if 1 <= len(items) <= 4 and all(_SCAD_NUM_RE.match(p) for p in items):
+            return [float(p) for p in items], "vector"
+    return None, None
+
+
+def _scad_annotation(note: str, ptype: str) -> dict:
+    """Constraints from a trailing comment: [max], [min:max], [min:step:max],
+    or a [a, b, c] / [val:Label, ...] option list.
+
+    A comment it cannot read yields no constraints, which is still a usable
+    control — a bare number box beats refusing to show the parameter.
+    """
+    out = {"min": None, "max": None, "step": None,
+           "options": None, "max_length": None}
+    if not note:
+        return out
+    m = re.search(r"\[([^\]]*)\]", note)
+    if not m:
+        # `String = "hello"; //8` is the documented text-box length form.
+        bare = note.strip()
+        if ptype == "string" and _SCAD_NUM_RE.match(bare):
+            out["max_length"] = int(float(bare))
+        return out
+
+    body = m.group(1).strip()
+    if not body:
+        return out
+
+    # A comma means an option list even when the items also carry ":" labels,
+    # so this test has to come before the range test.
+    if "," in body:
+        options = []
+        for item in body.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            val, _, label = item.partition(":")
+            val, label = val.strip(), label.strip()
+            pv = float(val) if _SCAD_NUM_RE.match(val) else val.strip('"')
+            options.append({"value": pv, "label": label or str(pv)})
+        out["options"] = options or None
+        return out
+
+    parts = [p.strip() for p in body.split(":")]
+    if all(_SCAD_NUM_RE.match(p) for p in parts):
+        nums = [float(p) for p in parts]
+        if len(nums) == 1:
+            out["min"], out["max"] = 0.0, nums[0]
+        elif len(nums) == 2:
+            out["min"], out["max"] = nums
+        elif len(nums) == 3:
+            out["min"], out["step"], out["max"] = nums
+    elif ptype == "string" and ":" not in body:
+        # A lone string is a one-item option list. A lone *malformed range*
+        # like [oops:bad] is not — that falls through to no constraints, since
+        # a plain number box beats a dropdown with one nonsense entry in it.
+        out["options"] = [{"value": body.strip('"'), "label": body.strip('"')}]
+    return out
+
+
+def parse_scad_parameters(src: str) -> list[dict]:
+    """Customizer parameters of a .scad script, in source order."""
+    params: list[dict] = []
+    if not src:
+        return params
+
+    group, hidden, desc = "Parameters", False, None
+    for line in _scad_customizer_head(src).splitlines():
+        g = _SCAD_GROUP_RE.match(line)
+        if g:
+            name   = g.group(1).strip()
+            hidden = name.lower() == "hidden"
+            group  = name
+            desc   = None
+            continue
+
+        stripped = line.strip()
+        if not stripped:
+            desc = None          # a description has to sit directly above
+            continue
+        if stripped.startswith("//"):
+            d = _SCAD_DESC_RE.match(line)
+            desc = (d.group(1).strip() or None) if d else None
+            continue
+
+        a = _SCAD_ASSIGN_RE.match(line)
+        if not a:
+            desc = None
+            continue
+
+        name, rawval, note = a.group(1), a.group(2), a.group(3)
+        value, ptype = _scad_literal(rawval)
+        # $fn and friends are OpenSCAD specials, not the user's dimensions.
+        if ptype is None or hidden or name.startswith("$"):
+            desc = None
+            continue
+
+        ann = _scad_annotation(note or "", ptype)
+        # A trailing comment carrying no annotation is a description in the
+        # other legal position, so use it rather than dropping it.
+        trailing = note.strip() if note and "[" not in note else None
+        label = desc or trailing or name.replace("_", " ").strip().capitalize()
+        blurb = " ".join(filter(None, (desc, trailing)))
+
+        params.append({
+            "name":        name,
+            "label":       label,
+            "description": desc or trailing,
+            "value":       value,
+            "type":        ptype,
+            "group":       group,
+            "unit":        "mm" if re.search(r"\bmm\b", blurb, re.I) else None,
+            **ann,
+        })
+        desc = None
+
+    return params
+
+
+def _current_scad() -> tuple[str | None, str | None]:
+    """The live Engineer script, else the last one written to disk."""
+    with engineer_state["lock"]:
+        script = engineer_state.get("scad_script")
+    if script:
+        return script, "engineer_state"
+    path = OUTPUT_DIR / "engineer_bracket.scad"
+    try:
+        if path.exists():
+            return path.read_text(), path.name
+    except OSError as e:
+        log.warning("Could not read %s: %s", path, e)
+    return None, None
+
+
+@app.get("/api/model/parameters")
+def api_model_parameters() -> JSONResponse:
+    """Editable dimensions of the current model, for the parameter form.
+
+    Answers 200 with an empty list for every "nothing to edit" case — Speak
+    mode, a pre-annotation build, a script of pure expressions — because the
+    edit panel renders nothing on an empty list and an error would make the
+    viewer look broken when it is working correctly.
+    """
+    src, source = _current_scad()
+    if not src:
+        return JSONResponse({"available": False, "source": None,
+                             "parameters": [], "groups": []})
+    try:
+        params = parse_scad_parameters(src)
+    except Exception as e:               # a parser bug must not kill the viewer
+        log.exception("SCAD parameter parse failed")
+        return JSONResponse({"available": False, "source": source,
+                             "parameters": [], "groups": [],
+                             "error": f"{type(e).__name__}: {e}"})
+
+    groups: list[str] = []
+    for p in params:
+        if p["group"] not in groups:
+            groups.append(p["group"])
+    return JSONResponse({"available": bool(params), "source": source,
+                         "parameters": params, "groups": groups})
 
 
 def review_design(scad_script: str, specs: dict) -> None:
