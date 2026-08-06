@@ -3,6 +3,7 @@ import re
 import math
 import json
 import time
+import hashlib
 import logging
 import sqlite3
 import asyncio
@@ -1872,6 +1873,91 @@ async def run_library_download(prompt: str, source: str, model_id: str, name: st
 
 
 # ---------------------------------------------------------------------------
+# Gcode provenance
+# ---------------------------------------------------------------------------
+# "Does model.gcode belong to the model on disk right now?" is the question
+# worth asking before a part is dispatched, and neither obvious answer survives
+# contact with this kiosk. An in-memory flag dies on restart while the gcode
+# file does not, so a reboot leaves the previous session's part printable.
+# Comparing timestamps fails too: choosing a model from the gallery copies its
+# STL with shutil.copy2, which preserves the source mtime, so a freshly chosen
+# model can look older than gcode sliced from something else entirely.
+#
+# Recording the digest of the STL that was actually sliced answers it directly.
+# It sits beside the gcode rather than in memory, so it outlives a restart, and
+# it needs no per-mode scoping — a Speak part and an Engineer part are checked
+# the same way.
+def _stl_digest(stl_path: Path) -> str | None:
+    """SHA-256 of an STL, or None if it cannot be read."""
+    try:
+        h = hashlib.sha256()
+        with open(stl_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError as e:
+        log.warning("Could not fingerprint %s: %s", stl_path, e)
+        return None
+
+
+def _gcode_source_file(gcode_path: Path) -> Path:
+    return gcode_path.with_name(gcode_path.name + ".source")
+
+
+def record_gcode_source(stl_path: Path, gcode_path: Path) -> None:
+    """Stamp a freshly sliced gcode with the STL it came from."""
+    sidecar = _gcode_source_file(gcode_path)
+    digest = _stl_digest(stl_path)
+    try:
+        if digest is None:
+            sidecar.unlink(missing_ok=True)
+        else:
+            sidecar.write_text(digest)
+    except OSError as e:
+        log.warning("Could not record gcode source: %s", e)
+
+
+def forget_gcode_source(gcode_path: Path) -> None:
+    """Drop the stamp when its gcode goes, so it can never be read as
+    describing whatever gcode appears next."""
+    try:
+        _gcode_source_file(gcode_path).unlink(missing_ok=True)
+    except OSError as e:
+        log.warning("Could not clear gcode source: %s", e)
+
+
+def gcode_matches_model(gcode_path: Path, stl_path: Path) -> tuple[bool, str]:
+    """(ok, reason) — is this gcode the one for the STL currently on disk?
+
+    Unprovable counts as no. Gcode with no stamp was sliced before this check
+    existed, or by a path that did not record one, and "probably fine" is not a
+    standard worth dispatching a print on. The cost of being wrong is a wasted
+    spool and a ruined part; the cost of being cautious is one re-slice.
+    """
+    if not gcode_path.exists() or gcode_path.stat().st_size == 0:
+        return False, "No gcode yet — slice the model first"
+    if not stl_path.exists():
+        return False, "No model on disk to check the gcode against — slice again"
+
+    sidecar = _gcode_source_file(gcode_path)
+    if not sidecar.exists():
+        return False, ("This gcode is not stamped with the model it came from — "
+                       "slice again before printing")
+    try:
+        recorded = sidecar.read_text().strip()
+    except OSError as e:
+        return False, f"Could not read the gcode's source stamp: {e}"
+
+    current = _stl_digest(stl_path)
+    if current is None:
+        return False, "Could not read the model to check it against the gcode"
+    if recorded != current:
+        return False, ("This gcode was sliced from a different model — "
+                       "slice the current one before printing")
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
 # Slicing background task
 # ---------------------------------------------------------------------------
 async def run_slicing() -> None:
@@ -1896,6 +1982,7 @@ async def run_slicing() -> None:
         # Clear any stale gcode so the size checks below are meaningful
         if gcode_path.exists():
             gcode_path.unlink()
+        forget_gcode_source(gcode_path)
 
         sliced = False
 
@@ -2035,6 +2122,7 @@ async def run_slicing() -> None:
 
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
+        record_gcode_source(stl_path, gcode_path)
 
         # slice_ok answers "does model.gcode belong to the model currently on
         # disk", and this is the other place that makes it true. Editing a
@@ -2375,10 +2463,18 @@ def api_printer_status() -> JSONResponse:
 
 @app.post("/api/print-now")
 def api_print_now() -> JSONResponse:
-    """Uploads the sliced gcode to the printer and starts it."""
+    """Uploads the sliced gcode to the printer and starts it.
+
+    That the file exists proves only that some slice once succeeded. A failed
+    slice leaves the previous build's model.gcode on disk at full size, and a
+    restart clears the in-memory record of what it was for while leaving the
+    file itself untouched — so existence alone would happily dispatch the last
+    session's part. The stamp written at slice time is what settles it.
+    """
     gcode = OUTPUT_DIR / "model.gcode"
-    if not gcode.exists():
-        raise HTTPException(400, "No gcode yet — slice the model first")
+    fresh, why = gcode_matches_model(gcode, OUTPUT_DIR / "model.stl")
+    if not fresh:
+        raise HTTPException(400 if not gcode.exists() else 409, why)
 
     status = moonraker_status()
     if not status.get("configured"):
@@ -2512,13 +2608,17 @@ def api_usb_list() -> JSONResponse:
         slice_ok = engineer_state["slice_ok"]
     exists = gcode.exists()
     size = gcode.stat().st_size if exists else 0
+    # Same helper the export endpoint refuses on, so the button the UI draws
+    # and the answer it gets on click cannot disagree.
+    exportable, why = gcode_matches_model(gcode, OUTPUT_DIR / "model.stl")
     return JSONResponse({
         "drives": drives,
         "count": len(drives),
         "gcode_exists": exists,
         "gcode_size_mb": round(size / (1024 * 1024), 2) if exists else 0,
         "slice_ok": slice_ok,
-        "exportable": bool(slice_ok) and exists and size > 0,
+        "exportable": exportable,
+        "blocked_reason": why,
     })
 
 
@@ -2526,35 +2626,32 @@ def api_usb_list() -> JSONResponse:
 def api_usb_export_gcode(body: dict = None) -> JSONResponse:
     """Copy this build's gcode to a USB drive.
 
-    Applies the SAME refusal the Moonraker path applies. orca_slice_sync()
-    returns False without deleting its target, so a failed slice leaves the
-    previous build's model.gcode sitting on disk at full size. "The file exists
-    and is 4MB" is therefore not evidence that it belongs to this build.
-    Exporting it would hand someone a USB stick holding the wrong object, which
-    is the same defect as printing it — just with the failure deferred until
-    they walk to the printer.
+    Applies the same refusal the Moonraker path applies, now through the same
+    helper rather than a parallel rule that happened to agree. Exporting gcode
+    that belongs to a different model hands someone a USB stick holding the
+    wrong object — the same defect as printing it, with the failure deferred
+    until they walk to the printer.
+
+    The old rule keyed on engineer_state["slice_ok"], which only Engineer
+    builds ever set. That refused every Speak-mode export as "not sliced yet"
+    however correct it was. Checking the gcode against the model on disk is
+    the question that was meant all along, and it does not care which pipeline
+    produced the part.
     """
     body = body or {}
     gcode = OUTPUT_DIR / "model.gcode"
 
     with engineer_state["lock"]:
-        slice_ok = engineer_state["slice_ok"]
         status = engineer_state["status"]
 
     if status == "RUNNING":
         return JSONResponse({"ok": False, "error": "A build is still running — "
                              "wait for it to finish before exporting"},
                             status_code=409)
-    if slice_ok is None:
-        return JSONResponse({"ok": False, "error": "No build has been sliced yet "
-                             "— run a build first"}, status_code=409)
-    if not slice_ok:
-        return JSONResponse({"ok": False, "error": "Slice failed — refusing to "
-                             "export a stale gcode left over from an earlier "
-                             "build"}, status_code=409)
-    if not gcode.exists() or gcode.stat().st_size == 0:
-        return JSONResponse({"ok": False, "error": "No gcode file on disk"},
-                            status_code=409)
+
+    fresh, why = gcode_matches_model(gcode, OUTPUT_DIR / "model.stl")
+    if not fresh:
+        return JSONResponse({"ok": False, "error": why}, status_code=409)
 
     drives = _list_usb_drives()
     if not drives:
@@ -4322,6 +4419,7 @@ def api_model_apply(body: dict | None = None) -> JSONResponse:
                 stale_removed = True
         except OSError as e:
             log.warning("Could not remove stale gcode: %s", e)
+        forget_gcode_source(gcode_path)
 
         with engineer_state["lock"]:
             engineer_state["scad_script"] = script
@@ -4400,6 +4498,7 @@ def orca_slice_sync(stl_path: Path, gcode_path: Path) -> bool:
             engineer_log(f"OrcaSlicer failed (rc={result.returncode}) {tail}", "warning")
             return False
         shutil.move(str(plate), str(gcode_path))
+        record_gcode_source(stl_path, gcode_path)
         engineer_log(f"Gcode sliced: {gcode_path.stat().st_size / (1024*1024):.1f}MB", "success")
         return True
     except subprocess.TimeoutExpired:
