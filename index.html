@@ -708,6 +708,30 @@
     padding-left: 2px;
   }
 
+  .mic-caption-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  /* "Clear" appears only when the box has text (toggled via the hidden
+     attribute), so a misheard transcript is one tap away from a clean slate. */
+  .btn-clear {
+    flex: none;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 8px);
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  }
+  .btn-clear:hover { color: var(--text-1); border-color: var(--accent); }
+  .btn-clear[hidden] { display: none; }
+
   .speak-actions {
     display: flex;
     align-items: center;
@@ -2430,7 +2454,10 @@
           </svg>
         </button>
       </div>
-      <div id="mic-label" class="mic-caption">Hold the mic to speak — or tap it to talk hands-free</div>
+      <div class="mic-caption-row">
+        <div id="mic-label" class="mic-caption">Hold the mic to speak — or tap it to talk hands-free</div>
+        <button id="clear-btn" class="btn-clear" type="button" hidden onclick="clearPrompt()" title="Delete what's in the box and start over">Clear</button>
+      </div>
     </div>
     <div class="prompt-suggestions">
       <span class="examples-label">Try:</span>
@@ -3041,7 +3068,23 @@ function promptInputEl() { return document.getElementById('prompt-input'); }
 function onPromptInput() {
   const gen = document.getElementById('btn-generate');
   const el = promptInputEl();
-  if (gen) gen.disabled = !(el && el.value.trim());
+  const hasText = !!(el && el.value.trim());
+  if (gen) gen.disabled = !hasText;
+  const clr = document.getElementById('clear-btn');
+  if (clr) clr.hidden = !hasText;   // only offer "Clear" when there's something to clear
+}
+
+// Wipe the prompt box — for when the transcription came out wrong and the user
+// wants a clean slate rather than editing it. Also drops the voice transcript
+// state so the next hold-to-talk starts fresh.
+function clearPrompt() {
+  if (isListening) stopListening();
+  transcript = '';
+  interimText = '';
+  const el = promptInputEl();
+  if (el) { el.value = ''; el.focus(); }
+  onPromptInput();
+  showSpeechMessage('Cleared — hold the mic and try again, or type it.');
 }
 
 // Engineer-mode mirror of onPromptInput — the two composers share one rule:

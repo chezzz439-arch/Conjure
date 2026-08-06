@@ -2195,7 +2195,16 @@ async def run_slicing() -> None:
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
                 "-s", "infill_sparse_density=15",
-                "-s", "support_enable=false",
+                # Auto-supports: CuraEngine only builds support where an overhang
+                # actually needs it (steeper than support_angle from vertical), so
+                # a flat pot gets none while a winged figurine gets support under
+                # the wings. Kiosk users generate arbitrary shapes and never think
+                # about orientation, so leaving this off made overhang-heavy prints
+                # droop/fail. "everywhere" checks overhangs off the buildplate too.
+                "-s", "support_enable=true",
+                "-s", "support_angle=50",
+                "-s", "support_structure=normal",
+                "-s", "support_type=everywhere",
             ]
             proc = None
             try:
