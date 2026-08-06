@@ -4186,8 +4186,162 @@ def check_model_fit(dims: dict | None, printer: dict | None) -> dict:
         detail = (f"It is {', '.join(over)} — larger than any dimension of your "
                   f"{name}, which is {bed_desc}.")
     return {**common, "verdict": "too_big", "blocking": True,
+            "split": plan_split(dims, printer),
             "message": f"This model will not fit on your {name} in any "
                        f"orientation. {detail}"}
+
+
+# ---------------------------------------------------------------------------
+# How to cut it up
+# ---------------------------------------------------------------------------
+
+# Room for the kerf of a saw, print swell, and a skim of glue. Cutting exactly
+# at bed_x means every piece is exactly bed-sized, which in practice does not
+# seat. Shrinking the usable bed slightly makes each piece land inside it.
+SPLIT_MARGIN_MM = 5.0
+
+
+def _joint_advice(area_mm2: float, pieces: int) -> dict:
+    """What to rejoin the pieces with, and why, from the size of the mating face.
+
+    The area is the bounding cross-section of one piece at the cut -- an upper
+    bound on the real glue area, since the part is rarely solid there. It is
+    used only to pick between three well-separated recommendations, which is
+    what it is good enough for.
+    """
+    if area_mm2 < 150:
+        joint, why = ("Superglue (cyanoacrylate) alone",
+                      "the mating face is too small to drill for pins without "
+                      "removing most of what is holding it together")
+    elif area_mm2 < 1200:
+        joint, why = ("Glue plus two 3mm dowel pins",
+                      "pins stop the faces sliding while the glue sets, and "
+                      "carry the shear that a butt-glued joint would not")
+    else:
+        joint, why = ("Bolts into captive nuts, or glue plus four 4mm dowels",
+                      "a face this large is hard to align by hand and heavy "
+                      "enough to peel a glue-only joint apart")
+
+    extra = []
+    if pieces > 4:
+        extra.append(f"Number the {pieces} pieces as they come off the bed — "
+                     f"at this count they stop being obvious.")
+    extra.append("Print a dovetail or puzzle joint instead only if you want no "
+                 "hardware: it self-aligns, but the clearance needs tuning to "
+                 "your printer and usually takes a test fit or two.")
+    return {"joint": joint, "why": why, "notes": extra}
+
+
+def _mesh_solidity(stl_path: Path) -> float | None:
+    """Fraction of the bounding box the part actually fills, or None.
+
+    Used to keep the mating-face estimate honest. A hollow enclosure and a solid
+    block with the same bounding box have very different amounts of material at
+    a cut, and the joint advice should not treat them alike. Measuring the true
+    cross-section would need trimesh's section(), which needs scipy, which is
+    not installed -- so this scales the bounding cross-section by how solid the
+    part is overall, which separates the three cases the advice distinguishes.
+    """
+    try:
+        import trimesh
+        mesh = trimesh.load(str(stl_path), force="mesh")
+        lo, hi = mesh.bounds
+        bbox_vol = float((hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]))
+        if bbox_vol <= 0 or not mesh.is_watertight:
+            return None            # volume is meaningless on an open mesh
+        return max(0.02, min(1.0, abs(float(mesh.volume)) / bbox_vol))
+    except Exception as e:                                  # noqa: BLE001
+        log.info("[Split] solidity unavailable: %s", e)
+        return None
+
+
+def plan_split(dims: dict | None, printer: dict | None,
+               solidity: float | None = None) -> dict | None:
+    """Cut a too-big part into bed-sized pieces: how many, which way, where.
+
+    Returns None when the part fits or there is nothing to plan against. Every
+    number is computed from the real bounding box and the real bed, not from a
+    rule of thumb.
+
+    The cut planes are spaced evenly, and that is all they are. Conjure does not
+    look at what a plane passes through, so one can land on a screw hole or down
+    a thin wall. The plan says so rather than implying the positions were chosen
+    with the part's features in mind.
+    """
+    if not dims or not printer:
+        return None
+    size = [float(dims.get("x") or 0), float(dims.get("y") or 0),
+            float(dims.get("z") or 0)]
+    if min(size) <= 0:
+        return None
+
+    bed = [float(printer.get("bed_x") or 0), float(printer.get("bed_y") or 0),
+           None if printer.get("bed_z") is None else float(printer["bed_z"])]
+    # Height is the one axis where the margin is not needed: nothing has to slide
+    # past anything to seat a part vertically.
+    usable = [max(bed[0] - SPLIT_MARGIN_MM, 1.0),
+              max(bed[1] - SPLIT_MARGIN_MM, 1.0),
+              bed[2]]
+    if usable[0] <= 1 or usable[1] <= 1:
+        return None
+
+    best = None
+    for (ia, ib, ih), label, instruction in _ORIENTATIONS:
+        counts = [1, 1, 1]
+        counts[ia] = math.ceil(size[ia] / usable[0])
+        counts[ib] = math.ceil(size[ib] / usable[1])
+        counts[ih] = 1 if usable[2] is None else math.ceil(size[ih] / usable[2])
+        total = counts[0] * counts[1] * counts[2]
+        axes_cut = sum(1 for c in counts if c > 1)
+        # Fewest pieces first; then fewest separate cut directions, because a
+        # part cut on one axis is far easier to align than one cut on two.
+        key = (total, axes_cut, 0 if label == "as-is" else 1)
+        if best is None or key < best[0]:
+            best = (key, label, instruction, counts)
+
+    if best is None:
+        return None
+    (total, axes_cut, _), label, instruction, counts = best
+    if total <= 1:
+        return None
+
+    cuts = []
+    for axis, count in enumerate(counts):
+        if count < 2:
+            continue
+        step = size[axis] / count
+        cuts.append({
+            "axis": "XYZ"[axis],
+            "pieces": count,
+            "piece_mm": round(step, 1),
+            "positions_mm": [round(step * k, 1) for k in range(1, count)],
+        })
+
+    # Cross-section of one piece at the first cut: the two axes that are not
+    # being cut through, at their per-piece size, scaled by how solid the part
+    # actually is. Without the scaling a hollow enclosure would be told to use
+    # bolts because its bounding box is large.
+    first = cuts[0]
+    ai = "XYZ".index(first["axis"])
+    others = [i for i in range(3) if i != ai]
+    area = (size[others[0]] / counts[others[0]]) * (size[others[1]] / counts[others[1]])
+    if solidity is not None:
+        area *= solidity
+
+    return {
+        "pieces": total,
+        "orientation": label,
+        "orientation_instruction": instruction,
+        "cuts": cuts,
+        "cut_area_mm2": round(area, 1),
+        "cut_area_estimated": solidity is not None,
+        "rejoin": _joint_advice(area, total),
+        "margin_mm": SPLIT_MARGIN_MM,
+        "caveat": ("Cut positions are spaced evenly — Conjure has not checked "
+                   "what each plane passes through. If one lands on a hole, a "
+                   "boss or a thin wall, move it a few millimetres; the pieces "
+                   "do not have to be equal."),
+    }
 
 
 def current_model_fit() -> dict:
@@ -4197,7 +4351,13 @@ def current_model_fit() -> dict:
         if not stl.exists():
             return {"verdict": "no_model", "blocking": False,
                     "message": "No model yet."}
-        return check_model_fit(_stl_dimensions(stl), get_selected_printer())
+        dims, printer = _stl_dimensions(stl), get_selected_printer()
+        fit = check_model_fit(dims, printer)
+        if fit.get("verdict") == "too_big":
+            # Recomputed with the real mesh so the joint advice reflects how
+            # much material is actually at the cut, not just the bounding box.
+            fit["split"] = plan_split(dims, printer, _mesh_solidity(stl))
+        return fit
     except Exception as e:                                  # noqa: BLE001
         # A broken fit check must never be the reason a working pipeline stops.
         log.warning("[Fit] check failed, allowing through: %s", e)

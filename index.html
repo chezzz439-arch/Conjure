@@ -1792,6 +1792,30 @@
   .print-check.fail .print-check-title { color: var(--red); }
   .print-check.ok   .print-check-title { color: var(--accent); }
 
+  /* The splitting plan. Indented under the refusal because it is the answer to
+     it, not a separate notice. */
+  .fit-split {
+    margin-top: 2px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .fit-split-head {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 2px;
+  }
+
+  .fit-cut { font-size: 12px; line-height: 1.45; color: var(--text-2); }
+  .fit-cut b { color: var(--text-1); font-weight: 600; }
+  .fit-cut-soft { color: var(--text-faint); }
+
   /* A blocked part needs its way out visible in the same box as the refusal,
      not somewhere the user has to go looking for. */
   .fit-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
@@ -5160,6 +5184,29 @@ function renderFitCheck(fit) {
   box.className = 'print-check ' + kind;
   let html = '<div class="print-check-title">' + escapeHtml(title) + '</div>'
            + '<div class="print-check-line">' + escapeHtml(fit.message || '') + '</div>';
+
+  // How to cut it up, when there is something to cut. Real millimetres from the
+  // real bounding box and the real bed — the point is that the user can act on
+  // it with a saw and a ruler without doing any arithmetic themselves.
+  const s = fit.split;
+  if (s && s.pieces > 1) {
+    const cuts = (s.cuts || []).map(c =>
+      `<div class="fit-cut">Cut along <b>${escapeHtml(c.axis)}</b> into `
+      + `${c.pieces} pieces of ${c.piece_mm} mm — at `
+      + escapeHtml(c.positions_mm.map(p => p + ' mm').join(' and ')) + '</div>').join('');
+    html += '<div class="fit-split">'
+      + `<div class="fit-split-head">Split it into ${s.pieces} piece`
+      + (s.pieces === 1 ? '' : 's') + '</div>'
+      + cuts
+      + (s.orientation && s.orientation !== 'as-is'
+          ? `<div class="fit-cut">Then print each piece ${escapeHtml(s.orientation)}.</div>` : '')
+      + `<div class="fit-cut">Rejoin with <b>${escapeHtml(s.rejoin.joint)}</b> — `
+      + escapeHtml(s.rejoin.why) + '.</div>'
+      + (s.rejoin.notes || []).map(n =>
+          '<div class="fit-cut fit-cut-soft">' + escapeHtml(n) + '</div>').join('')
+      + '<div class="fit-cut fit-cut-soft">' + escapeHtml(s.caveat || '') + '</div>'
+      + '</div>';
+  }
 
   const actions = [];
   if (V === 'no_printer') {
