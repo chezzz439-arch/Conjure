@@ -792,6 +792,23 @@
   .pr-connect-status.ok { color: var(--accent, #45d38a); }
   .pr-connect-status.err { color: #ff8a7a; }
 
+  /* Sliced-print preview overlay */
+  .pv-overlay { position: fixed; inset: 0; z-index: 10000; display: none; flex-direction: column; background: rgba(6,12,9,0.97); }
+  .pv-overlay.open { display: flex; }
+  .pv-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border,#2a3a32); }
+  .pv-title { font-size: 16px; font-weight: 600; color: var(--text-1,#eaf5ef); }
+  .pv-sub { color: var(--text-3,#7f948a); font-weight: 400; font-size: 13px; }
+  .pv-close { background: none; border: none; color: var(--text-2,#b9cabf); font-size: 30px; line-height: 1; cursor: pointer; padding: 0 6px; }
+  .pv-canvas-wrap { flex: 1 1 auto; min-height: 0; position: relative; touch-action: none; }
+  .pv-canvas-wrap canvas { display: block; width: 100%; height: 100%; }
+  .pv-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 18px; border-top: 1px solid var(--border,#2a3a32); }
+  .pv-legend { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--text-2,#b9cabf); flex-wrap: wrap; }
+  .pv-dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .pv-dot.model { background: #45d38a; }
+  .pv-dot.support { background: #f58c42; }
+  .pv-hint { color: var(--text-3,#7f948a); }
+  .pv-ok { flex: none; }
+
   .speak-actions {
     display: flex;
     align-items: center;
@@ -2787,10 +2804,14 @@
         <div class="pi-cell"><span>Layer height</span><b id="pi-layer">0.2 mm</b></div>
         <div class="pi-cell"><span>Infill</span><b id="pi-infill">15%</b></div>
         <div class="pi-cell"><span>Supports</span><b id="pi-supports">Auto</b></div>
+        <div class="pi-cell"><span>Est. print time</span><b id="pi-time">—</b></div>
         <div class="pi-cell"><span>Print file</span><b id="pi-file">—</b></div>
         <div class="pi-cell"><span>Sliced by</span><b id="pi-slicer">CuraEngine</b></div>
       </div>
     </div>
+    <button id="btn-preview" class="btn-secondary" onclick="openPrintPreview()" style="display:none;width:100%;margin-bottom:10px;" title="See the sliced print — model and supports — on the bed before printing">
+      👁 Preview print on the bed
+    </button>
     <!-- Sending straight to the printer is the fast path, so it outranks the
          download; both stay visible because the printer can be off. -->
     <button id="btn-print-now" class="btn-primary" onclick="printNow()" style="display:none;width:100%;margin-bottom:10px;" title="Send this file to the printer over the network and start it">
@@ -3506,7 +3527,7 @@ function resetSliceSteps() {
   // Every result-state control goes back to hidden — a second run must not
   // inherit the previous job's "Printing now" button or printer readout.
   ['usb-ready-msg', 'btn-start-over', 'btn-download-gcode',
-   'btn-print-now', 'printer-state'].forEach(id => {
+   'btn-print-now', 'btn-preview', 'printer-state'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
@@ -3937,6 +3958,8 @@ async function renderPrintInfo() {
     set('pi-layer', (d.layer_height_mm ?? 0.2) + ' mm');
     set('pi-infill', (d.infill_pct ?? 15) + '%');
     set('pi-supports', d.supports ? 'Auto — added where needed' : 'Off');
+    const t = d.est_time_s;
+    set('pi-time', t ? (t >= 3600 ? Math.floor(t / 3600) + 'h ' + Math.round((t % 3600) / 60) + 'm' : Math.max(1, Math.round(t / 60)) + ' min') : '—');
     set('pi-file', d.gcode_mb ? d.gcode_mb + ' MB' : '—');
     set('pi-slicer', d.slicer || 'CuraEngine');
     if (card) card.style.display = 'block';
@@ -3956,6 +3979,8 @@ function showUsbReady(usedUsb) {
     ? 'Remove the drive and insert it into your printer'
     : 'Download it below, or send it to the printer';
   renderPrintInfo();
+  const prev = document.getElementById('btn-preview');
+  if (prev) prev.style.display = 'block';
   // Offered either way — with a USB the download is still the easier route if
   // the stick is going back into a laptop.
   const dl = document.getElementById('btn-download-gcode');
@@ -3994,6 +4019,166 @@ async function connectPrinter() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
   }
+}
+
+/* ════════ SLICED PRINT PREVIEW ════════
+   Renders the gcode toolpaths (model + supports) on the print bed so the user
+   can sanity-check the slice before committing. Own WebGL context, rendered
+   on-demand (not a continuous loop) so it stays responsive on the kiosk's
+   software renderer, and disposed on close (incl. forceContextLoss). */
+let pv = null;
+
+function ensurePreviewOverlay() {
+  if (pv && pv.overlay) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'pv-overlay';
+  overlay.innerHTML =
+    '<div class="pv-head"><div class="pv-title">Print preview<span class="pv-sub" id="pv-sub"></span></div>'
+    + '<button class="pv-close" onclick="closePrintPreview()" aria-label="Close preview">&times;</button></div>'
+    + '<div class="pv-canvas-wrap" id="pv-canvas-wrap"></div>'
+    + '<div class="pv-foot"><div class="pv-legend">'
+    + '<span><i class="pv-dot model"></i>Model</span>'
+    + '<span><i class="pv-dot support"></i>Supports</span>'
+    + '<span class="pv-hint">Drag to rotate · scroll to zoom</span></div>'
+    + '<button class="btn-primary pv-ok" onclick="closePrintPreview()">Looks good →</button></div>';
+  document.body.appendChild(overlay);
+  pv = { overlay, wrap: overlay.querySelector('#pv-canvas-wrap'), dragging: false };
+  // Orbit controls, bound once; they read the live pv state.
+  const onMove = (cx, cy) => {
+    if (!pv.dragging) return;
+    const dx = cx - pv.lx, dy = cy - pv.ly; pv.lx = cx; pv.ly = cy;
+    pv.az -= dx * 0.01; pv.el = Math.max(-1.45, Math.min(1.45, pv.el + dy * 0.01));
+    requestPreviewRender();
+  };
+  pv.wrap.addEventListener('mousedown', (e) => { pv.dragging = true; pv.lx = e.clientX; pv.ly = e.clientY; });
+  document.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
+  document.addEventListener('mouseup', () => { pv.dragging = false; });
+  pv.wrap.addEventListener('touchstart', (e) => { if (e.touches[0]) { pv.dragging = true; pv.lx = e.touches[0].clientX; pv.ly = e.touches[0].clientY; } }, { passive: true });
+  pv.wrap.addEventListener('touchmove', (e) => { if (e.touches[0]) { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: false });
+  pv.wrap.addEventListener('touchend', () => { pv.dragging = false; });
+  pv.wrap.addEventListener('wheel', (e) => { e.preventDefault(); pv.dist = Math.max(20, Math.min(3000, pv.dist * (1 + Math.sign(e.deltaY) * 0.12))); requestPreviewRender(); }, { passive: false });
+}
+
+async function openPrintPreview() {
+  ensurePreviewOverlay();
+  pv.overlay.classList.add('open');
+  const sub = document.getElementById('pv-sub');
+  if (sub) sub.textContent = ' · loading…';
+  try {
+    const [gtext, fitResp] = await Promise.all([
+      fetch('/api/download/gcode').then(r => r.text()),
+      fetch('/api/model/fit').then(r => r.json()).catch(() => ({})),
+    ]);
+    let bed = { x: 220, y: 220 };
+    const m = (fitResp && fitResp.fit && fitResp.fit.bed || '').match(/([\d.]+)\s*x\s*([\d.]+)/);
+    if (m) bed = { x: +m[1], y: +m[2] };
+    const seg = parseGcodeSegments(gtext);
+    buildPreviewScene(seg, bed);
+    if (sub) sub.textContent = seg.count ? (' · ' + seg.count.toLocaleString() + ' moves') : ' · nothing to show';
+  } catch (e) {
+    if (sub) sub.textContent = ' · preview unavailable';
+    console.warn('preview failed', e);
+  }
+}
+
+/* Extrusion-only toolpath extraction. Colours supports distinctly so the user
+   can see exactly where support material will go. */
+function parseGcodeSegments(text) {
+  const MODEL = [0.27, 0.83, 0.54], SUPPORT = [0.96, 0.55, 0.26], SKIRT = [0.55, 0.60, 0.72];
+  let x = 0, y = 0, z = 0, e = 0, absPos = true, absE = true, type = '';
+  let hp = false;
+  const P = [], C = [];
+  let minx = 1e18, maxx = -1e18, miny = 1e18, maxy = -1e18, minz = 1e18, maxz = -1e18;
+  const lines = text.split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    let line = lines[li];
+    const semi = line.indexOf(';');
+    if (semi >= 0) { const cm = line.slice(semi + 1); if (cm.startsWith('TYPE:')) type = cm.slice(5).trim(); line = line.slice(0, semi); }
+    line = line.trim();
+    if (!line) continue;
+    const sp = line.split(/\s+/);
+    const code = sp[0];
+    if (code === 'G90') { absPos = true; continue; }
+    if (code === 'G91') { absPos = false; continue; }
+    if (code === 'M82') { absE = true; continue; }
+    if (code === 'M83') { absE = false; continue; }
+    if (code === 'G92') { for (let i = 1; i < sp.length; i++) { const c = sp[i][0], v = parseFloat(sp[i].slice(1)); if (isNaN(v)) continue; if (c === 'E') e = v; else if (c === 'X') x = v; else if (c === 'Y') y = v; else if (c === 'Z') z = v; } hp = true; continue; }
+    if (code !== 'G0' && code !== 'G1') continue;
+    let nx = x, ny = y, nz = z, ne = e, eSpec = false;
+    for (let i = 1; i < sp.length; i++) { const c = sp[i][0], v = parseFloat(sp[i].slice(1)); if (isNaN(v)) continue; if (c === 'X') nx = absPos ? v : x + v; else if (c === 'Y') ny = absPos ? v : y + v; else if (c === 'Z') nz = absPos ? v : z + v; else if (c === 'E') { ne = absE ? v : e + v; eSpec = true; } }
+    if (eSpec && (ne - e) > 1e-6 && hp && (nx !== x || ny !== y || nz !== z)) {
+      // gcode (x,y,z) -> three (x, z, y): gcode Z (height) becomes three Y (up).
+      P.push(x, z, y, nx, nz, ny);
+      const col = /^SUPPORT/.test(type) ? SUPPORT : (type === 'SKIRT' || type === 'BRIM' ? SKIRT : MODEL);
+      C.push(col[0], col[1], col[2], col[0], col[1], col[2]);
+      minx = Math.min(minx, x, nx); maxx = Math.max(maxx, x, nx);
+      miny = Math.min(miny, y, ny); maxy = Math.max(maxy, y, ny);
+      minz = Math.min(minz, z, nz); maxz = Math.max(maxz, z, nz);
+    }
+    x = nx; y = ny; z = nz; e = ne; hp = true;
+  }
+  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2, cz = (minz + maxz) / 2;
+  const size = Math.max(maxx - minx, maxy - miny, maxz - minz, 1);
+  return { positions: new Float32Array(P), colors: new Float32Array(C),
+           center: [cx, cz, cy], radius: size, count: P.length / 6 };
+}
+
+function buildPreviewScene(seg, bed) {
+  if (!window.THREE) return;
+  if (pv.renderer) { try { pv.renderer.forceContextLoss(); } catch (e) {} pv.renderer.dispose(); }
+  pv.wrap.innerHTML = '';
+  const w = pv.wrap.clientWidth || 800, h = pv.wrap.clientHeight || 480;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0e1512);
+  const camera = new THREE.PerspectiveCamera(45, w / h, 0.5, 8000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(w, h); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  pv.wrap.appendChild(renderer.domElement);
+  // Bed grid (three X-Z plane == gcode X-Y bed), and a brighter bed outline.
+  const grid = new THREE.GridHelper(Math.max(bed.x, bed.y), Math.round(Math.max(bed.x, bed.y) / 20) || 10, 0x2f4a3c, 0x1c2c24);
+  grid.position.set(bed.x / 2, 0, bed.y / 2);
+  scene.add(grid);
+  const edge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(bed.x, 0.1, bed.y)),
+    new THREE.LineBasicMaterial({ color: 0x3d6b56 }));
+  edge.position.set(bed.x / 2, 0, bed.y / 2);
+  scene.add(edge);
+  // Toolpaths
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(seg.positions, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(seg.colors, 3));
+  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true })));
+  pv.scene = scene; pv.camera = camera; pv.renderer = renderer;
+  pv.target = new THREE.Vector3(seg.center[0], seg.center[1], seg.center[2]);
+  pv.dist = seg.radius * 2.4 + 40; pv.az = Math.PI * 0.22; pv.el = Math.PI * 0.30;
+  renderPreview();
+}
+
+// Coalesce rapid drag/zoom events into one render per frame — a redraw of
+// ~220k line vertices on the kiosk's software renderer isn't free, and rendering
+// on every mousemove would back up.
+function requestPreviewRender() {
+  if (!pv || pv._pending) return;
+  pv._pending = true;
+  requestAnimationFrame(() => { pv._pending = false; renderPreview(); });
+}
+
+function renderPreview() {
+  if (!pv || !pv.camera) return;
+  const t = pv.target;
+  pv.camera.position.set(
+    t.x + pv.dist * Math.cos(pv.el) * Math.sin(pv.az),
+    t.y + pv.dist * Math.sin(pv.el),
+    t.z + pv.dist * Math.cos(pv.el) * Math.cos(pv.az));
+  pv.camera.lookAt(t);
+  pv.renderer.render(pv.scene, pv.camera);
+}
+
+function closePrintPreview() {
+  if (!pv) return;
+  pv.overlay.classList.remove('open');
+  if (pv.renderer) { try { pv.renderer.forceContextLoss(); } catch (e) {} pv.renderer.dispose(); }
+  if (pv.wrap) pv.wrap.innerHTML = '';
+  pv.scene = pv.camera = pv.renderer = null;
 }
 
 /* ════════ PRINT OVER THE NETWORK (Moonraker / Fluidd) ════════ */

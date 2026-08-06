@@ -4358,6 +4358,7 @@ def api_print_info() -> JSONResponse:
         "max_mm": (dims or {}).get("max_mm"),
         "gcode_mb": round(gsize / (1024 * 1024), 2) if gsize else 0,
         "gcode_ready": gsize > 0,
+        "est_time_s": _gcode_time_s(gcode) if gsize else None,
         "layer_height_mm": 0.2,
         "infill_pct": 15,
         "supports": True,
@@ -4762,6 +4763,22 @@ def current_model_fit() -> dict:
 @app.get("/api/model/fit")
 def api_model_fit() -> JSONResponse:
     return JSONResponse({"ok": True, "fit": current_model_fit()})
+
+
+def _gcode_time_s(gcode_path: Path):
+    """CuraEngine's estimated print time (seconds) from the ;TIME header, or
+    None. It sits in the first lines, so only the header is read."""
+    try:
+        with open(gcode_path, "r", errors="replace") as f:
+            for _ in range(80):
+                line = f.readline()
+                if not line:
+                    break
+                if line.startswith(";TIME:"):
+                    return int(float(line[6:].strip()))
+    except Exception:
+        pass
+    return None
 
 
 def _stl_extents_mm(stl_path: Path):
