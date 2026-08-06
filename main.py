@@ -4371,6 +4371,17 @@ def api_model_fit() -> JSONResponse:
     return JSONResponse({"ok": True, "fit": current_model_fit()})
 
 
+# Serialises /api/model/apply. Every apply funnels through three fixed paths —
+# engineer_edit.scad, engineer_edit.stl and model.stl — so two overlapping
+# requests render each other's script and race to move the same temp file onto
+# model.stl. The loser hits a FileNotFoundError, and the survivor leaves a
+# model.stl whose geometry disagrees with the engineer_bracket.scad recorded
+# beside it. Read-modify-render-commit has to be one atomic unit; a lock of its
+# own rather than engineer_state's, because it is held across a render that may
+# take minutes and the status endpoint the UI polls must not block behind it.
+_apply_lock = threading.Lock()
+
+
 @app.post("/api/model/apply")
 def api_model_apply(body: dict | None = None) -> JSONResponse:
     """Commit edited dimensions: rewrite the .scad, re-render, re-run the gate.
@@ -4391,92 +4402,93 @@ def api_model_apply(body: dict | None = None) -> JSONResponse:
                                 status_code=409)
         specs = engineer_state.get("specs") or {}
 
-    src, _ = _current_scad()
-    if not src:
-        return JSONResponse({"ok": False, "error": "no model script loaded"},
-                            status_code=409)
+    with _apply_lock:
+        src, _ = _current_scad()
+        if not src:
+            return JSONResponse({"ok": False, "error": "no model script loaded"},
+                                status_code=409)
 
-    try:
-        script, applied, rejected = apply_scad_overrides(src, body.get("overrides") or {})
-    except Exception as e:
-        log.exception("SCAD override substitution failed")
-        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
-                            status_code=500)
+        try:
+            script, applied, rejected = apply_scad_overrides(src, body.get("overrides") or {})
+        except Exception as e:
+            log.exception("SCAD override substitution failed")
+            return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                status_code=500)
 
-    if not applied:
-        return JSONResponse({"ok": True, "changed": False, "applied": {},
-                             "rejected": rejected,
-                             "message": "nothing to apply"})
+        if not applied:
+            return JSONResponse({"ok": True, "changed": False, "applied": {},
+                                 "rejected": rejected,
+                                 "message": "nothing to apply"})
 
-    # Rendered to a scratch file first. A failed render must leave the previous
-    # model.stl untouched rather than half-overwritten, because the viewer, the
-    # slicer and the gate all read that one path.
-    stl_path = OUTPUT_DIR / "model.stl"
-    tmp_scad = OUTPUT_DIR / "engineer_edit.scad"
-    tmp_stl  = OUTPUT_DIR / "engineer_edit.stl"
-    try:
-        tmp_scad.write_text(script)
-        result = subprocess.run(
-            [OPENSCAD_PATH, "-o", str(tmp_stl), str(tmp_scad)],
-            capture_output=True, timeout=300, cwd=str(BASE_DIR),
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.decode("utf-8", "replace")[-400:] or
-                               f"openscad exited {result.returncode}")
-        if not tmp_stl.exists() or tmp_stl.stat().st_size < 1000:
-            raise RuntimeError("STL too small — the edited geometry is not solid")
-    except subprocess.TimeoutExpired:
-        return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
-                             "error": "OpenSCAD timed out re-rendering the edited "
-                                      "model — the original is unchanged"},
-                            status_code=504)
-    except Exception as e:
-        engineer_log(f"Edited render failed: {e}", "warning")
-        return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
-                             "error": f"Could not render the edited model: {e}"},
-                            status_code=422)
+        # Rendered to a scratch file first. A failed render must leave the previous
+        # model.stl untouched rather than half-overwritten, because the viewer, the
+        # slicer and the gate all read that one path.
+        stl_path = OUTPUT_DIR / "model.stl"
+        tmp_scad = OUTPUT_DIR / "engineer_edit.scad"
+        tmp_stl  = OUTPUT_DIR / "engineer_edit.stl"
+        try:
+            tmp_scad.write_text(script)
+            result = subprocess.run(
+                [OPENSCAD_PATH, "-o", str(tmp_stl), str(tmp_scad)],
+                capture_output=True, timeout=300, cwd=str(BASE_DIR),
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.decode("utf-8", "replace")[-400:] or
+                                   f"openscad exited {result.returncode}")
+            if not tmp_stl.exists() or tmp_stl.stat().st_size < 1000:
+                raise RuntimeError("STL too small — the edited geometry is not solid")
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
+                                 "error": "OpenSCAD timed out re-rendering the edited "
+                                          "model — the original is unchanged"},
+                                status_code=504)
+        except Exception as e:
+            engineer_log(f"Edited render failed: {e}", "warning")
+            return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
+                                 "error": f"Could not render the edited model: {e}"},
+                                status_code=422)
 
-    shutil.move(str(tmp_stl), str(stl_path))
-    (OUTPUT_DIR / "engineer_bracket.scad").write_text(script)
+        shutil.move(str(tmp_stl), str(stl_path))
+        (OUTPUT_DIR / "engineer_bracket.scad").write_text(script)
 
-    # The gate runs on the EDITED mesh. Running it once at build time and
-    # trusting that verdict afterwards would mean an edit could take a part
-    # non-manifold or under the wall minimum and still inherit a pass.
-    review = engineer_review_gate(stl_path, specs, "")
+        # The gate runs on the EDITED mesh. Running it once at build time and
+        # trusting that verdict afterwards would mean an edit could take a part
+        # non-manifold or under the wall minimum and still inherit a pass.
+        review = engineer_review_gate(stl_path, specs, "")
 
-    gcode_path = OUTPUT_DIR / "model.gcode"
-    stale_removed = False
-    try:
-        if gcode_path.exists():
-            gcode_path.unlink()
-            stale_removed = True
-    except OSError as e:
-        log.warning("Could not remove stale gcode: %s", e)
+        gcode_path = OUTPUT_DIR / "model.gcode"
+        stale_removed = False
+        try:
+            if gcode_path.exists():
+                gcode_path.unlink()
+                stale_removed = True
+        except OSError as e:
+            log.warning("Could not remove stale gcode: %s", e)
 
-    with engineer_state["lock"]:
-        engineer_state["scad_script"] = script
-        engineer_state["review"] = review
-        engineer_state["slice_ok"] = None      # this model has not been sliced
+        with engineer_state["lock"]:
+            engineer_state["scad_script"] = script
+            engineer_state["review"] = review
+            engineer_state["slice_ok"] = None      # this model has not been sliced
 
-    dims = _stl_dimensions(stl_path)
-    # Re-checked on the edited mesh, for the same reason the gate is: an edit
-    # can take a part that fitted and make it too big for the bed, and finding
-    # that out at slice time is later than it needs to be.
-    fit = check_model_fit(dims, get_selected_printer())
-    engineer_log(
-        "Dimensions edited: " + ", ".join(f"{k}={v}" for k, v in applied.items()) +
-        (f" — {dims['x']}x{dims['y']}x{dims['z']}mm" if dims else "") +
-        (" — previous gcode discarded" if stale_removed else ""),
-        "success" if review["verdict"] == "pass" else "warning")
-    if fit.get("verdict") in ("too_big", "fits_rotated"):
-        engineer_log(f"Size check: {fit.get('message')}",
-                     "warning" if fit.get("blocking") else "info")
+        dims = _stl_dimensions(stl_path)
+        # Re-checked on the edited mesh, for the same reason the gate is: an edit
+        # can take a part that fitted and make it too big for the bed, and finding
+        # that out at slice time is later than it needs to be.
+        fit = check_model_fit(dims, get_selected_printer())
+        engineer_log(
+            "Dimensions edited: " + ", ".join(f"{k}={v}" for k, v in applied.items()) +
+            (f" — {dims['x']}x{dims['y']}x{dims['z']}mm" if dims else "") +
+            (" — previous gcode discarded" if stale_removed else ""),
+            "success" if review["verdict"] == "pass" else "warning")
+        if fit.get("verdict") in ("too_big", "fits_rotated"):
+            engineer_log(f"Size check: {fit.get('message')}",
+                         "warning" if fit.get("blocking") else "info")
 
-    return JSONResponse({"ok": True, "changed": True, "applied": applied,
-                         "rejected": rejected, "review": review,
-                         "dimensions": dims, "fit": fit,
-                         "stl_bytes": stl_path.stat().st_size,
-                         "needs_reslice": True})
+        return JSONResponse({"ok": True, "changed": True, "applied": applied,
+                             "rejected": rejected, "review": review,
+                             "dimensions": dims, "fit": fit,
+                             "stl_bytes": stl_path.stat().st_size,
+                             "needs_reslice": True})
 
 
 def review_design(scad_script: str, specs: dict) -> None:
