@@ -271,7 +271,8 @@
   }
 
   #nav-home-btn,
-  #nav-library-btn {
+  #nav-library-btn,
+  #nav-printer-btn {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -286,14 +287,34 @@
   }
 
   #nav-home-btn:hover,
-  #nav-library-btn:hover {
+  #nav-library-btn:hover,
+  #nav-printer-btn:hover {
     background: var(--surface);
     color: var(--text-1);
     border-color: var(--text-faint);
   }
 
   #nav-home-btn:active,
-  #nav-library-btn:active { background: var(--surface-2); }
+  #nav-library-btn:active,
+  #nav-printer-btn:active { background: var(--surface-2); }
+
+  /* The selected printer's name rides in the nav button. It gets a ceiling so a
+     long vendor name cannot push Home and Library off a narrow kiosk screen. */
+  #nav-printer-btn .pr-chip-name {
+    max-width: 15ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* No printer chosen yet is a state worth noticing, because the fit check is
+     off until it is fixed — amber, not red: nothing is broken, something is
+     unset. */
+  #nav-printer-btn.unset { border-color: var(--amber); color: var(--amber); }
+
+  @media (max-width: 700px) {
+    #nav-printer-btn .pr-chip-name { display: none; }
+  }
 
   /* ════════ BUTTONS — keycap primary, quiet secondary ════════ */
   /* Primary actions read like a physical key: jade cap, darker
@@ -1443,6 +1464,173 @@
     .param-panel.open { transform: translateY(0); }
   }
 
+  /* ════════ PRINTER PICKER ════════ */
+  /* Deliberately built from the same tokens and the same shapes as the
+     dimension editor above — same surfaces, same 36px controls, same jade
+     accent, same uppercase mono labels. It is another panel in Conjure, not a
+     new place. It is a centred modal rather than a side panel only because the
+     nav is global and this has to open from every screen, not just the viewer. */
+
+  .pr-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 10, 8, 0.72);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: var(--edge);
+  }
+
+  .pr-backdrop.open { display: flex; }
+
+  .pr-modal {
+    background: rgba(11, 17, 14, 0.97);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: min(560px, 100%);
+    max-height: min(720px, 88vh);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .pr-body { flex: 1; overflow-y: auto; padding: 0 var(--edge) 4px; }
+
+  .pr-search-wrap { padding: 14px var(--edge) 10px; }
+
+  .pr-search {
+    width: 100%;
+    background: var(--glass-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    height: 44px;
+    padding: 0 12px;
+  }
+
+  .pr-search:focus { outline: none; border-color: var(--accent-dim); }
+
+  .pr-count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 6px 2px 2px;
+  }
+
+  .pr-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 12px 4px;
+    cursor: pointer;
+    min-height: var(--tap);
+  }
+
+  .pr-item:hover { background: var(--surface-hi); }
+  .pr-item.sel   { background: var(--accent-glow); }
+
+  .pr-item-name {
+    display: block;
+    font-size: 14px;
+    color: var(--text-1);
+    line-height: 1.3;
+  }
+
+  .pr-item.sel .pr-item-name { color: var(--accent); font-weight: 600; }
+
+  .pr-item-meta {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+
+  .pr-empty {
+    padding: 26px 4px;
+    font-size: 13px;
+    color: var(--text-3);
+    line-height: 1.5;
+  }
+
+  /* The specs panel for whatever is currently selected. */
+  .pr-specs {
+    border-top: 1px solid var(--border-soft);
+    padding: 14px var(--edge) 0;
+  }
+
+  .pr-specs-title {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 10px;
+  }
+
+  .pr-spec-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px 16px;
+  }
+
+  .pr-spec dt {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .pr-spec dd {
+    margin: 2px 0 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-1);
+  }
+
+  .pr-dims { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pr-dims .param-num { width: 82px; }
+
+  .pr-dims-x {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-faint);
+  }
+
+  /* The scope limit, stated where the choice is made rather than buried in a
+     doc: this selection governs the fit check and nothing else. */
+  .pr-note {
+    display: flex;
+    gap: 9px;
+    margin: 14px 0 0;
+    padding: 11px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-left: 2px solid var(--amber);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
+  }
+
+  .pr-note b { color: var(--text-2); font-weight: 600; }
+
+  @media (max-width: 900px) {
+    .pr-modal { max-height: 92vh; width: 100%; }
+  }
+
   /* ════════ USB READY (slicing) ════════ */
   .usb-ready {
     display: flex;
@@ -2091,6 +2279,18 @@
       </svg>
       Library
     </button>
+    <!-- In the nav rather than in a first-run wizard: people change printers,
+         and the current one has to be visible and changeable from wherever
+         they happen to be. -->
+    <button id="nav-printer-btn" class="unset" onclick="openPrinterPicker()"
+            title="Choose which printer your parts are checked against">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 6V2h8v4"/>
+        <path d="M4 12H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-2"/>
+        <rect x="4" y="10" width="8" height="5" rx="1"/>
+      </svg>
+      <span class="pr-chip-name" id="nav-printer-name">Set printer</span>
+    </button>
   </div>
 </nav>
 
@@ -2583,6 +2783,36 @@
 </div>
 
 </main>
+
+<!-- ════════ PRINTER PICKER ════════ -->
+<!-- Outside <main> because it opens over any screen, from the global nav. -->
+<div class="pr-backdrop" id="pr-backdrop" onclick="if(event.target===this)closePrinterPicker()">
+  <div class="pr-modal" role="dialog" aria-modal="true" aria-labelledby="pr-title">
+    <div class="param-head">
+      <span class="param-title" id="pr-title">Your printer</span>
+      <button class="param-close" onclick="closePrinterPicker()" aria-label="Close printer picker">&times;</button>
+    </div>
+
+    <div class="pr-search-wrap">
+      <input class="pr-search" id="pr-search" type="search" autocomplete="off"
+             placeholder="Search by make or model — e.g. Prusa MK4, Ender 3"
+             aria-label="Search printers" oninput="onPrinterSearch()">
+      <div class="pr-count" id="pr-count"></div>
+    </div>
+
+    <div class="pr-body" id="pr-list"></div>
+
+    <div class="pr-specs" id="pr-specs"></div>
+
+    <div class="param-foot">
+      <div class="param-status" id="pr-status"></div>
+      <div class="param-foot-row">
+        <button class="param-reset" id="pr-clear" onclick="clearPrinter()">Clear</button>
+        <button class="param-apply" id="pr-save" onclick="savePrinter()" disabled>Use this printer</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -4548,6 +4778,297 @@ function toggleParamPanel(force) {
   panel.classList.toggle('open', open);
 }
 
+/* ════════ PRINTER PICKER ════════ */
+/* Which printer the user owns. Drives the does-it-fit check only — see the
+   note in the modal. Everything here degrades to "no printer selected", which
+   is a supported state, not an error: parts still generate, render, slice and
+   export, they just don't get checked against a bed. */
+const printerState = {
+  current: null,    // the saved selection, as the server returned it
+  picked:  null,    // highlighted in the list but not saved yet
+  rows:    [],      // the current search results
+  total:   0,
+  seq:     0,       // guards against an older search landing after a newer one
+  timer:   null,
+};
+
+function printerLabel(p) {
+  if (!p) return null;
+  const z = (p.bed_z === null || p.bed_z === undefined) ? '?' : fmtMm(p.bed_z);
+  return `${fmtMm(p.bed_x)} x ${fmtMm(p.bed_y)} x ${z} mm`;
+}
+
+function fmtMm(v) {
+  if (v === null || v === undefined) return '?';
+  const n = Number(v);
+  if (!isFinite(n)) return '?';
+  return String(Math.round(n * 10) / 10);
+}
+
+/* The nav chip is the only always-visible sign of this setting, so it has to be
+   honest at all times — including when the server is unreachable. */
+async function refreshPrinterChip() {
+  const btn  = document.getElementById('nav-printer-btn');
+  const name = document.getElementById('nav-printer-name');
+  if (!btn || !name) return;
+  try {
+    const r = await fetch('/api/printer/profile');
+    const j = await r.json();
+    printerState.current = j.printer || null;
+  } catch (e) {
+    // Leave whatever was last known; a fetch failure is not evidence the
+    // selection changed.
+    console.warn('printer chip refresh failed', e);
+    return;
+  }
+  const p = printerState.current;
+  name.textContent = p ? p.name : 'Set printer';
+  btn.classList.toggle('unset', !p);
+  btn.title = p
+    ? `Parts are checked against ${p.name} — ${printerLabel(p)}. Tap to change.`
+    : 'No printer selected — parts are not size-checked. Tap to choose one.';
+}
+
+function openPrinterPicker() {
+  const back = document.getElementById('pr-backdrop');
+  if (!back) return;
+  back.classList.add('open');
+  printerState.picked = printerState.current;
+  const box = document.getElementById('pr-search');
+  if (box) box.value = '';
+  setPrinterStatus('', '');
+  loadPrinters('');
+  // Not on touch: focusing a text field pops the on-screen keyboard over the
+  // list the user came here to browse.
+  if (box && !matchMedia('(pointer: coarse)').matches) box.focus();
+}
+
+function closePrinterPicker() {
+  const back = document.getElementById('pr-backdrop');
+  if (back) back.classList.remove('open');
+}
+
+function onPrinterSearch() {
+  // Debounced: the catalogue is a few hundred rows and the endpoint answers in
+  // about 10ms, but firing a request per keystroke on a kiosk touch keyboard is
+  // still wasteful and makes results flicker.
+  clearTimeout(printerState.timer);
+  const q = document.getElementById('pr-search').value;
+  printerState.timer = setTimeout(() => loadPrinters(q), 120);
+}
+
+async function loadPrinters(q) {
+  const seq = ++printerState.seq;
+  const list = document.getElementById('pr-list');
+  try {
+    const r = await fetch('/api/printers?limit=200&q=' + encodeURIComponent(q || ''));
+    const j = await r.json();
+    if (seq !== printerState.seq) return;   // a newer search already answered
+    printerState.rows  = j.printers || [];
+    printerState.total = j.total || 0;
+    if (j.catalog_error) {
+      setPrinterStatus('warn', j.catalog_error);
+    }
+  } catch (e) {
+    if (seq !== printerState.seq) return;
+    printerState.rows = [];
+    if (list) {
+      list.innerHTML = '<div class="pr-empty">Could not reach the server to load '
+        + 'the printer list. Your current selection is unchanged.</div>';
+    }
+    renderPrinterSpecs();
+    return;
+  }
+  renderPrinterList(q);
+  renderPrinterSpecs();
+}
+
+function renderPrinterList(q) {
+  const list  = document.getElementById('pr-list');
+  const count = document.getElementById('pr-count');
+  if (!list) return;
+  const rows = printerState.rows;
+
+  if (count) {
+    count.textContent = q
+      ? `${rows.length} of ${printerState.total} printers`
+      : `${printerState.total} printers`;
+  }
+
+  if (!rows.length) {
+    list.innerHTML = '<div class="pr-empty">No printer matches “'
+      + escapeHtml(q || '') + '”.<br>Try just the make (Prusa, Creality, Bambu), '
+      + 'or pick <b>Generic FDM Printer</b> and type your bed size.</div>';
+    return;
+  }
+
+  const pickedId = printerState.picked && printerState.picked.id;
+  list.innerHTML = rows.map(p => {
+    const noz = (p.nozzles || []).map(n => fmtMm(n)).join(', ');
+    const meta = [
+      printerLabel(p),
+      noz ? noz + ' mm nozzle' : '',
+      p.bed_shape === 'polygon' ? 'non-rectangular bed' : '',
+    ].filter(Boolean).join('  ·  ');
+    return `<button class="pr-item${p.id === pickedId ? ' sel' : ''}" role="option"
+              aria-selected="${p.id === pickedId}"
+              onclick="pickPrinter('${escapeHtml(p.id).replace(/'/g, "\\'")}')">
+        <span class="pr-item-name">${escapeHtml(p.name)}</span>
+        <span class="pr-item-meta">${escapeHtml(meta)}</span>
+      </button>`;
+  }).join('');
+}
+
+function pickPrinter(id) {
+  const p = printerState.rows.find(r => r.id === id);
+  if (!p) return;
+  printerState.picked = p;
+  renderPrinterList(document.getElementById('pr-search').value);
+  renderPrinterSpecs();
+}
+
+/* Key specs for whatever is highlighted, plus the editable bed for Generic. */
+function renderPrinterSpecs() {
+  const box  = document.getElementById('pr-specs');
+  const save = document.getElementById('pr-save');
+  if (!box) return;
+  const p = printerState.picked;
+  if (save) save.disabled = !p;
+
+  if (!p) {
+    box.innerHTML = '<div class="pr-empty" style="padding:14px 0 4px;">'
+      + 'Pick a printer above to see its specs.</div>';
+    return;
+  }
+
+  const specs = [];
+  if (p.editable) {
+    specs.push(`<div class="pr-spec" style="grid-column:1/-1;">
+      <dt>Bed size (mm)</dt>
+      <dd class="pr-dims" style="margin-top:6px;">
+        <input class="param-num" id="pr-bx" type="number" min="1" step="1"
+               value="${fmtMm(p.bed_x)}" aria-label="Bed width in mm"
+               oninput="onGenericDim()">
+        <span class="pr-dims-x">x</span>
+        <input class="param-num" id="pr-by" type="number" min="1" step="1"
+               value="${fmtMm(p.bed_y)}" aria-label="Bed depth in mm"
+               oninput="onGenericDim()">
+        <span class="pr-dims-x">x</span>
+        <input class="param-num" id="pr-bz" type="number" min="1" step="1"
+               value="${fmtMm(p.bed_z)}" aria-label="Max height in mm"
+               oninput="onGenericDim()">
+      </dd></div>`);
+  } else {
+    specs.push(`<div class="pr-spec"><dt>Bed size</dt>
+      <dd>${escapeHtml(printerLabel(p))}</dd></div>`);
+  }
+
+  const noz = (p.nozzles || []).map(n => fmtMm(n)).join(', ');
+  if (noz) specs.push(`<div class="pr-spec"><dt>Nozzle sizes</dt>
+    <dd>${escapeHtml(noz)} mm</dd></div>`);
+  if (p.extruders > 1) specs.push(`<div class="pr-spec"><dt>Extruders</dt>
+    <dd>${p.extruders}</dd></div>`);
+  if (p.bed_shape === 'polygon') specs.push(`<div class="pr-spec"><dt>Bed shape</dt>
+    <dd>non-rectangular</dd></div>`);
+  if (p.nozzle_type && p.nozzle_type !== 'undefine') {
+    specs.push(`<div class="pr-spec"><dt>Nozzle</dt>
+      <dd>${escapeHtml(String(p.nozzle_type))}</dd></div>`);
+  }
+  if (p.default_bed_type) specs.push(`<div class="pr-spec"><dt>Bed surface</dt>
+    <dd>${escapeHtml(String(p.default_bed_type).replace(/_/g, ' '))}</dd></div>`);
+
+  // Max nozzle / bed temperature are deliberately absent: OrcaSlicer's machine
+  // profiles do not carry them (those limits are per-filament, not per-printer),
+  // and inventing a number here would be worse than omitting it.
+  box.innerHTML = `<div class="pr-specs-title">${escapeHtml(p.name)}</div>
+    <dl class="pr-spec-grid">${specs.join('')}</dl>
+    <div class="pr-note">
+      <span>&#9888;</span>
+      <span>This sets which printer Conjure <b>checks your part against</b> — it
+      warns you before slicing if the part is too big for this bed. It does
+      <b>not</b> change slicing: gcode is always produced for the built-in
+      Neptune 4 Plus profile.</span>
+    </div>`;
+}
+
+function onGenericDim() {
+  const p = printerState.picked;
+  if (!p || !p.editable) return;
+  const num = (id) => {
+    const el = document.getElementById(id);
+    const v = el ? parseFloat(el.value) : NaN;
+    return isFinite(v) ? v : null;
+  };
+  p.bed_x = num('pr-bx');
+  p.bed_y = num('pr-by');
+  p.bed_z = num('pr-bz');
+}
+
+function setPrinterStatus(kind, msg) {
+  const el = document.getElementById('pr-status');
+  if (!el) return;
+  el.className = 'param-status' + (kind ? ' ' + kind : '');
+  el.textContent = msg || '';
+}
+
+async function savePrinter() {
+  const p = printerState.picked;
+  if (!p) return;
+  const btn = document.getElementById('pr-save');
+  if (btn) btn.disabled = true;
+  setPrinterStatus('busy', 'Saving...');
+  const payload = { id: p.id };
+  if (p.editable) {
+    payload.bed_x = p.bed_x; payload.bed_y = p.bed_y; payload.bed_z = p.bed_z;
+  }
+  try {
+    const r = await fetch('/api/printer/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) {
+      // The server validates bed dimensions; show its wording rather than a
+      // second, possibly-disagreeing copy of the same rules in JS.
+      setPrinterStatus('err', j.error || 'Could not save that printer.');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    printerState.current = j.printer;
+    await refreshPrinterChip();
+    // A part already on screen may now be too big, or may have just become
+    // printable. Re-check it rather than leaving a stale verdict.
+    if (typeof refreshFitCheck === 'function') await refreshFitCheck();
+    closePrinterPicker();
+  } catch (e) {
+    setPrinterStatus('err', 'Could not reach the server. Nothing was changed.');
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function clearPrinter() {
+  setPrinterStatus('busy', 'Clearing...');
+  try {
+    await fetch('/api/printer/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: null }),
+    });
+    printerState.current = null;
+    printerState.picked = null;
+    await refreshPrinterChip();
+    if (typeof refreshFitCheck === 'function') await refreshFitCheck();
+    closePrinterPicker();
+  } catch (e) {
+    setPrinterStatus('err', 'Could not reach the server. Nothing was changed.');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePrinterPicker();
+});
+
 function closeParamPanel() {
   const panel = document.getElementById('param-panel');
   if (panel) panel.classList.remove('open');
@@ -5204,6 +5725,9 @@ window.addEventListener('load', () => {
   // a blank page. A decorative background must never be able to do that.
   try { appBgInit(); } catch (e) { console.error('boot: appBgInit failed', e); }
   try { hideUnconfiguredSources(); } catch (e) { console.error('boot: hideUnconfiguredSources failed', e); }
+  // Fire and forget: the chip is informational, and a slow or failed printer
+  // fetch must not hold up the screen the user is waiting for.
+  refreshPrinterChip().catch(e => console.error('boot: refreshPrinterChip failed', e));
   // Every SVG in this app is decorative — it either sits inside a text-labelled
   // or aria-labelled control, or repeats adjacent text. Hide them all from the
   // a11y tree so screen readers don't double-announce the icon and its label.

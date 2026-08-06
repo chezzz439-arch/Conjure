@@ -1044,6 +1044,39 @@ def init_db() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts)")
+        # Kiosk settings that have to outlive a restart. The selected printer
+        # lives here rather than in memory because the kiosk is a machine that
+        # gets power-cycled, and re-picking your printer every boot is not a
+        # thing anyone would tolerate.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+
+def db_get_setting(key: str) -> str | None:
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        conn.close()
+    return row[0] if row else None
+
+
+def db_set_setting(key: str, value: str | None) -> None:
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        if value is None:
+            conn.execute("DELETE FROM settings WHERE key=?", (key,))
+        else:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
         conn.commit()
         conn.close()
 
@@ -3760,6 +3793,233 @@ def api_model_scad(body: dict | None = None) -> JSONResponse:
                             status_code=500)
     return JSONResponse({"ok": True, "source": source, "script": script,
                          "applied": applied, "rejected": rejected})
+
+
+# ---------------------------------------------------------------------------
+# Printer catalogue and selection
+#
+# data/printers.json is built at development time by tools/import_orca_printers.py
+# from OrcaSlicer's bundled profiles and committed to the repo. Nothing here
+# reads OrcaSlicer's profile tree and nothing goes to the network.
+#
+# IMPORTANT SCOPE LIMIT: the selected printer drives the does-it-fit check and
+# nothing else. Slicing still runs against the fixed Neptune 4 Plus machine
+# profile hard-coded in run_slicing() / orca_slice_sync(). Making selection
+# drive slicing would mean vendoring a machine+process+filament triple per
+# printer and rewiring the working slice path. The UI says so out loud rather
+# than letting the user assume otherwise.
+# ---------------------------------------------------------------------------
+
+PRINTERS_JSON = BASE_DIR / "data" / "printers.json"
+PRINTER_SETTING_KEY = "selected_printer"
+
+# Past this, a bed dimension is a typo or a joke, not a printer. The largest
+# real bed in the imported catalogue is about 1000mm, so this leaves room for
+# machines bigger than anything OrcaSlicer ships without accepting 99999.
+MAX_BED_MM = 3000.0
+
+_printer_catalog: dict = {"loaded": False, "printers": [], "by_id": {}, "error": None}
+
+
+def _load_printer_catalog() -> dict:
+    """Read data/printers.json once, tolerating its absence.
+
+    A missing or corrupt catalogue is not fatal anywhere: the picker shows the
+    built-in Generic entry, the fit check reports that it has no printer, and
+    every other part of the pipeline is untouched.
+    """
+    if _printer_catalog["loaded"]:
+        return _printer_catalog
+
+    # Always available even with no catalogue file at all, so the user can still
+    # type a bed size and get a real fit check.
+    generic = {
+        "id": "generic/generic-fdm-printer", "vendor": "Generic",
+        "name": "Generic FDM Printer", "model": "Generic FDM Printer",
+        "bed_x": 220.0, "bed_y": 220.0, "bed_z": 250.0,
+        "origin": "corner", "bed_shape": "rect", "nozzles": [0.4],
+        "extruders": 1, "variants": [], "editable": True, "source": "builtin",
+    }
+    printers, error = [], None
+    try:
+        data = json.loads(PRINTERS_JSON.read_text())
+        printers = [p for p in data.get("printers", []) if p.get("id")]
+        if not printers:
+            error = "catalogue file contains no printers"
+    except FileNotFoundError:
+        error = "data/printers.json not found — run tools/import_orca_printers.py"
+    except Exception as e:                                  # noqa: BLE001
+        error = f"catalogue unreadable: {type(e).__name__}: {e}"
+
+    if error:
+        log.warning("[Printers] %s — falling back to the Generic entry", error)
+        printers = [generic]
+    if not any(p["id"] == generic["id"] for p in printers):
+        printers = [generic] + printers
+
+    _printer_catalog.update({"loaded": True, "printers": printers,
+                             "by_id": {p["id"]: p for p in printers},
+                             "error": error})
+    log.info("[Printers] catalogue: %d entries%s", len(printers),
+             f" ({error})" if error else "")
+    return _printer_catalog
+
+
+def _printer_summary(p: dict) -> str:
+    """One line of real specs, for logs and for anything that needs a sentence."""
+    z = "?" if p.get("bed_z") is None else f"{p['bed_z']:g}"
+    noz = ", ".join(f"{n:g}" for n in (p.get("nozzles") or [])) or "?"
+    return (f"{p['name']} — bed {p.get('bed_x', 0):g} x {p.get('bed_y', 0):g} "
+            f"x {z} mm, {noz} mm nozzle")
+
+
+def get_selected_printer() -> dict | None:
+    """The printer the user picked, or None. Never raises.
+
+    The stored row is a full snapshot, not just an id. Re-importing the
+    catalogue after an OrcaSlicer upgrade can renumber or rename an entry, and a
+    selection that silently became "no printer" would turn the fit check off
+    without saying so. The snapshot keeps working; it just stops being refreshed.
+    """
+    raw = None
+    try:
+        raw = db_get_setting(PRINTER_SETTING_KEY)
+    except Exception as e:                                  # noqa: BLE001
+        log.warning("[Printers] could not read selection: %s", e)
+        return None
+    if not raw:
+        return None
+    try:
+        sel = json.loads(raw)
+    except Exception:                                       # noqa: BLE001
+        log.warning("[Printers] stored selection is not valid JSON — ignoring")
+        return None
+    if not isinstance(sel, dict) or not sel.get("id"):
+        return None
+
+    live = _load_printer_catalog()["by_id"].get(sel["id"])
+    if live:
+        # Catalogue wins on specs, snapshot wins on the dimensions the user
+        # typed for the Generic entry.
+        merged = dict(live)
+        for k in ("bed_x", "bed_y", "bed_z"):
+            if sel.get(k) is not None and live.get("editable"):
+                merged[k] = sel[k]
+        return merged
+    sel["stale"] = True          # no longer in the catalogue; still usable
+    return sel
+
+
+@app.get("/api/printers")
+def api_printers(q: str = "", limit: int = 50) -> JSONResponse:
+    """Search the catalogue. Empty query returns the first page, not all 397."""
+    cat = _load_printer_catalog()
+    rows = cat["printers"]
+
+    terms = [t for t in str(q or "").lower().split() if t]
+    if terms:
+        scored = []
+        for p in rows:
+            hay = f"{p.get('vendor', '')} {p.get('name', '')} {p.get('model', '')}".lower()
+            if not all(t in hay for t in terms):
+                continue
+            # Prefix matches on the visible name first — typing "prusa" should
+            # not bury Prusa printers under other vendors' clone profiles.
+            name = str(p.get("name", "")).lower()
+            rank = 0 if name.startswith(terms[0]) else (
+                1 if str(p.get("vendor", "")).lower().startswith(terms[0]) else 2)
+            scored.append((rank, name, p))
+        scored.sort(key=lambda s: (s[0], s[1]))
+        rows = [s[2] for s in scored]
+
+    try:
+        limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        limit = 50
+
+    return JSONResponse({
+        "ok": True,
+        "total": len(cat["printers"]),
+        "matched": len(rows),
+        "printers": rows[:limit],
+        "catalog_error": cat["error"],
+        # Said once here so every consumer of this API gets the same caveat.
+        "slicing_note": "Printer selection drives the fit check only. Slicing "
+                        "always uses the built-in Neptune 4 Plus profile.",
+    })
+
+
+# /api/printer (no suffix) is already the live Moonraker status of the machine
+# on the network. This is a different thing — which printer's dimensions to
+# check parts against — so it gets its own path rather than shadowing that one.
+@app.get("/api/printer/profile")
+def api_printer_get() -> JSONResponse:
+    cat = _load_printer_catalog()
+    sel = get_selected_printer()
+    return JSONResponse({"ok": True, "printer": sel,
+                         "summary": _printer_summary(sel) if sel else None,
+                         "catalog_error": cat["error"],
+                         "catalog_size": len(cat["printers"])})
+
+
+@app.post("/api/printer/profile")
+def api_printer_set(body: dict | None = None) -> JSONResponse:
+    """Select a printer, or clear the selection with {"id": null}.
+
+    Last write wins, deliberately. Two kiosk tabs each picking a printer is a
+    real scenario and there is one physical printer, so the most recent choice
+    is the right one; both tabs then re-read on their next poll.
+    """
+    body = body or {}
+    pid = body.get("id")
+
+    if pid in (None, ""):
+        db_set_setting(PRINTER_SETTING_KEY, None)
+        engineer_log("Printer selection cleared", "info")
+        return JSONResponse({"ok": True, "printer": None})
+
+    cat = _load_printer_catalog()
+    base = cat["by_id"].get(pid)
+    if not base:
+        return JSONResponse({"ok": False, "error": f"unknown printer id {pid!r}"},
+                            status_code=404)
+
+    stored = {"id": pid}
+    if base.get("editable"):
+        # Only the Generic entry accepts typed dimensions. A real printer's bed
+        # is a fact about the machine, not a preference.
+        for key, label in (("bed_x", "width"), ("bed_y", "depth"), ("bed_z", "height")):
+            if body.get(key) is None:
+                continue
+            try:
+                val = float(body[key])
+            except (TypeError, ValueError):
+                return JSONResponse({"ok": False,
+                                     "error": f"Bed {label} must be a number"},
+                                    status_code=422)
+            if not (val == val and abs(val) != float("inf")):   # NaN / inf
+                return JSONResponse({"ok": False,
+                                     "error": f"Bed {label} must be a real number"},
+                                    status_code=422)
+            if val <= 0:
+                return JSONResponse({"ok": False,
+                                     "error": f"Bed {label} must be greater than 0 "
+                                              f"— got {val:g}mm"},
+                                    status_code=422)
+            if val > MAX_BED_MM:
+                return JSONResponse({"ok": False,
+                                     "error": f"Bed {label} of {val:g}mm is larger "
+                                              f"than any real printer (max "
+                                              f"{MAX_BED_MM:g}mm)"},
+                                    status_code=422)
+            stored[key] = round(val, 3)
+
+    db_set_setting(PRINTER_SETTING_KEY, json.dumps(stored))
+    sel = get_selected_printer()
+    engineer_log(f"Printer set: {_printer_summary(sel)}" if sel
+                 else "Printer set", "info")
+    return JSONResponse({"ok": True, "printer": sel,
+                         "summary": _printer_summary(sel) if sel else None})
 
 
 def _stl_dimensions(stl_path: Path) -> dict | None:
