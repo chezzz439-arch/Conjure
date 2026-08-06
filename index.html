@@ -3768,6 +3768,18 @@ async function refreshPrinter() {
     return;
   }
 
+  // Reachable but Klipper is in shutdown/error/startup — it answers the API but
+  // cannot print. Show that honestly instead of a green "ready", and hide the
+  // print button so the user isn't invited into a dispatch the backend refuses.
+  if (s.ready === false) {
+    icon.textContent = '!';
+    title.textContent = 'Printer not ready';
+    sub.textContent = s.message || 'The printer needs attention in Fluidd before it can print';
+    btn.style.display = 'none';
+    startPrinterPolling();   // clears itself once FIRMWARE_RESTART brings it back
+    return;
+  }
+
   icon.textContent = '✓';
   title.textContent = 'Printer ready';
   sub.textContent = 'Nozzle ' + s.nozzle_c + '°C · bed ' + s.bed_c + '°C';

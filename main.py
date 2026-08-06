@@ -2606,14 +2606,29 @@ def moonraker_status() -> dict:
     try:
         r = moonraker_request(
             "GET",
-            "/printer/objects/query?print_stats&display_status&extruder&heater_bed",
+            "/printer/objects/query?webhooks&print_stats&display_status&extruder&heater_bed",
             timeout=6,
         )
         if r.status_code == 401:
             return {"configured": True, "online": False,
                     "message": "Printer rejected the kiosk — set MOONRAKER_API_KEY in .env"}
         r.raise_for_status()
-        s = (r.json().get("result") or {}).get("status") or {}
+        result = r.json().get("result")
+        s = result.get("status") if isinstance(result, dict) else None
+        # A non-Moonraker service that merely answers 200 (wrong IP, a random web
+        # server, a captive portal) has no result.status envelope. Believing it
+        # reported a phantom printer "online" and let print-now claim a successful
+        # "print" to a device that cannot print — so demand the real shape.
+        if not isinstance(s, dict):
+            return {"configured": True, "online": False, "ready": False,
+                    "message": f"The device at {base} answered but isn't a Moonraker "
+                               "printer — check PRINTER_IP / MOONRAKER_URL"}
+        # Klipper's own state. A printer in shutdown/error/startup answers the
+        # query fine but cannot accept a job, and print_stats.state stays
+        # "standby" straight through a shutdown — so keying off it alone
+        # dispatched to a dead printer and reported success (bug B4).
+        wh = s.get("webhooks") or {}
+        klippy = (wh.get("state") or "").lower()   # ready|startup|shutdown|error|""
         stats = s.get("print_stats") or {}
         state = (stats.get("state") or "unknown").lower()
         # print_stats.progress only counts sliced-move progress; display_status
@@ -2621,9 +2636,12 @@ def moonraker_status() -> dict:
         progress = (s.get("display_status") or {}).get("progress")
         if progress is None:
             progress = stats.get("progress") or 0.0
-        return {
+        ready = klippy == "ready"
+        info = {
             "configured": True,
             "online":     True,
+            "klippy_state": klippy or "unknown",
+            "ready":      ready,
             "state":      state,
             "busy":       state in _BUSY_STATES,
             "filename":   stats.get("filename") or "",
@@ -2632,6 +2650,12 @@ def moonraker_status() -> dict:
             "bed_c":      round(float((s.get("heater_bed") or {}).get("temperature") or 0), 1),
             "message":    "",
         }
+        if not ready:
+            first_line = (wh.get("state_message") or "").splitlines()[0].strip()
+            info["message"] = (f"Printer not ready — Klipper is {klippy or 'not reporting'}"
+                               + (f": {first_line}" if first_line else "")
+                               + ". Clear it in Fluidd (FIRMWARE_RESTART), then try again.")
+        return info
     except (requests.Timeout, requests.ConnectionError):
         # Deliberately not surfacing the exception text: urllib3's version is a
         # paragraph of retry internals, and this renders on a kiosk touchscreen.
@@ -2671,6 +2695,13 @@ def api_print_now() -> JSONResponse:
         raise HTTPException(400, status.get("message") or "No printer configured")
     if not status.get("online"):
         raise HTTPException(502, status.get("message") or "Printer is offline")
+    # Reachable is not the same as able to print. A printer in shutdown/error
+    # answers the API but will silently drop the job — dispatching anyway and
+    # reporting success (bug B4) is exactly the lie this guard prevents.
+    if not status.get("ready", False):
+        raise HTTPException(409, status.get("message") or
+            f"Printer isn't ready (Klipper is {status.get('klippy_state', 'not ready')}) — "
+            "clear the error in Fluidd, then try again.")
     # Refusing here rather than letting Moonraker queue it: silently interrupting
     # or stacking onto someone else's running print is the one failure mode of
     # this feature that wastes filament and ruins a part.
