@@ -1787,6 +1787,30 @@
     max-width: 460px;
   }
   .print-check.warn { border-color: var(--amber); }
+  .print-check.fail { border-color: var(--red); }
+  .print-check.ok   { border-color: var(--border); }
+  .print-check.fail .print-check-title { color: var(--red); }
+  .print-check.ok   .print-check-title { color: var(--accent); }
+
+  /* A blocked part needs its way out visible in the same box as the refusal,
+     not somewhere the user has to go looking for. */
+  .fit-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+  .fit-actions button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    padding: 7px 12px;
+    min-height: 34px;
+  }
+
+  .fit-actions button:hover {
+    background: var(--surface);
+    color: var(--text-1);
+    border-color: var(--text-faint);
+  }
   .print-check-title {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -2509,6 +2533,9 @@
   <div class="view-overlay-top">
     <div class="view-prompt-pill" id="view-prompt"></div>
     <div class="print-check" id="print-check" role="status" aria-live="polite" style="display:none;"></div>
+    <!-- Separate from #print-check above, which is Speak mode's printability
+         readout. Same visual family, different question: will it fit the bed. -->
+    <div class="print-check" id="fit-check" role="status" aria-live="polite" style="display:none;"></div>
   </div>
 
   <div class="view-overlay-bottom">
@@ -3534,7 +3561,25 @@ function startMeshyGeneration() {
 }
 
 /* ════════ SLICE FLOW ════════ */
-function handlePrint() {
+async function handlePrint() {
+  // Pre-flight the size check before switching screens, so a part that cannot
+  // fit never flashes the slicing UI on its way to being refused. The server
+  // enforces the same gate on /api/slice regardless -- this is the courteous
+  // version of it, not the authoritative one.
+  try {
+    const r = await fetch('/api/model/fit');
+    const j = await r.json();
+    if (j.fit && j.fit.blocking) {
+      renderFitCheck(j.fit);
+      speak('This part is too big for your printer. ' + (j.fit.message || ''));
+      return;
+    }
+  } catch (e) {
+    // A failed pre-flight is not a reason to refuse to print. The server checks
+    // again anyway, and that check is the one that counts.
+    console.warn('fit pre-flight failed, continuing', e);
+  }
+
   showScreen('s-slicing');
   resetSliceSteps();
   resetIdle();
@@ -3564,10 +3609,22 @@ function handlePrint() {
   };
   evtSource.onerror = () => {};
 
-  fetch('/api/slice', { method: 'POST' }).catch(() => {
-    closeEvents();
-    showError('Could not start slicing.');
-  });
+  fetch('/api/slice', { method: 'POST' })
+    .then(async (r) => {
+      // Belt and braces: if the server's gate refuses where the pre-flight let
+      // it through, go back to the model rather than sitting on a slicing
+      // screen that will never advance.
+      if (r.status === 409) {
+        const j = await r.json().catch(() => ({}));
+        closeEvents();
+        showScreen('s-view');
+        if (j.fit) renderFitCheck(j.fit);
+      }
+    })
+    .catch(() => {
+      closeEvents();
+      showError('Could not start slicing.');
+    });
 }
 
 function showUsbReady(usedUsb) {
@@ -4327,6 +4384,11 @@ function loadModel(url) {
   if (!window.THREE) { console.error('THREE not loaded'); return; }
   if (!THREE.GLTFLoader) { console.error('GLTFLoader not loaded'); return; }
 
+  // Whatever is now on the viewer gets checked against the selected printer.
+  // Detached from the load itself on purpose: the model must render whether or
+  // not this answers, so it is never awaited and never throws into the loader.
+  refreshFitCheck();
+
   const loader = new THREE.GLTFLoader();
   loader.load(
     url,
@@ -5069,6 +5131,63 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePrinterPicker();
 });
 
+/* ════════ DOES IT FIT THE BED ════════ */
+/* Shown on the viewer whenever the answer is anything other than a plain yes.
+   A silent pass is the right amount of noise for "it fits"; every other
+   outcome — too big, needs turning, not checked, could not be measured — is
+   something the user should be told before they try to print. */
+let fitState = null;
+
+function renderFitCheck(fit) {
+  const box = document.getElementById('fit-check');
+  if (!box) return;
+  fitState = fit || null;
+
+  if (!fit || fit.verdict === 'no_model' || fit.verdict === 'fits') {
+    box.style.display = 'none';
+    return;
+  }
+
+  const V = fit.verdict;
+  const kind  = V === 'too_big' ? 'fail'
+              : V === 'fits_rotated' ? 'warn'
+              : 'warn';
+  const title = V === 'too_big'      ? 'Too big for your printer'
+              : V === 'fits_rotated' ? 'Fits — but turn it first'
+              : V === 'no_printer'   ? 'Not size-checked'
+              : 'Size check did not run';
+
+  box.className = 'print-check ' + kind;
+  let html = '<div class="print-check-title">' + escapeHtml(title) + '</div>'
+           + '<div class="print-check-line">' + escapeHtml(fit.message || '') + '</div>';
+
+  const actions = [];
+  if (V === 'no_printer') {
+    actions.push('<button onclick="openPrinterPicker()">Choose your printer</button>');
+  } else {
+    if (V === 'too_big') {
+      actions.push('<button onclick="toggleParamPanel(true)">Adjust dimensions</button>');
+      actions.push('<button onclick="openPrinterPicker()">Use a different printer</button>');
+    }
+  }
+  if (actions.length) html += '<div class="fit-actions">' + actions.join('') + '</div>';
+
+  box.innerHTML = html;
+  box.style.display = 'flex';
+}
+
+async function refreshFitCheck() {
+  try {
+    const r = await fetch('/api/model/fit');
+    const j = await r.json();
+    renderFitCheck(j.fit);
+  } catch (e) {
+    // Leave whatever the box last said. Inventing a verdict because the
+    // network hiccuped would be worse than a slightly stale one.
+    console.warn('fit refresh failed', e);
+  }
+}
+
 function closeParamPanel() {
   const panel = document.getElementById('param-panel');
   if (panel) panel.classList.remove('open');
@@ -5144,14 +5263,22 @@ async function applyParams() {
     });
     buildParamForm();
 
+    // The edit may have taken a part that fitted the bed past it, or brought an
+    // oversized one back under. The server re-checked on the edited mesh and
+    // sent the verdict back with the render, so the banner updates in step
+    // with the geometry rather than a poll later.
+    renderFitCheck(j.fit);
+
     const d = j.dimensions;
     const size = d ? `${fmtParamNum(d.x)} × ${fmtParamNum(d.y)} × ${fmtParamNum(d.z)} mm` : '';
     const bad = j.review && j.review.verdict === 'needs_review';
     const rejected = Object.keys(j.rejected || {});
-    setParamStatus(bad ? 'warn' : '',
+    const tooBig = j.fit && j.fit.blocking;
+    setParamStatus(bad || tooBig ? 'warn' : '',
       (bad ? 'Applied, but the review gate flagged it: ' + (j.review.issues || []).join('; ')
            : 'Applied' + (size ? ' — ' + size : '') + '.') +
-      ' Press Prepare for printing to re-slice.' +
+      (tooBig ? ' This size will not fit your printer — see the note above.'
+              : ' Press Prepare for printing to re-slice.') +
       (rejected.length ? ' Ignored: ' + rejected.join(', ') + '.' : ''));
   } catch (e) {
     if (painted) loadSTL('/api/model/stl?' + Date.now());

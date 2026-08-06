@@ -2603,10 +2603,23 @@ def api_download_gcode() -> FileResponse:
 async def api_slice(background_tasks: BackgroundTasks) -> JSONResponse:
     if not (OUTPUT_DIR / "model.stl").exists():
         raise HTTPException(400, "No STL file — generate a model first")
+
+    # Last stop before slicing. Only a part that cannot be printed in ANY
+    # orientation blocks; one that merely needs turning is allowed through with
+    # the suggestion attached, because turning it is free and the slicer will
+    # place it anyway. No printer selected, an unreadable STL or a broken check
+    # never block -- they report why the check did not happen instead.
+    fit = current_model_fit()
+    if fit.get("blocking"):
+        engineer_log(f"Slice blocked — {fit.get('message')}", "warning")
+        return JSONResponse({"status": "blocked", "reason": "too_big",
+                             "fit": fit, "error": fit.get("message")},
+                            status_code=409)
+
     pipeline_state["status"] = "slicing"
     pipeline_state["error"]  = None
     background_tasks.add_task(run_slicing)
-    return JSONResponse({"status": "started"})
+    return JSONResponse({"status": "started", "fit": fit})
 
 
 @app.get("/api/usb/status")
@@ -4036,6 +4049,168 @@ def _stl_dimensions(stl_path: Path) -> dict | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Does it fit on the bed?
+# ---------------------------------------------------------------------------
+
+# Parts do not fit a bed to the micron. This is float noise tolerance, not
+# clearance: a 235.0mm part on a 235mm bed is a fit, and 235.4 is not.
+FIT_EPSILON_MM = 0.05
+
+# The six ways an axis-aligned box can sit on a bed, as (footprint_a,
+# footprint_b, height) index triples into (x, y, z). The first is as-modelled;
+# the second is the free 90° spin; the rest lay it on another face.
+# Each carries the instruction in the imperative, because it gets dropped
+# straight into "This fits if you ___." and has to read as something to do.
+_ORIENTATIONS = [
+    ((0, 1, 2), "as-is",                     "leave it as it is"),
+    ((1, 0, 2), "rotated 90° on the bed",    "rotate it 90° on the bed"),
+    ((0, 2, 1), "on its side",               "lay it on its side"),
+    ((2, 0, 1), "on its side, rotated 90°",  "lay it on its side and rotate it 90°"),
+    ((1, 2, 0), "on end",                    "stand it on end"),
+    ((2, 1, 0), "on end, rotated 90°",       "stand it on end and rotate it 90°"),
+]
+
+
+def _point_in_polygon(x: float, y: float, poly: list) -> bool:
+    """Ray casting. Used only for the 20 non-rectangular beds."""
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            xint = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x < xint:
+                inside = not inside
+    return inside
+
+
+def _footprint_fits(w: float, d: float, printer: dict) -> bool:
+    """Can a w x d rectangle sit on this bed?"""
+    bed_x = float(printer.get("bed_x") or 0)
+    bed_y = float(printer.get("bed_y") or 0)
+    if w > bed_x + FIT_EPSILON_MM or d > bed_y + FIT_EPSILON_MM:
+        return False
+
+    poly = printer.get("bed_polygon")
+    if not poly or len(poly) < 3:
+        return True                      # rectangular bed; the extents settle it
+
+    # Non-rectangular bed (delta circles, hexagons). Every one of these in the
+    # catalogue is convex, and for a convex bed the best placement of an
+    # axis-aligned rectangle is centred, so testing the four corners of a
+    # centred rectangle is both cheap and correct here.
+    cx = sum(p[0] for p in poly) / len(poly)
+    cy = sum(p[1] for p in poly) / len(poly)
+    hw, hd = w / 2.0, d / 2.0
+    return all(_point_in_polygon(cx + sx * hw, cy + sy * hd, poly)
+               for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)))
+
+
+def check_model_fit(dims: dict | None, printer: dict | None) -> dict:
+    """Will this bounding box print on this bed, in any orientation?
+
+    Never raises and never blocks on missing information. "No printer selected"
+    and "could not measure the model" are reported as their own verdicts so the
+    caller can say why the check did not happen, rather than skipping silently.
+    """
+    if not printer:
+        return {"verdict": "no_printer", "blocking": False,
+                "message": "No printer selected, so this part has not been size-"
+                           "checked. Pick your printer to have Conjure warn you "
+                           "before slicing something that will not fit."}
+    if not dims:
+        return {"verdict": "unknown", "blocking": False,
+                "printer": printer.get("name"),
+                "message": f"Could not measure this model, so it has not been "
+                           f"checked against your {printer.get('name')}. "
+                           f"Slicing is still allowed."}
+
+    size = [float(dims.get("x") or 0), float(dims.get("y") or 0),
+            float(dims.get("z") or 0)]
+    bed_z = printer.get("bed_z")
+    name = printer.get("name", "your printer")
+
+    fits = []
+    for (ia, ib, ih), label, instruction in _ORIENTATIONS:
+        w, d, h = size[ia], size[ib], size[ih]
+        if not _footprint_fits(w, d, printer):
+            continue
+        # The one machine with no printable_height: check the footprint, flag the
+        # height as unverified, and do not invent a limit to block on.
+        if bed_z is not None and h > float(bed_z) + FIT_EPSILON_MM:
+            continue
+        fits.append({"orientation": label, "instruction": instruction,
+                     "size": [round(v, 2) for v in (w, d, h)]})
+
+    bed_desc = (f"{printer.get('bed_x', 0):g} x {printer.get('bed_y', 0):g}"
+                f" x {'?' if bed_z is None else format(float(bed_z), 'g')} mm")
+    common = {"printer": name, "bed": bed_desc,
+              "model": [round(v, 2) for v in size],
+              "z_unverified": bed_z is None}
+    # Never claim a clean fit on a height that was never checked.
+    z_caveat = ("" if bed_z is not None else
+                f" Note: OrcaSlicer's profile for this printer does not state a "
+                f"maximum height, so only the {size[0]:g} x {size[1]:g} mm "
+                f"footprint was checked.")
+
+    if fits and fits[0]["orientation"] == "as-is":
+        return {**common, "verdict": "fits", "blocking": False,
+                "orientation": "as-is",
+                "message": f"Fits on your {name} ({bed_desc})." + z_caveat}
+
+    if fits:
+        best = fits[0]
+        return {**common, "verdict": "fits_rotated", "blocking": False,
+                "orientation": best["orientation"],
+                "alternatives": fits,
+                "message": (f"This fits if you {best['instruction']}. "
+                            f"As modelled it is {size[0]:g} x {size[1]:g} x "
+                            f"{size[2]:g} mm, and your {name} bed is "
+                            f"{bed_desc}." + z_caveat)}
+
+    # Nothing works. Name the axis that actually overruns, using the smallest
+    # part dimension against the largest bed dimension -- that is the pairing
+    # that has to fail for the part to be genuinely unprintable.
+    over = []
+    bed_x, bed_y = float(printer.get("bed_x") or 0), float(printer.get("bed_y") or 0)
+    biggest_flat = max(bed_x, bed_y)
+    for axis, value in zip("XYZ", size):
+        if value > biggest_flat + FIT_EPSILON_MM and (
+                bed_z is None or value > float(bed_z) + FIT_EPSILON_MM):
+            over.append(f"{value:g}mm ({axis})")
+    detail = (f"It measures {size[0]:g} x {size[1]:g} x {size[2]:g} mm; "
+              f"your {name} has a {bed_desc} build volume.")
+    if over:
+        detail = (f"It is {', '.join(over)} — larger than any dimension of your "
+                  f"{name}, which is {bed_desc}.")
+    return {**common, "verdict": "too_big", "blocking": True,
+            "message": f"This model will not fit on your {name} in any "
+                       f"orientation. {detail}"}
+
+
+def current_model_fit() -> dict:
+    """Fit verdict for the STL currently on disk. Never raises."""
+    try:
+        stl = OUTPUT_DIR / "model.stl"
+        if not stl.exists():
+            return {"verdict": "no_model", "blocking": False,
+                    "message": "No model yet."}
+        return check_model_fit(_stl_dimensions(stl), get_selected_printer())
+    except Exception as e:                                  # noqa: BLE001
+        # A broken fit check must never be the reason a working pipeline stops.
+        log.warning("[Fit] check failed, allowing through: %s", e)
+        return {"verdict": "unknown", "blocking": False,
+                "message": f"Size check could not run ({type(e).__name__}). "
+                           f"Slicing is still allowed."}
+
+
+@app.get("/api/model/fit")
+def api_model_fit() -> JSONResponse:
+    return JSONResponse({"ok": True, "fit": current_model_fit()})
+
+
 @app.post("/api/model/apply")
 def api_model_apply(body: dict | None = None) -> JSONResponse:
     """Commit edited dimensions: rewrite the .scad, re-render, re-run the gate.
@@ -4124,15 +4299,22 @@ def api_model_apply(body: dict | None = None) -> JSONResponse:
         engineer_state["slice_ok"] = None      # this model has not been sliced
 
     dims = _stl_dimensions(stl_path)
+    # Re-checked on the edited mesh, for the same reason the gate is: an edit
+    # can take a part that fitted and make it too big for the bed, and finding
+    # that out at slice time is later than it needs to be.
+    fit = check_model_fit(dims, get_selected_printer())
     engineer_log(
         "Dimensions edited: " + ", ".join(f"{k}={v}" for k, v in applied.items()) +
         (f" — {dims['x']}x{dims['y']}x{dims['z']}mm" if dims else "") +
         (" — previous gcode discarded" if stale_removed else ""),
         "success" if review["verdict"] == "pass" else "warning")
+    if fit.get("verdict") in ("too_big", "fits_rotated"):
+        engineer_log(f"Size check: {fit.get('message')}",
+                     "warning" if fit.get("blocking") else "info")
 
     return JSONResponse({"ok": True, "changed": True, "applied": applied,
                          "rejected": rejected, "review": review,
-                         "dimensions": dims,
+                         "dimensions": dims, "fit": fit,
                          "stl_bytes": stl_path.stat().st_size,
                          "needs_reslice": True})
 
