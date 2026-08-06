@@ -778,6 +778,15 @@
   .pi-cell span { font-size: 12px; color: var(--text-3, #7f948a); }
   .pi-cell b { font-size: 15px; color: var(--text-1, #eaf5ef); font-weight: 600; }
 
+  .slice-ready-head { text-align: center; margin-bottom: 4px; }
+  .slice-ready-head h2 { margin: 0; }
+  .support-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; margin-bottom: 12px; }
+  .support-label { font-size: 14px; color: var(--text-2, #b9cabf); font-weight: 600; }
+  .seg { display: inline-flex; background: var(--surface-2, #1b2c24); border: 1px solid var(--border, #2a3a32); border-radius: 10px; overflow: hidden; }
+  .seg-btn { padding: 9px 18px; font-size: 14px; background: transparent; color: var(--text-2, #b9cabf); border: none; border-right: 1px solid var(--border, #2a3a32); cursor: pointer; }
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn.active { background: var(--accent, #45d38a); color: #06110c; font-weight: 600; }
+
   /* IP-connect row in the printer picker */
   .pr-connect { padding: 12px 0 6px; border-bottom: 1px solid var(--border, #2a3a32); margin-bottom: 8px; }
   .pr-connect-label { display: block; font-size: 12px; color: var(--text-2, #b9cabf); margin-bottom: 6px; }
@@ -2759,6 +2768,7 @@
 <!-- ════════ SCREEN 5 — SLICING ════════ -->
 <div id="s-slicing" class="screen">
   <div class="progress-container">
+    <div id="slice-progress">
     <div class="progress-header">
       <div class="progress-spinner"></div>
       <h2>Preparing for printing</h2>
@@ -2788,7 +2798,13 @@
     <div class="progress-track">
       <div class="progress-bar" id="slice-progress-bar"></div>
     </div>
+    </div><!-- /slice-progress -->
     <button id="btn-cancel-slice" class="btn-ghost back-btn" onclick="cancelBuild()" title="Stop preparing this print and go back">← Cancel</button>
+    <!-- Compact "ready to print" header shown once slicing is done, in place of
+         the progress steps, so the result fits with no scrolling. -->
+    <div id="slice-ready-head" class="slice-ready-head" style="display:none;">
+      <h2>Ready to print</h2>
+    </div>
     <div id="usb-ready-msg" class="usb-ready" style="display:none;">
       <div class="usb-ready-icon">✓</div>
       <div class="usb-ready-text">
@@ -2807,6 +2823,14 @@
         <div class="pi-cell"><span>Est. print time</span><b id="pi-time">—</b></div>
         <div class="pi-cell"><span>Print file</span><b id="pi-file">—</b></div>
         <div class="pi-cell"><span>Sliced by</span><b id="pi-slicer">CuraEngine</b></div>
+      </div>
+    </div>
+    <div id="support-toggle" class="support-toggle" style="display:none;">
+      <span class="support-label">Supports</span>
+      <div class="seg">
+        <button class="seg-btn" data-sup="auto" onclick="setSupports('auto')" title="Add support only where an overhang needs it">Auto</button>
+        <button class="seg-btn" data-sup="on" onclick="setSupports('on')" title="Aggressive support for tricky overhangs">On</button>
+        <button class="seg-btn" data-sup="off" onclick="setSupports('off')" title="No support — for models that print without it">Off</button>
       </div>
     </div>
     <button id="btn-preview" class="btn-secondary" onclick="openPrintPreview()" style="display:none;width:100%;margin-bottom:10px;" title="See the sliced print — model and supports — on the bed before printing">
@@ -3527,10 +3551,13 @@ function resetSliceSteps() {
   // Every result-state control goes back to hidden — a second run must not
   // inherit the previous job's "Printing now" button or printer readout.
   ['usb-ready-msg', 'btn-start-over', 'btn-download-gcode',
-   'btn-print-now', 'btn-preview', 'printer-state'].forEach(id => {
+   'btn-print-now', 'btn-preview', 'support-toggle', 'printer-state'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
+  // Restore the progress view for this run.
+  const sp = document.getElementById('slice-progress'); if (sp) sp.style.display = 'block';
+  const rh = document.getElementById('slice-ready-head'); if (rh) rh.style.display = 'none';
   const pn = document.getElementById('btn-print-now');
   if (pn) { pn.disabled = false; pn.innerHTML = '🖨 Send to printer'; }
   const info = document.getElementById('print-info');
@@ -3957,7 +3984,7 @@ async function renderPrintInfo() {
     set('pi-size', d.dims_mm ? d.dims_mm.map(x => Math.round(x)).join(' × ') + ' mm' : '—');
     set('pi-layer', (d.layer_height_mm ?? 0.2) + ' mm');
     set('pi-infill', (d.infill_pct ?? 15) + '%');
-    set('pi-supports', d.supports ? 'Auto — added where needed' : 'Off');
+    set('pi-supports', ({ auto: 'Auto — where needed', on: 'On — everywhere', off: 'Off' })[d.supports] || 'Auto');
     const t = d.est_time_s;
     set('pi-time', t ? (t >= 3600 ? Math.floor(t / 3600) + 'h ' + Math.round((t % 3600) / 60) + 'm' : Math.max(1, Math.round(t / 60)) + ' min') : '—');
     set('pi-file', d.gcode_mb ? d.gcode_mb + ' MB' : '—');
@@ -3969,7 +3996,36 @@ async function renderPrintInfo() {
   } catch { if (card) card.style.display = 'none'; }
 }
 
+/* Supports toggle on the ready screen. Changing it re-runs the slice with the
+   new setting (a Meshy mesh can trip auto-support even on shapes the user
+   expects to be support-free), and re-slicing refreshes the preview too. */
+function highlightSupport(mode) {
+  document.querySelectorAll('#support-toggle .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.sup === mode));
+}
+async function loadSupportToggle() {
+  try {
+    const d = await (await fetch('/api/slice/support')).json();
+    highlightSupport(d.supports || 'auto');
+  } catch { highlightSupport('auto'); }
+}
+async function setSupports(mode) {
+  highlightSupport(mode);
+  try {
+    await fetch('/api/slice/support', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supports: mode }),
+    });
+    handlePrint();   // re-slice with the new support setting, refreshing everything
+  } catch (e) { console.warn('support set failed', e); }
+}
+
 function showUsbReady(usedUsb) {
+  // Collapse the progress steps and show a compact header so the result fits
+  // the screen with no scrolling.
+  const sp = document.getElementById('slice-progress'); if (sp) sp.style.display = 'none';
+  const rh = document.getElementById('slice-ready-head'); if (rh) rh.style.display = 'block';
+  loadSupportToggle();
   const usb = document.getElementById('usb-ready-msg');
   if (usb) usb.style.display = 'flex';
   const title = document.getElementById('usb-ready-title');
@@ -3979,6 +4035,8 @@ function showUsbReady(usedUsb) {
     ? 'Remove the drive and insert it into your printer'
     : 'Download it below, or send it to the printer';
   renderPrintInfo();
+  const st = document.getElementById('support-toggle');
+  if (st) st.style.display = 'flex';
   const prev = document.getElementById('btn-preview');
   if (prev) prev.style.display = 'block';
   // Offered either way — with a USB the download is still the easier route if
@@ -4074,7 +4132,9 @@ async function openPrintPreview() {
     if (m) bed = { x: +m[1], y: +m[2] };
     const seg = parseGcodeSegments(gtext);
     buildPreviewScene(seg, bed);
-    if (sub) sub.textContent = seg.count ? (' · ' + seg.count.toLocaleString() + ' moves') : ' · nothing to show';
+    if (sub) sub.textContent = seg.total
+      ? (' · ' + seg.total.toLocaleString() + ' moves' + (seg.count < seg.total ? ' (preview simplified)' : ''))
+      : ' · nothing to show';
   } catch (e) {
     if (sub) sub.textContent = ' · preview unavailable';
     console.warn('preview failed', e);
@@ -4119,8 +4179,22 @@ function parseGcodeSegments(text) {
   }
   const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2, cz = (minz + maxz) / 2;
   const size = Math.max(maxx - minx, maxy - miny, maxz - minz, 1);
-  return { positions: new Float32Array(P), colors: new Float32Array(C),
-           center: [cx, cz, cy], radius: size, count: P.length / 6 };
+  // Decimate for the kiosk's software renderer: a full print can be >100k
+  // segments, which drags on every rotate. Keep every Nth whole segment to hit
+  // a budget — supports (a coloured minority) stay proportionally visible, and
+  // the shape + where support goes is still clear.
+  const total = P.length / 6;
+  const TARGET = 38000;
+  const stride = total > TARGET ? Math.ceil(total / TARGET) : 1;
+  const keep = Math.ceil(total / stride);
+  const pos = new Float32Array(keep * 6), col = new Float32Array(keep * 6);
+  let w = 0;
+  for (let s = 0; s < total; s += stride) {
+    const b = s * 6;
+    for (let k = 0; k < 6; k++) { pos[w] = P[b + k]; col[w] = C[b + k]; w++; }
+  }
+  return { positions: pos.subarray(0, w), colors: col.subarray(0, w),
+           center: [cx, cz, cy], radius: size, count: w / 6, total: total };
 }
 
 function buildPreviewScene(seg, bed) {

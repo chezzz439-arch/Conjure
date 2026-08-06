@@ -2175,6 +2175,31 @@ def orient_for_least_support(src: Path, dst: Path,
         return False
 
 
+# User's support choice for the next slice. "auto" lets CuraEngine add support
+# only where an overhang needs it (from the buildplate, moderate angle); "off"
+# forces none; "on" is aggressive (support everywhere, incl. on the model) for
+# tricky overhangs. Meshy meshes are organic and often trip auto-support even on
+# shapes a user expects to be support-free (a "benchy"), so the choice is theirs.
+slice_prefs = {"supports": "auto"}
+_VALID_SUPPORT_MODES = {"auto", "off", "on"}
+
+
+def _support_flags() -> list[str]:
+    mode = slice_prefs.get("supports", "auto")
+    if mode == "off":
+        return ["-s", "support_enable=false"]
+    if mode == "on":
+        return ["-s", "support_enable=true", "-s", "support_angle=45",
+                "-s", "support_structure=normal", "-s", "support_type=everywhere"]
+    # auto — from the buildplate only, a less trigger-happy angle than before.
+    return ["-s", "support_enable=true", "-s", "support_angle=55",
+            "-s", "support_structure=normal", "-s", "support_type=buildplate"]
+
+
+class SupportRequest(BaseModel):
+    supports: str  # auto | off | on
+
+
 # ---------------------------------------------------------------------------
 # Slicing background task
 # ---------------------------------------------------------------------------
@@ -2314,16 +2339,7 @@ async def run_slicing() -> None:
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
                 "-s", "infill_sparse_density=15",
-                # Auto-supports: CuraEngine only builds support where an overhang
-                # actually needs it (steeper than support_angle from vertical), so
-                # a flat pot gets none while a winged figurine gets support under
-                # the wings. Kiosk users generate arbitrary shapes and never think
-                # about orientation, so leaving this off made overhang-heavy prints
-                # droop/fail. "everywhere" checks overhangs off the buildplate too.
-                "-s", "support_enable=true",
-                "-s", "support_angle=50",
-                "-s", "support_structure=normal",
-                "-s", "support_type=everywhere",
+                *_support_flags(),
             ]
             proc = None
             try:
@@ -2890,6 +2906,23 @@ def api_download_gcode() -> FileResponse:
         raise HTTPException(404, "No gcode yet — slice the model first")
     return FileResponse(str(p), media_type="text/plain",
                         filename=_download_name("gcode"))
+
+
+@app.get("/api/slice/support")
+def api_get_support() -> JSONResponse:
+    return JSONResponse({"ok": True, "supports": slice_prefs.get("supports", "auto")})
+
+
+@app.post("/api/slice/support")
+def api_set_support(req: SupportRequest) -> JSONResponse:
+    """Set the support mode for the next slice. Doesn't re-slice on its own — the
+    caller re-triggers /api/slice so the change and the new gcode land together."""
+    mode = (req.supports or "").strip().lower()
+    if mode not in _VALID_SUPPORT_MODES:
+        raise HTTPException(400, "supports must be one of: auto, off, on")
+    slice_prefs["supports"] = mode
+    log.info("[Slice] support mode set to %s", mode)
+    return JSONResponse({"ok": True, "supports": mode})
 
 
 @app.post("/api/slice")
@@ -4361,7 +4394,7 @@ def api_print_info() -> JSONResponse:
         "est_time_s": _gcode_time_s(gcode) if gsize else None,
         "layer_height_mm": 0.2,
         "infill_pct": 15,
-        "supports": True,
+        "supports": slice_prefs.get("supports", "auto"),
         "slicer": "CuraEngine 5.0",
         "printer_name": name,
         "printer_online": st.get("online", False),
