@@ -1486,6 +1486,16 @@ def _find_usb():
             for child in parent.iterdir():
                 if child.is_mount():
                     return str(child)
+    # udisks2 (modern Armbian/GNOME on this Pi) auto-mounts removable drives at
+    # /run/media/<user>/<label> — one level deeper than /media/<user>, so it
+    # needs its own two-level scan or a plugged-in stick reads as absent.
+    run_media = Path("/run/media")
+    if run_media.exists():
+        for userdir in run_media.iterdir():
+            if userdir.is_dir():
+                for child in userdir.iterdir():
+                    if child.is_mount():
+                        return str(child)
     # macOS: find external removable USB volumes under /Volumes
     volumes = Path("/Volumes")
     if volumes.exists():
@@ -1558,6 +1568,18 @@ def _list_usb_drives() -> list:
                         add(str(child))
         except Exception:
             continue
+
+    # udisks2 auto-mounts at /run/media/<user>/<label> (see _find_usb).
+    run_media = Path("/run/media")
+    try:
+        if run_media.exists():
+            for userdir in sorted(run_media.iterdir()):
+                if userdir.is_dir():
+                    for child in sorted(userdir.iterdir()):
+                        if child.is_mount():
+                            add(str(child))
+    except Exception:
+        pass
 
     volumes = Path("/Volumes")
     if volumes.exists():
