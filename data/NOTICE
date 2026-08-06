@@ -1,0 +1,46 @@
+NOTICE — third-party data in data/printers.json
+================================================
+
+data/printers.json is a derived work of the printer profiles bundled with
+OrcaSlicer.
+
+    Upstream project : OrcaSlicer
+    Homepage         : https://github.com/SoftFever/OrcaSlicer
+    License          : GNU Affero General Public License v3.0 (AGPL-3.0)
+    Imported from    : OrcaSlicer 2.4.2, Contents/Resources/profiles
+    Imported by      : tools/import_orca_printers.py
+
+OrcaSlicer is itself derived from BambuStudio, which is derived from
+PrusaSlicer. All three are AGPL-3.0. The bundled profile files carry no
+separate licence, no per-vendor terms, and no copyright headers of their own,
+so the project licence is what applies to them.
+
+What was taken
+--------------
+Only the facts needed to tell a user whether a part fits on their printer:
+vendor, product name, build volume, bed outline, origin offset, available
+nozzle sizes, extruder count, and the nozzle_type / nozzle_hrc /
+default_bed_type fields where the profile defines them. No G-code, no start or
+end scripts, no motion or extrusion tuning, no filament or process settings.
+
+Conjure does not fetch these profiles at runtime and does not bundle
+OrcaSlicer's profile tree. The import is a development-time step; only the
+derived JSON is committed.
+
+LEGAL REVIEW REQUIRED BEFORE PUBLIC RELEASE
+-------------------------------------------
+This has not been reviewed by a lawyer, and nothing here is legal advice.
+
+AGPL-3.0 obligations attach on distribution, including network distribution.
+While Conjure is private and internal, this is not a live question. It becomes
+one the moment Conjure is published, shipped as a product, sold, or exposed as
+a network service to anyone outside the team.
+
+The unresolved question is whether a dataset of build volumes derived from
+AGPL-3.0 profile files is a "modified version" that carries the licence
+forward, or an uncopyrightable collection of facts. There is an argument each
+way: individual measurements are facts and thin under Feist v. Rural
+Telephone, while the compilation and its selection and arrangement may not be.
+Do not assume the favourable reading.
+
+Get this reviewed before Conjure goes public.
