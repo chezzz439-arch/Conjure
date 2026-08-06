@@ -11,10 +11,6 @@ __pycache__/
 # slicer logs
 *.log
 
-# Snyk Code's local analysis cache, rewritten by every `snyk code test` run.
-# The scan results themselves land in output/, which is already ignored.
-.dccache
-
 # scratch design prototypes / unused vendor
 /vendor/proto-*.html
 /vendor/gsap.min.js
