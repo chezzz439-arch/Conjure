@@ -2934,13 +2934,9 @@ function goToSpeak() {
   handleRedo();
   showScreen('s-speak');
   resetIdle();
-  if (!micPermissionGranted && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        micPermissionGranted = true;
-        stream.getTracks().forEach(t => t.stop());
-      })
-      .catch(() => {});
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    // Pre-warm the mic stream so the first hold-to-talk records instantly.
+    ensureMicStream().then(() => { micPermissionGranted = true; }).catch(() => {});
   }
 }
 
@@ -2975,68 +2971,67 @@ function cancelBuild() {
   retryLastBuild();  // closeEvents() + restores the prompt + shows lastComposeScreen
 }
 
-/* ════════ SPEECH RECOGNITION ════════ */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const speechSupported = !!SR;
-let recognition = null;
-let isListening = false;    // user intent — is the mic button being held?
-let recognizing = false;    // engine reality — is the SR engine actually running?
-let restartTimer = null;
-let transcript = '';        // committed (finalized) words — the source of truth for CONFIRM
-let interimText = '';       // in-flight words not yet finalized by the engine
-const DEFAULT_PLACEHOLDER = 'Your words will appear here...';
+/* ════════ SPEECH-TO-TEXT (on-device whisper.cpp) ════════ */
+/* This kiosk runs snap Chromium, which ships no Google Speech API key, so the
+   browser's Web Speech API (webkitSpeechRecognition) fails with a silent
+   `network` error — it never transcribed here. Instead we record the mic with
+   MediaRecorder and POST the clip to /api/transcribe, which runs whisper.cpp on
+   the device. Push-to-talk (hold or tap-latch) is unchanged; the difference is
+   the transcript arrives once, after release, rather than streaming live. */
+let isListening = false;    // user intent — is the mic button held/latched?
+let transcript = '';        // words committed to the prompt this session
+let interimText = '';       // kept only so renderTranscript() stays unchanged (always '')
+let mediaRecorder = null;
+let mediaChunks = [];
+let micStream = null;
+let transcribing = false;   // a clip is being sent to /api/transcribe
 
-if (SR) {
-  recognition = new SR();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
+const speechSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
-  recognition.onstart = () => { recognizing = true; };
+// Pick a container the browser can actually record; ffmpeg on the server
+// decodes any of them. '' lets the browser fall back to its own default.
+const MIC_MIME = (() => {
+  const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (const t of prefs) { if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t; }
+  return '';
+})();
 
-  recognition.onresult = (e) => {
-    // Results can still arrive after the user releases the mic: stopListening()
-    // has already folded the in-flight interim text into `transcript`, so
-    // appending the engine's late final for that same utterance duplicated it
-    // ("make a bow and arrowmake a bow and arrow") — which then broke library
-    // search. Once the user has stopped, ignore anything further.
-    if (!isListening) return;
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const chunk = e.results[i][0].transcript;
-      if (e.results[i].isFinal) transcript += chunk;
-      else interim += chunk;
-    }
-    interimText = interim;
-    renderTranscript();
-  };
-
-  recognition.onerror = (e) => {
-    const err = e && e.error;
-    // 'no-speech' and 'aborted' are expected during push-to-talk — don't tear
-    // the session down over them; onend will restart if the button is still held.
-    if (err === 'not-allowed' || err === 'service-not-allowed') {
-      isListening = false;
-      updateMicUI(false);
-      showSpeechMessage('Microphone blocked. Allow mic access in your browser, then hold to speak.');
-    }
-  };
-
-  recognition.onend = () => {
-    recognizing = false;
-    // Chrome ends the session on silence / ~60s. If the user is still holding,
-    // restart — but debounced, so we never call start() mid-teardown (which
-    // throws "recognition has already started" and silently stalls the mic).
-    if (isListening) {
-      clearTimeout(restartTimer);
-      restartTimer = setTimeout(safeStart, 150);
-    }
-  };
+// Acquire (once) and reuse a mic stream so the second and later recordings
+// start instantly instead of re-prompting getUserMedia each time.
+async function ensureMicStream() {
+  if (micStream && micStream.active) return micStream;
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  return micStream;
 }
 
-function safeStart() {
-  if (!recognition || recognizing) return;
-  try { recognition.start(); } catch (e) { /* still winding down; onstart/onend settle it */ }
+// After the recorder stops: send the clip to the on-device transcriber and fold
+// the returned text into the prompt (appending, so voice adds to what's typed).
+async function transcribeClip(blob) {
+  if (!blob || !blob.size) { updateMicUI(false); return; }
+  transcribing = true;
+  showSpeechMessage('Transcribing…');
+  try {
+    const form = new FormData();
+    form.append('audio', blob, 'clip' + (MIC_MIME.includes('ogg') ? '.ogg' : '.webm'));
+    const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const text = (data.text || '').trim();
+    if (text) {
+      if (transcript && !/\s$/.test(transcript)) transcript += ' ';
+      transcript += text;
+      renderTranscript();
+      updateMicUI(false);   // resets the label back to the hint
+    } else {
+      showSpeechMessage("Didn't catch that — hold the mic and try again.");
+    }
+  } catch (e) {
+    showSpeechMessage('Transcription failed — check the mic and try again.');
+  } finally {
+    transcribing = false;
+  }
 }
 
 // The prompt textarea is the single source of truth — voice writes into it,
@@ -3083,37 +3078,56 @@ function showSpeechMessage(msg) {
 
 function startListening() {
   if (!speechSupported) {
-    showSpeechMessage('Voice needs Chrome — type your prompt instead.');
+    showSpeechMessage('Voice needs a microphone — type your prompt instead.');
     return;
   }
-  if (isListening) return;
+  if (isListening || transcribing) return;
   isListening = true;
   // Continue from whatever is already typed so voice appends rather than wipes.
   const el = promptInputEl();
   transcript = el ? el.value : '';
-  if (transcript && !/\s$/.test(transcript)) transcript += ' ';
   interimText = '';
-  clearTimeout(restartTimer);
+  mediaChunks = [];
   updateMicUI(true);
-  safeStart();
+  ensureMicStream().then((stream) => {
+    if (!isListening) return;  // released before the mic was ready
+    try {
+      mediaRecorder = MIC_MIME ? new MediaRecorder(stream, { mimeType: MIC_MIME })
+                               : new MediaRecorder(stream);
+    } catch (e) {
+      isListening = false; updateMicUI(false);
+      showSpeechMessage('Could not start recording — type your prompt instead.');
+      return;
+    }
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) mediaChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(mediaChunks, { type: MIC_MIME || 'audio/webm' });
+      mediaChunks = [];
+      transcribeClip(blob);
+    };
+    mediaRecorder.start();
+    // If the user let go during getUserMedia, stop right away so onstop fires.
+    if (!isListening) { try { mediaRecorder.stop(); } catch (e) {} }
+  }).catch(() => {
+    isListening = false; updateMicUI(false);
+    showSpeechMessage('Microphone blocked. Allow mic access, then hold to speak.');
+  });
 }
 
 function stopListening() {
   micLatched = false;  // any teardown path (home, idle, confirm) unlatches too
-  if (!recognition || !isListening) return;
+  if (!isListening) return;
   isListening = false;
-  clearTimeout(restartTimer);
-  // Fold any in-flight interim text into the committed transcript so the last
-  // words spoken aren't lost if the engine never finalized them before release.
-  if (interimText.trim()) {
-    transcript += interimText;
-    interimText = '';
+  // Stop the recorder; its onstop handler transcribes the clip and folds the
+  // text into the prompt. The prompt is left as-is until that returns.
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    updateMicUI(false);
+    showSpeechMessage('Transcribing…');
+    try { mediaRecorder.stop(); } catch (e) {}
+  } else {
+    // Recorder never got going (released during getUserMedia) — nothing to send.
+    updateMicUI(false);
   }
-  const el = promptInputEl();
-  if (el) el.value = transcript;
-  onPromptInput();
-  try { recognition.stop(); } catch (e) {}
-  updateMicUI(false);
 }
 
 function handleRedo() {

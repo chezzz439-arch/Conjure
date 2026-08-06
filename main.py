@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import asyncio
 import shutil
+import tempfile
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -18,7 +19,7 @@ import requests
 import aiofiles
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -69,6 +70,118 @@ MOONRAKER_PORT       = os.getenv("MOONRAKER_PORT", "7125")
 MOONRAKER_URL        = os.getenv("MOONRAKER_URL", "").rstrip("/")
 MOONRAKER_API_KEY    = os.getenv("MOONRAKER_API_KEY", "")
 MOONRAKER_TIMEOUT    = float(os.getenv("MOONRAKER_TIMEOUT", "20"))
+
+# ── Local speech-to-text (whisper.cpp) ─────────────────────────────────────
+# The kiosk browser is snap Chromium, which ships no Google Speech API key, so
+# the Web Speech API (webkitSpeechRecognition) fails with a hard `network`
+# error — voice input never worked through the browser. We transcribe on-device
+# instead: the browser records the mic and POSTs the clip to /api/transcribe,
+# which runs it through whisper.cpp. whisper-server keeps the model resident so
+# each utterance is fast; whisper-cli is the cold fallback if the server is down.
+WHISPER_DIR        = Path(os.getenv("WHISPER_DIR", "/home/watcher/whisper.cpp"))
+# base.en is the kiosk default: ~2-3x faster than small.en on this ARM CPU with
+# near-identical accuracy on short spoken prompts. Set WHISPER_MODEL to the
+# ggml-small.en.bin path if you want maximum accuracy at the cost of latency.
+WHISPER_MODEL      = os.getenv("WHISPER_MODEL", str(WHISPER_DIR / "models" / "ggml-base.en.bin"))
+WHISPER_HOST       = os.getenv("WHISPER_HOST", "127.0.0.1")
+WHISPER_PORT       = int(os.getenv("WHISPER_PORT", "8181"))
+WHISPER_THREADS    = os.getenv("WHISPER_THREADS", str(os.cpu_count() or 4))
+FFMPEG_PATH        = os.getenv("FFMPEG_PATH", "/usr/bin/ffmpeg")
+_WHISPER_BIN_DIR   = WHISPER_DIR / "build" / "bin"
+WHISPER_SERVER_BIN = _WHISPER_BIN_DIR / "whisper-server"
+WHISPER_CLI_BIN    = _WHISPER_BIN_DIR / "whisper-cli"
+WHISPER_URL        = f"http://{WHISPER_HOST}:{WHISPER_PORT}/inference"
+
+_whisper_proc = None
+_whisper_lock = threading.Lock()
+
+
+def _whisper_server_healthy() -> bool:
+    try:
+        return requests.get(f"http://{WHISPER_HOST}:{WHISPER_PORT}/", timeout=1).status_code < 500
+    except Exception:
+        return False
+
+
+def ensure_whisper_server() -> bool:
+    """Start whisper-server (model resident) if it isn't already up. Returns
+    True when the server answers. Best-effort: /api/transcribe falls back to
+    whisper-cli if this never comes up, so a failure here is not fatal."""
+    global _whisper_proc
+    if not WHISPER_SERVER_BIN.exists():
+        return False
+    with _whisper_lock:
+        if _whisper_proc and _whisper_proc.poll() is None:
+            return _whisper_server_healthy()
+        env = dict(os.environ, LD_LIBRARY_PATH=str(_WHISPER_BIN_DIR))
+        try:
+            _whisper_proc = subprocess.Popen(
+                [str(WHISPER_SERVER_BIN), "-m", WHISPER_MODEL,
+                 "--host", WHISPER_HOST, "--port", str(WHISPER_PORT),
+                 "-t", str(WHISPER_THREADS), "-l", "en"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )
+            log.info("whisper-server starting on %s:%s (model %s)",
+                     WHISPER_HOST, WHISPER_PORT, WHISPER_MODEL)
+        except Exception as e:
+            log.warning("whisper-server failed to start: %s", e)
+            return False
+    # Model load takes a few seconds; poll until it binds and is ready.
+    for _ in range(60):
+        if _whisper_server_healthy():
+            return True
+        time.sleep(0.5)
+    return _whisper_server_healthy()
+
+
+def stop_whisper_server() -> None:
+    global _whisper_proc
+    if _whisper_proc and _whisper_proc.poll() is None:
+        _whisper_proc.terminate()
+        try:
+            _whisper_proc.wait(timeout=5)
+        except Exception:
+            _whisper_proc.kill()
+    _whisper_proc = None
+
+
+def _ffmpeg_to_wav(src_path: str, wav_path: str) -> None:
+    """Normalise any browser-recorded clip (webm/ogg/opus) to 16 kHz mono WAV,
+    the format both whisper-server and whisper-cli expect."""
+    subprocess.run(
+        [FFMPEG_PATH, "-y", "-i", src_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=60,
+    )
+
+
+def _transcribe_via_server(wav_path: str) -> str | None:
+    try:
+        with open(wav_path, "rb") as f:
+            r = requests.post(
+                WHISPER_URL,
+                files={"file": ("audio.wav", f, "audio/wav")},
+                data={"response_format": "json", "temperature": "0", "language": "en"},
+                timeout=60,
+            )
+        if r.status_code != 200:
+            return None
+        try:
+            return (r.json().get("text") or "").strip()
+        except ValueError:
+            return r.text.strip()
+    except Exception:
+        return None
+
+
+def _transcribe_via_cli(wav_path: str) -> str:
+    env = dict(os.environ, LD_LIBRARY_PATH=str(_WHISPER_BIN_DIR))
+    out = subprocess.run(
+        [str(WHISPER_CLI_BIN), "-m", WHISPER_MODEL, "-f", wav_path,
+         "-nt", "-np", "-l", "en", "-t", str(WHISPER_THREADS)],
+        capture_output=True, text=True, env=env, timeout=120,
+    )
+    return out.stdout.strip()
+
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 (OUTPUT_DIR / "models").mkdir(exist_ok=True)
@@ -2219,6 +2332,15 @@ async def startup_event() -> None:
     (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
     log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
+    # Warm the local speech-to-text engine in the background so the model is
+    # resident before the first voice prompt — without blocking startup on the
+    # multi-second model load.
+    threading.Thread(target=ensure_whisper_server, daemon=True).start()
+
+
+@app.on_event("shutdown")
+def shutdown_event() -> None:
+    stop_whisper_server()
 
 
 # Front door: the marketing scroll landing page. Its CTAs hand off to the working
@@ -2233,6 +2355,43 @@ def get_landing() -> HTMLResponse:
 @app.get("/app", response_class=HTMLResponse)
 def get_app() -> HTMLResponse:
     return HTMLResponse(content=(BASE_DIR / "index.html").read_text())
+
+
+@app.post("/api/transcribe")
+def api_transcribe(audio: UploadFile = File(...)) -> JSONResponse:
+    """On-device speech-to-text for the voice prompt. The kiosk browser records
+    the mic (snap Chromium's cloud Web Speech API is unavailable — no Google API
+    key) and POSTs the clip here. We normalise it to 16 kHz mono WAV and run it
+    through whisper.cpp, preferring the resident whisper-server and falling back
+    to whisper-cli. Returns {"text": ...}."""
+    data = audio.file.read()
+    if not data:
+        raise HTTPException(400, "Empty audio upload")
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "clip")
+        wav = os.path.join(td, "clip.wav")
+        with open(src, "wb") as f:
+            f.write(data)
+        try:
+            _ffmpeg_to_wav(src, wav)
+        except Exception as e:
+            log.warning("transcribe: ffmpeg decode failed: %s", e)
+            raise HTTPException(422, "Could not decode audio")
+        text = None
+        if ensure_whisper_server():
+            text = _transcribe_via_server(wav)
+        if text is None:
+            log.info("transcribe: whisper-server unavailable, using whisper-cli")
+            try:
+                text = _transcribe_via_cli(wav)
+            except Exception as e:
+                log.warning("transcribe: whisper-cli failed: %s", e)
+                raise HTTPException(500, "Transcription failed")
+    # whisper emits bracketed non-speech markers ([BLANK_AUDIO], [MUSIC]) and
+    # timestamp-driven newlines; collapse them into a single clean line.
+    text = re.sub(r"\[[^\]]*\]", " ", text or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return JSONResponse({"text": text})
 
 
 class GenerateRequest(BaseModel):
