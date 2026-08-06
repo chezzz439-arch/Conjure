@@ -5,13 +5,17 @@ below was reproduced by running it against a live server — the captured output
 is quoted verbatim. Nothing here is inferred from reading the code.
 
 Ordered by how likely a real user is to hit it multiplied by how bad the
-outcome is when they do.
+outcome is when they do. Entries that have since been fixed keep their number
+and their original reproduction, with the resolution recorded underneath —
+renumbering would break references from commit messages and notes.
 
 ---
 
 ## 1. `/api/print-now` ignores `slice_ok` and will upload stale gcode
 
-**Severity: high — wrong part sent to a printer. Highly reachable.**
+**FIXED in 59b4710.** Resolution at the end of this entry.
+
+**Severity when open: high — wrong part sent to a printer. Highly reachable.**
 
 `api_print_now` checks only that `output/model.gcode` exists. `api_usb_export_gcode`
 checks `slice_ok` as well. Two paths lead to the same artefact and only one of
@@ -42,6 +46,41 @@ printer log: UPLOAD RECEIVED path=/server/files/upload bytes=906246
 Partly mitigated by `started: false` — a human still presses go in Fluidd, so
 the wrong part is queued rather than printed unattended.
 
+### Resolution — 59b4710
+
+Neither obvious fix worked. Adding the `slice_ok` check to `print-now` would
+have refused every Speak-mode print, because only Engineer builds ever set that
+flag; and it dies on restart anyway, which is the case above. Comparing file
+timestamps failed too, because `select_model` copies an STL with
+`shutil.copy2`, which preserves the source mtime — so a freshly chosen model
+can look older than gcode sliced from something else.
+
+A successful slice now writes `output/model.gcode.source`, holding the SHA-256
+of the STL it was sliced from. Both `print-now` and USB export compare that
+stamp against the model on disk, through one shared helper. The stamp is a
+file, so it outlives a restart, and it needs no per-mode scoping.
+
+Verified against a fake Moonraker:
+
+```
+unstamped gcode      print-now 409, printer contacted: NOTHING
+                     (previously 200, 906246 bytes uploaded)
+correct stamp        print-now 200, 954638 bytes uploaded
+after full restart   slice_ok None, exportable True, print-now 200
+STL swapped          print-now 409, usb 409, printer contacted: NOTHING
+after an apply edit  gcode and stamp both gone, print-now 400
+```
+
+The same commit fixed the mirror-image defect in USB export: its `slice_ok`
+guard refused every Speak-mode export as "no build has been sliced yet",
+however correct the gcode was.
+
+Two consequences worth knowing. Gcode sliced before this change carries no
+stamp and is refused rather than trusted, so the first print after deploying
+it needs one re-slice. And issue 3 below can no longer put a wrong part on a
+printer — the stamp check catches the swapped STL at dispatch — though that
+endpoint still wrongly reports success.
+
 ---
 
 ## 2. `POST /api/printer/profile` silently wipes the printer selection
@@ -69,7 +108,10 @@ worked.
 
 ## 3. `select_model` returns `ok:true` when the model's STL is missing
 
-**Severity: medium-high — wrong geometry, presented as correct.**
+**Severity: medium — still open, but downgraded by 59b4710.** The endpoint
+still reports success it has not earned, and the viewer still shows the
+previous part. What it can no longer do is get that part printed: the gcode
+stamp check added for issue 1 catches the mismatch at dispatch.
 
 A missing GLB returns 404, but a missing STL is skipped without comment. The
 handler then sets `status="model_ready"` and reports success, leaving whatever
