@@ -2568,7 +2568,7 @@ def api_search_models(req: SearchModelsRequest) -> JSONResponse:
     object_name  = meta.get("object_name") or search_query.title()
 
     try:
-        results, sources, matched_query = search_with_fallback(search_query, limit=6)
+        results, sources, matched_query = search_with_fallback(search_query, limit=12)
     except Exception as e:
         log.warning("[Library] search failed: %s", e)
         results, sources, matched_query = [], [], search_query
