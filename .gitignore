@@ -19,6 +19,15 @@ __pycache__/
 /vendor/proto-*.html
 /vendor/gsap.min.js
 
+# openscad-wasm runtime — 7.7MB, installed by scripts/fetch-openscad-wasm.sh.
+# Absent, the dimension editor renders on the server instead of in the browser,
+# which is the same fallback an old browser gets. Not worth a permanent 7.7MB
+# in git history for a file the fetch script reproduces exactly.
+/vendor/openscad.wasm
+/vendor/openscad.wasm.js
+/vendor/openscad.fonts.js
+/vendor/openscad.mcad.js
+
 # InsForge & AI agent skills
 .insforge
 .agent

@@ -1194,6 +1194,255 @@
     color: var(--text-1);
   }
 
+  /* ════════ DIMENSION EDITOR (parametric models only) ════════
+     Hidden entirely — not empty, not disabled — when the model has no
+     customizer block, which is every Speak-mode mesh. */
+  .param-panel {
+    position: absolute;
+    top: var(--nav-h); right: 0; bottom: 0;
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(11, 17, 14, 0.94);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+    z-index: 6;
+  }
+
+  .param-panel.open { transform: translateX(0); }
+
+  .param-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px var(--edge) 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .param-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-1);
+    letter-spacing: 0.01em;
+  }
+
+  .param-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    border-radius: var(--radius-sm);
+    width: 34px; height: 34px;
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .param-close:hover { color: var(--text-1); background: var(--surface); }
+
+  .param-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px var(--edge) 12px;
+  }
+
+  .param-group { border-bottom: 1px solid var(--border-soft); }
+
+  .param-group > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 14px 0 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .param-group > summary::-webkit-details-marker { display: none; }
+
+  .param-group > summary::before {
+    content: '';
+    width: 0; height: 0;
+    border-left: 4px solid var(--text-faint);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.15s ease;
+  }
+
+  .param-group[open] > summary::before { transform: rotate(90deg); }
+
+  .param-group > summary:hover { color: var(--text-2); }
+
+  .param-row { padding: 0 0 16px; }
+
+  .param-label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    line-height: 1.35;
+  }
+
+  .param-controls { display: flex; align-items: center; gap: 10px; }
+
+  .param-range {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    min-width: 0;
+  }
+
+  .param-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  .param-range::-moz-range-thumb {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  .param-num, .param-text, .param-select {
+    background: var(--glass-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    height: 36px;
+    padding: 0 9px;
+  }
+
+  .param-num { width: 74px; text-align: right; flex: none; }
+  .param-text, .param-select { flex: 1; min-width: 0; }
+
+  .param-num:focus, .param-text:focus, .param-select:focus {
+    outline: none;
+    border-color: var(--accent-dim);
+  }
+
+  .param-unit {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    width: 20px;
+    flex: none;
+  }
+
+  .param-bool {
+    display: inline-flex;
+    background: var(--glass-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .param-bool button {
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 9px 18px;
+  }
+
+  .param-bool button:last-child { border-right: none; }
+  .param-bool button.on { background: var(--accent); color: var(--accent-ink); }
+
+  .param-foot {
+    border-top: 1px solid var(--border-soft);
+    padding: 14px var(--edge) 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .param-foot-row { display: flex; gap: 10px; }
+
+  .param-apply {
+    flex: 1;
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    border-bottom: 3px solid var(--accent-edge);
+    border-radius: var(--radius-sm);
+    height: 46px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .param-apply:disabled {
+    background: var(--surface-2);
+    color: var(--text-faint);
+    border-bottom-color: var(--border);
+  }
+
+  .param-reset {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    border-radius: var(--radius-sm);
+    height: 46px;
+    padding: 0 16px;
+    font-size: 13px;
+  }
+
+  .param-reset:hover:not(:disabled) { color: var(--text-1); background: var(--surface); }
+  .param-reset:disabled { opacity: 0.45; }
+
+  .param-status {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    min-height: 16px;
+    line-height: 1.4;
+  }
+
+  .param-status.busy { color: var(--accent); }
+  .param-status.warn { color: var(--amber); }
+  .param-status.err  { color: var(--red); }
+
+  .param-status.busy::before {
+    content: '';
+    display: inline-block;
+    width: 7px; height: 7px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: param-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes param-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+  @media (max-width: 900px) {
+    .param-panel {
+      top: auto;
+      width: auto; left: 0; right: 0;
+      max-height: 68vh;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      transform: translateY(100%);
+    }
+    .param-panel.open { transform: translateY(0); }
+  }
+
   /* ════════ USB READY (slicing) ════════ */
   .usb-ready {
     display: flex;
@@ -2073,6 +2322,17 @@
     </div>
     <div class="view-actions">
       <button class="view-btn-secondary" onclick="startOver()" title="Discard this model and return to the home screen">Start over</button>
+      <!-- Stays display:none until the model turns out to have editable
+           dimensions. A button that opens an empty panel is worse than no
+           button, so nothing is shown rather than something disabled. -->
+      <button class="view-btn-secondary" id="btn-adjust" style="display:none;"
+              onclick="toggleParamPanel()" title="Change this part's dimensions and re-render it">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-right:8px;">
+          <path d="M2 4h7M12 4h2M2 12h2M7 12h7"/>
+          <circle cx="10.5" cy="4" r="2"/><circle cx="5.5" cy="12" r="2"/>
+        </svg>
+        Adjust dimensions
+      </button>
       <button class="view-btn-secondary" id="btn-download-stl" onclick="downloadFile('stl')" title="Save the STL to this device — no USB drive needed">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M8 2v8m0 0L5 7m3 3 3-3"/><path d="M2 12v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/>
@@ -2089,6 +2349,21 @@
       </button>
     </div>
   </div>
+
+  <aside class="param-panel" id="param-panel" aria-label="Dimension editor">
+    <div class="param-head">
+      <span class="param-title">Dimensions</span>
+      <button class="param-close" onclick="toggleParamPanel(false)" aria-label="Close dimensions">&times;</button>
+    </div>
+    <div class="param-body" id="param-body"></div>
+    <div class="param-foot">
+      <div class="param-status" id="param-status"></div>
+      <div class="param-foot-row">
+        <button class="param-reset" id="param-reset" onclick="resetParams()" disabled>Reset to original</button>
+        <button class="param-apply" id="param-apply" onclick="applyParams()" disabled>Apply changes</button>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <!-- ════════ SCREEN 5 — SLICING ════════ -->
@@ -2346,6 +2621,12 @@ function showScreen(id) {
   // The Home button is redundant on the idle screen itself.
   const homeBtn = document.getElementById('nav-home-btn');
   if (homeBtn) homeBtn.style.display = (id === 's-idle') ? 'none' : 'flex';
+
+  // Every route into the viewer asks whether this model has editable
+  // dimensions — including the library, where a saved Engineer part is opened
+  // long after the build that made it.
+  if (id === 's-view') refreshParamPanel();
+  else if (typeof closeParamPanel === 'function') closeParamPanel();
 }
 
 /* ════════ GLOBALS ════════ */
@@ -3860,41 +4141,494 @@ function loadSTL(url) {
   const loader = new THREE.STLLoader();
   loader.load(
     url,
-    (geometry) => {
-      if (model3d) scene.remove(model3d);
-
-      geometry.computeVertexNormals();
-
-      const material = new THREE.MeshPhongMaterial({
-        color: 0x45d38a,  // the Borrowed-Accent Rule: the UI wears this exact render color
-        emissive: 0x0a2f1d,
-        emissiveIntensity: 0.5,
-        specular: 0xbfffe0,
-        shininess: 100,
-        side: THREE.DoubleSide,
-      });
-
-      model3d = new THREE.Mesh(geometry, material);
-
-      const box = new THREE.Box3().setFromObject(model3d);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scaleFactor = 2.5 / maxDim;
-
-      model3d.scale.setScalar(scaleFactor);
-      model3d.position.set(
-        -center.x * scaleFactor,
-        -center.y * scaleFactor,
-        -center.z * scaleFactor
-      );
-
-      scene.add(model3d);
-      setMaterial('solid');
-    },
+    (geometry) => mountSTLGeometry(geometry),
     undefined,
     (err) => console.error('STL load error:', err)
   );
+}
+
+/* Framing + material for an STL, split out of loadSTL so a geometry that never
+   came from a URL — the dimension editor's in-browser render — is shown by the
+   exact same code rather than a lookalike that drifts from it. */
+function mountSTLGeometry(geometry) {
+  if (model3d) scene.remove(model3d);
+
+  geometry.computeVertexNormals();
+
+  const material = new THREE.MeshPhongMaterial({
+    color: 0x45d38a,  // the Borrowed-Accent Rule: the UI wears this exact render color
+    emissive: 0x0a2f1d,
+    emissiveIntensity: 0.5,
+    specular: 0xbfffe0,
+    shininess: 100,
+    side: THREE.DoubleSide,
+  });
+
+  model3d = new THREE.Mesh(geometry, material);
+
+  const box = new THREE.Box3().setFromObject(model3d);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scaleFactor = 2.5 / maxDim;
+
+  model3d.scale.setScalar(scaleFactor);
+  model3d.position.set(
+    -center.x * scaleFactor,
+    -center.y * scaleFactor,
+    -center.z * scaleFactor
+  );
+
+  scene.add(model3d);
+  setMaterial(currentMaterial || 'solid');
+}
+
+/* Load an STL we already have the bytes of (the wasm worker's output). */
+function loadSTLBuffer(buffer) {
+  if (!window.THREE || !THREE.STLLoader) return false;
+  try {
+    mountSTLGeometry(new THREE.STLLoader().parse(buffer));
+    return true;
+  } catch (e) {
+    console.error('STL parse error:', e);
+    return false;
+  }
+}
+
+/* ════════ DIMENSION EDITOR ════════
+   Reads the OpenSCAD customizer block the Engineer prompt now emits and builds
+   a form from it. Speak-mode meshes have no such block, so this whole feature
+   silently does not exist for them — no panel, no button, no error. */
+
+const paramState = {
+  params:   [],    // as served, with the values currently on the server
+  original: {},    // name -> value as first generated
+  values:   {},    // name -> value in the form right now
+  busy:     false,
+};
+
+/* One compiled WebAssembly.Module for the whole session, handed to each
+   short-lived render worker. Compiling 7.7MB per render would cost more than
+   the render on a simple part. */
+const openscadWasm = { module: null, promise: null };
+
+function serverRenderForced() {
+  // A switch, not dead code: it is how the server fallback gets exercised
+  // without uninstalling the wasm, and it is the escape hatch if a browser
+  // update breaks the worker in the field.
+  //   localStorage.setItem('conjure.serverRender', '1')
+  try { return localStorage.getItem('conjure.serverRender') === '1'; }
+  catch (_) { return false; }
+}
+
+function ensureOpenscadWasm() {
+  if (openscadWasm.promise) return openscadWasm.promise;
+  openscadWasm.promise = (async () => {
+    if (serverRenderForced()) throw new Error('server rendering forced on');
+    if (typeof WebAssembly === 'undefined' || typeof Worker === 'undefined') {
+      throw new Error('this browser has no WebAssembly or Worker support');
+    }
+    // Fetched and compiled rather than compileStreaming'd: streaming refuses
+    // anything not served as application/wasm, and the static mount's MIME
+    // guess is not worth depending on.
+    const resp = await fetch('/vendor/openscad.wasm');
+    if (!resp.ok) throw new Error('openscad.wasm not installed (HTTP ' + resp.status + ')');
+    openscadWasm.module = await WebAssembly.compile(await resp.arrayBuffer());
+    return openscadWasm.module;
+  })();
+  openscadWasm.promise.catch(() => {});   // probed lazily; failure is expected
+  return openscadWasm.promise;
+}
+
+/* Render a .scad in a throwaway worker. Resolves {stl, ms}. */
+function renderScadInBrowser(script, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = new Worker('/vendor/conjure-openscad-worker.js');
+    } catch (e) {
+      reject(new Error('render worker failed to start: ' + e.message));
+      return;
+    }
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.terminate();     // also the cancel path — the render just stops
+      fn(arg);
+    };
+    const timer = setTimeout(
+      () => finish(reject, new Error('in-browser render timed out')),
+      timeoutMs || 180000);
+    worker.onerror = (e) => finish(reject, new Error(e.message || 'render worker error'));
+    worker.onmessage = (ev) => {
+      const d = ev.data || {};
+      if (d.ok) finish(resolve, d);
+      else finish(reject, new Error(d.error || 'render failed'));
+    };
+    try {
+      worker.postMessage({ source: script, wasmModule: openscadWasm.module });
+    } catch (e) {
+      // Some engines refuse to structured-clone a WebAssembly.Module. The
+      // worker compiles its own copy in that case.
+      try { worker.postMessage({ source: script }); }
+      catch (e2) { finish(reject, e2); }
+    }
+  });
+}
+
+function setParamStatus(kind, text) {
+  const el = document.getElementById('param-status');
+  if (!el) return;
+  el.className = 'param-status' + (kind ? ' ' + kind : '');
+  el.textContent = text || '';
+}
+
+function fmtParamNum(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return '';
+  return String(Number(n.toFixed(4)));
+}
+
+/* A step the slider can actually land on. Annotations usually carry one; when
+   they do not, 1 is wrong for a 0.1-1.0 clearance and 0.01 is wrong for a
+   40-120mm height, so it is derived from the range. */
+function niceParamStep(min, max) {
+  const span = Math.abs(max - min);
+  if (!isFinite(span) || span <= 0) return 0.1;
+  const target = span / 100;
+  const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 25, 50];
+  for (const s of steps) if (s >= target) return s;
+  return 100;
+}
+
+function setParamValue(name, value) {
+  paramState.values[name] = value;
+  refreshParamButtons();
+}
+
+function paramsDiffer(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length !== b.length || a.some((v, i) => paramsDiffer(v, b[i]));
+  }
+  if (typeof a === 'number' || typeof b === 'number') {
+    return Math.abs(Number(a) - Number(b)) > 1e-9;
+  }
+  return a !== b;
+}
+
+function dirtyOverrides() {
+  const out = {};
+  paramState.params.forEach(p => {
+    const v = paramState.values[p.name];
+    if (v !== undefined && paramsDiffer(v, p.value)) out[p.name] = v;
+  });
+  return out;
+}
+
+function refreshParamButtons() {
+  const apply = document.getElementById('param-apply');
+  const reset = document.getElementById('param-reset');
+  const dirty = Object.keys(dirtyOverrides()).length > 0;
+  const offOriginal = paramState.params.some(
+    p => paramsDiffer(paramState.values[p.name], paramState.original[p.name]));
+  if (apply) apply.disabled = paramState.busy || !dirty;
+  if (reset) reset.disabled = paramState.busy || !offOriginal;
+}
+
+function paramNumberControls(p, get, set) {
+  const wrap = document.createElement('div');
+  wrap.className = 'param-controls';
+
+  const hasRange = typeof p.min === 'number' && typeof p.max === 'number' && p.max > p.min;
+  const step = p.step || (hasRange ? niceParamStep(p.min, p.max) : 0.1);
+
+  const num = document.createElement('input');
+  num.type = 'number';
+  num.className = 'param-num';
+  num.step = step;
+  if (hasRange) { num.min = p.min; num.max = p.max; }
+  num.value = fmtParamNum(get());
+
+  let range = null;
+  if (hasRange) {
+    range = document.createElement('input');
+    range.type = 'range';
+    range.className = 'param-range';
+    range.min = p.min; range.max = p.max; range.step = step;
+    range.value = get();
+    // Both controls edit the same number and each shows what the other did.
+    range.addEventListener('input', () => {
+      const v = Number(range.value);
+      num.value = fmtParamNum(v);
+      set(v);
+    });
+    wrap.appendChild(range);
+  }
+
+  const commitNum = () => {
+    let v = Number(num.value);
+    if (!isFinite(v)) { num.value = fmtParamNum(get()); return; }
+    if (hasRange) v = Math.min(p.max, Math.max(p.min, v));
+    num.value = fmtParamNum(v);
+    if (range) range.value = v;
+    set(v);
+  };
+  // input keeps the slider live while typing; change re-clamps once the field
+  // is left, so a half-typed "1" on the way to "15" is not snapped to the min.
+  num.addEventListener('input', () => {
+    const v = Number(num.value);
+    if (isFinite(v)) { if (range) range.value = v; set(v); }
+  });
+  num.addEventListener('change', commitNum);
+  num.addEventListener('blur', commitNum);
+
+  wrap.appendChild(num);
+
+  const unit = document.createElement('span');
+  unit.className = 'param-unit';
+  unit.textContent = p.unit || '';
+  wrap.appendChild(unit);
+  return wrap;
+}
+
+function paramRow(p) {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+
+  const label = document.createElement('label');
+  label.className = 'param-label';
+  // The descriptive comment, never the variable name. `wall_thickness` is what
+  // the file calls it; "Wall thickness in mm" is what the person reading it
+  // needs. The parser already falls back to a humanised name when a model was
+  // generated before the prompt asked for comments.
+  label.textContent = p.label;
+  row.appendChild(label);
+
+  const get = () => paramState.values[p.name];
+  const set = (v) => setParamValue(p.name, v);
+
+  if (p.options && p.options.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'param-controls';
+    const sel = document.createElement('select');
+    sel.className = 'param-select';
+    p.options.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = String(o.value);
+      opt.textContent = o.label;
+      if (!paramsDiffer(o.value, get())) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      const chosen = p.options.find(o => String(o.value) === sel.value);
+      set(chosen ? chosen.value : sel.value);
+    });
+    wrap.appendChild(sel);
+    row.appendChild(wrap);
+  } else if (p.type === 'bool') {
+    const wrap = document.createElement('div');
+    wrap.className = 'param-controls';
+    const group = document.createElement('div');
+    group.className = 'param-bool';
+    [['On', true], ['Off', false]].forEach(([text, val]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      if (get() === val) b.classList.add('on');
+      b.addEventListener('click', () => {
+        group.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+        b.classList.add('on');
+        set(val);
+      });
+      group.appendChild(b);
+    });
+    wrap.appendChild(group);
+    row.appendChild(wrap);
+  } else if (p.type === 'number') {
+    row.appendChild(paramNumberControls(p, get, set));
+  } else if (p.type === 'vector') {
+    const wrap = document.createElement('div');
+    wrap.className = 'param-controls';
+    (get() || []).forEach((_, i) => {
+      const n = document.createElement('input');
+      n.type = 'number';
+      n.className = 'param-num';
+      n.step = 0.1;
+      n.value = fmtParamNum(get()[i]);
+      n.addEventListener('input', () => {
+        const next = (get() || []).slice();
+        const v = Number(n.value);
+        if (isFinite(v)) { next[i] = v; set(next); }
+      });
+      wrap.appendChild(n);
+    });
+    row.appendChild(wrap);
+  } else {
+    const wrap = document.createElement('div');
+    wrap.className = 'param-controls';
+    const t = document.createElement('input');
+    t.type = 'text';
+    t.className = 'param-text';
+    if (p.max_length) t.maxLength = p.max_length;
+    t.value = get() == null ? '' : String(get());
+    t.addEventListener('input', () => set(t.value));
+    wrap.appendChild(t);
+    row.appendChild(wrap);
+  }
+  return row;
+}
+
+function buildParamForm() {
+  const body = document.getElementById('param-body');
+  if (!body) return;
+  body.innerHTML = '';
+  const groups = [];
+  paramState.params.forEach(p => { if (groups.indexOf(p.group) < 0) groups.push(p.group); });
+  groups.forEach((g, i) => {
+    const d = document.createElement('details');
+    d.className = 'param-group';
+    d.open = i === 0;            // first group open, the rest a click away
+    const s = document.createElement('summary');
+    s.textContent = g;
+    d.appendChild(s);
+    paramState.params.filter(p => p.group === g).forEach(p => d.appendChild(paramRow(p)));
+    body.appendChild(d);
+  });
+  refreshParamButtons();
+}
+
+async function refreshParamPanel() {
+  const btn = document.getElementById('btn-adjust');
+  let data = null;
+  try {
+    const r = await fetch('/api/model/parameters');
+    if (r.ok) data = await r.json();
+  } catch (e) {
+    console.warn('[params] lookup failed:', e);
+  }
+  const params = (data && data.parameters) || [];
+  paramState.params   = params;
+  paramState.original = (data && data.original) || {};
+  paramState.values   = {};
+  params.forEach(p => {
+    paramState.values[p.name] = Array.isArray(p.value) ? p.value.slice() : p.value;
+    if (!(p.name in paramState.original)) paramState.original[p.name] = p.value;
+  });
+
+  if (!params.length) {
+    // Nothing to edit — a Speak-mode mesh, or a part generated before the
+    // prompt emitted a customizer block. Show nothing rather than an empty
+    // panel that looks like a bug.
+    if (btn) btn.style.display = 'none';
+    closeParamPanel();
+    const body = document.getElementById('param-body');
+    if (body) body.innerHTML = '';
+    return;
+  }
+  if (btn) btn.style.display = 'inline-flex';
+  setParamStatus('', '');
+  buildParamForm();
+}
+
+function toggleParamPanel(force) {
+  const panel = document.getElementById('param-panel');
+  if (!panel || !paramState.params.length) return;
+  const open = force === undefined ? !panel.classList.contains('open') : !!force;
+  panel.classList.toggle('open', open);
+}
+
+function closeParamPanel() {
+  const panel = document.getElementById('param-panel');
+  if (panel) panel.classList.remove('open');
+}
+
+function resetParams() {
+  paramState.params.forEach(p => {
+    const o = paramState.original[p.name];
+    paramState.values[p.name] = Array.isArray(o) ? o.slice() : o;
+  });
+  buildParamForm();
+  setParamStatus('', 'Original dimensions restored — apply to re-render.');
+}
+
+function setParamBusy(busy) {
+  paramState.busy = busy;
+  refreshParamButtons();
+}
+
+async function applyParams() {
+  if (paramState.busy) return;
+  const overrides = dirtyOverrides();
+  if (!Object.keys(overrides).length) return;
+
+  setParamBusy(true);
+  setParamStatus('busy', 'Regenerating…');
+
+  const post = (url) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrides }),
+  });
+
+  // Both renders start now. The server one is not optional — it writes the
+  // .scad, produces the STL the slicer and the review gate read, and throws
+  // away the gcode that no longer matches. The browser one only paints the
+  // viewer sooner. Running them together means the fallback costs nothing when
+  // the browser render fails: the answer was already on its way.
+  const commit = post('/api/model/apply').then(async (r) => ({ r, j: await r.json().catch(() => ({})) }));
+  commit.catch(() => {});
+
+  let painted = false;
+  try {
+    const sr = await post('/api/model/scad');
+    const sj = await sr.json();
+    if (!sr.ok || !sj.ok) throw new Error(sj.error || 'could not build the edited script');
+    await ensureOpenscadWasm();
+    const out = await renderScadInBrowser(sj.script);
+    painted = loadSTLBuffer(out.stl);
+    if (painted) setParamStatus('busy', 'Preview ready — saving the part…');
+  } catch (e) {
+    console.warn('[params] in-browser render unavailable:', e.message);
+    setParamStatus('busy', 'Regenerating on the server…');
+  }
+
+  try {
+    const { r, j } = await commit;
+    if (!r.ok || !j.ok) {
+      // The server could not render the edit, so what is on disk is still the
+      // old part. If a preview of the new one is on screen it is now a lie —
+      // put the real model back.
+      if (painted) loadSTL('/api/model/stl?' + Date.now());
+      setParamStatus('err', j.error || 'Could not apply these dimensions.');
+      return;
+    }
+    if (!painted) loadSTL('/api/model/stl?' + Date.now());
+
+    // The panel now shows what the server holds, so these become the new
+    // baseline for "changed". The originals are untouched.
+    Object.keys(j.applied || {}).forEach(name => {
+      const p = paramState.params.find(x => x.name === name);
+      if (p) p.value = j.applied[name];
+    });
+    buildParamForm();
+
+    const d = j.dimensions;
+    const size = d ? `${fmtParamNum(d.x)} × ${fmtParamNum(d.y)} × ${fmtParamNum(d.z)} mm` : '';
+    const bad = j.review && j.review.verdict === 'needs_review';
+    const rejected = Object.keys(j.rejected || {});
+    setParamStatus(bad ? 'warn' : '',
+      (bad ? 'Applied, but the review gate flagged it: ' + (j.review.issues || []).join('; ')
+           : 'Applied' + (size ? ' — ' + size : '') + '.') +
+      ' Press Prepare for printing to re-slice.' +
+      (rejected.length ? ' Ignored: ' + rejected.join(', ') + '.' : ''));
+  } catch (e) {
+    if (painted) loadSTL('/api/model/stl?' + Date.now());
+    setParamStatus('err', friendlyError(e));
+  } finally {
+    setParamBusy(false);
+  }
 }
 
 /* ════════ MATERIAL TOGGLE ════════ */

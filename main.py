@@ -2144,6 +2144,18 @@ async def run_slicing() -> None:
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
 
+        # slice_ok answers "does model.gcode belong to the model currently on
+        # disk", and this is the other place that makes it true. Editing a
+        # dimension clears the flag along with the gcode; without this the
+        # re-slice that follows would leave it cleared and USB export would
+        # refuse an export that is in fact correct.
+        # Scoped to Engineer parts on purpose. Speak mode has never set this
+        # flag and widening it here would change a path Feature 1 has no
+        # business touching.
+        with engineer_state["lock"]:
+            if engineer_state.get("scad_script"):
+                engineer_state["slice_ok"] = True
+
         threading.Thread(
             target=log_supabase_event,
             args=("model_sliced",),
@@ -3109,6 +3121,9 @@ engineer_state = {
     "current_step_name": "",
     "logs": [],
     "scad_script": None,
+    # The script as generated, kept beside the working one so "Reset to
+    # original" restores the model rather than the last edit to it.
+    "scad_original": None,
     "specs": None,
     "design_review": None,
     # slice_ok was a local in run_engineer_pipeline, so nothing outside that
@@ -3414,14 +3429,16 @@ def _scad_annotation(note: str, ptype: str) -> dict:
     return out
 
 
-def parse_scad_parameters(src: str) -> list[dict]:
-    """Customizer parameters of a .scad script, in source order."""
-    params: list[dict] = []
-    if not src:
-        return params
+def _scad_walk_head(src: str):
+    """Yield every customizer-eligible assignment in the head, in source order.
 
+    One walk, two consumers: the parameter list the UI renders from, and the
+    rewriter that puts edited values back. Splitting them would let the two
+    disagree about what counts as a parameter, and a dimension you can edit but
+    cannot save is worse than one you were never shown.
+    """
     group, hidden, desc = "Parameters", False, None
-    for line in _scad_customizer_head(src).splitlines():
+    for idx, line in enumerate(_scad_customizer_head(src).splitlines()):
         g = _SCAD_GROUP_RE.match(line)
         if g:
             name   = g.group(1).strip()
@@ -3451,34 +3468,56 @@ def parse_scad_parameters(src: str) -> list[dict]:
             desc = None
             continue
 
-        ann = _scad_annotation(note or "", ptype)
+        yield {"line": idx, "text": line, "name": name, "raw": rawval,
+               "note": note, "value": value, "type": ptype,
+               "group": group, "desc": desc}
+        desc = None
+
+
+def parse_scad_parameters(src: str) -> list[dict]:
+    """Customizer parameters of a .scad script, in source order."""
+    params: list[dict] = []
+    if not src:
+        return params
+
+    for a in _scad_walk_head(src):
+        note = a["note"]
+        ann  = _scad_annotation(note or "", a["type"])
         # A trailing comment carrying no annotation is a description in the
         # other legal position, so use it rather than dropping it.
         trailing = note.strip() if note and "[" not in note else None
-        label = desc or trailing or name.replace("_", " ").strip().capitalize()
-        blurb = " ".join(filter(None, (desc, trailing)))
+        label = a["desc"] or trailing or a["name"].replace("_", " ").strip().capitalize()
+        blurb = " ".join(filter(None, (a["desc"], trailing)))
 
         params.append({
-            "name":        name,
+            "name":        a["name"],
             "label":       label,
-            "description": desc or trailing,
-            "value":       value,
-            "type":        ptype,
-            "group":       group,
+            "description": a["desc"] or trailing,
+            "value":       a["value"],
+            "type":        a["type"],
+            "group":       a["group"],
             "unit":        "mm" if re.search(r"\bmm\b", blurb, re.I) else None,
             **ann,
         })
-        desc = None
 
     return params
 
 
-def _current_scad() -> tuple[str | None, str | None]:
-    """The live Engineer script, else the last one written to disk."""
+def _current_scad(original: bool = False) -> tuple[str | None, str | None]:
+    """The live Engineer script, else the last one written to disk.
+
+    With original=True, the script as the model generator first wrote it —
+    what "Reset to original" restores to. Once edits have been applied the
+    working script no longer holds those values, so they have to be kept
+    separately or the reset button silently resets to the last edit.
+    """
+    key = "scad_original" if original else "scad_script"
     with engineer_state["lock"]:
-        script = engineer_state.get("scad_script")
+        script = engineer_state.get(key)
     if script:
         return script, "engineer_state"
+    if original:
+        return None, None
     path = OUTPUT_DIR / "engineer_bracket.scad"
     try:
         if path.exists():
@@ -3513,8 +3552,315 @@ def api_model_parameters() -> JSONResponse:
     for p in params:
         if p["group"] not in groups:
             groups.append(p["group"])
+
+    # Values as generated, for "Reset to original". Falls back to the current
+    # values when no original was recorded (a script picked up off disk after a
+    # restart), so the button is never wired to nothing.
+    osrc, _ = _current_scad(original=True)
+    try:
+        originals = {p["name"]: p["value"] for p in parse_scad_parameters(osrc)} if osrc else {}
+    except Exception:
+        log.exception("SCAD original-value parse failed")
+        originals = {}
+    for p in params:
+        originals.setdefault(p["name"], p["value"])
+
     return JSONResponse({"available": bool(params), "source": source,
-                         "parameters": params, "groups": groups})
+                         "parameters": params, "groups": groups,
+                         "original": originals})
+
+
+# ---------------------------------------------------------------------------
+# Parameter editing — turning form values back into a .scad
+# ---------------------------------------------------------------------------
+
+def _scad_number_literal(value: float, like) -> str:
+    """A number formatted the way the line it replaces was written.
+
+    `like` is the value being overwritten: a script that said 60.0 keeps its
+    decimal point and one that said 60 keeps its absence, so applying an edit
+    to one dimension does not silently restyle the whole block.
+    """
+    v = float(value)
+    if v.is_integer() and abs(v) < 1e15:
+        return f"{v:.1f}" if isinstance(like, float) else str(int(v))
+    return f"{v:.6f}".rstrip("0").rstrip(".")
+
+
+def _scad_value_literal(value, ptype: str, like) -> str:
+    if ptype == "bool":
+        return "true" if value else "false"
+    if ptype == "number":
+        return _scad_number_literal(value, like)
+    if ptype == "vector":
+        return "[" + ", ".join(_scad_number_literal(v, like[i] if i < len(like) else v)
+                               for i, v in enumerate(value)) + "]"
+    # Strings are the one type that reaches OpenSCAD as text rather than as a
+    # number, so they are the one type that could carry syntax with them.
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    text = re.sub(r"[\r\n]", " ", text)
+    return f'"{text}"'
+
+
+def _coerce_scad_override(spec: dict, raw):
+    """(value, None) for an acceptable edit, (None, reason) otherwise.
+
+    Everything here ends up inside a file that OpenSCAD executes, so the check
+    is what the parameter declared it accepts — not what happens to parse.
+    """
+    ptype = spec["type"]
+
+    if spec.get("options"):
+        allowed = [o["value"] for o in spec["options"]]
+        for a in allowed:
+            if a == raw or str(a) == str(raw):
+                return a, None
+        return None, f"{raw!r} is not one of the declared options"
+
+    if ptype == "bool":
+        if isinstance(raw, bool):
+            return raw, None
+        if str(raw).lower() in ("true", "false", "0", "1"):
+            return str(raw).lower() in ("true", "1"), None
+        return None, f"{raw!r} is not a boolean"
+
+    if ptype == "number":
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            return None, f"{raw!r} is not a number"
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None, f"{raw!r} is not a number"
+        if not math.isfinite(v):
+            return None, "value must be finite"
+        lo, hi = spec.get("min"), spec.get("max")
+        # Clamped rather than rejected: the slider cannot leave the range, so a
+        # value outside it came from the number box, and the honest answer to
+        # "120 when the max is 100" is the part at 100, not a refusal.
+        if isinstance(lo, (int, float)) and v < lo:
+            v = float(lo)
+        if isinstance(hi, (int, float)) and v > hi:
+            v = float(hi)
+        return v, None
+
+    if ptype == "string":
+        if not isinstance(raw, str):
+            return None, f"{raw!r} is not text"
+        limit = spec.get("max_length")
+        if isinstance(limit, int) and len(raw) > limit:
+            return None, f"longer than the declared {limit} characters"
+        return raw, None
+
+    if ptype == "vector":
+        if not isinstance(raw, (list, tuple)):
+            return None, f"{raw!r} is not a vector"
+        if len(raw) != len(spec["value"]):
+            return None, f"expected {len(spec['value'])} components, got {len(raw)}"
+        out = []
+        for c in raw:
+            try:
+                c = float(c)
+            except (TypeError, ValueError):
+                return None, f"{c!r} is not a number"
+            if not math.isfinite(c):
+                return None, "components must be finite"
+            out.append(c)
+        return out, None
+
+    return None, f"unsupported parameter type {ptype!r}"
+
+
+def apply_scad_overrides(src: str, overrides: dict) -> tuple[str, dict, dict]:
+    """Rewrite the customizer block with the caller's values.
+
+    Returns (script, applied, rejected). Only lines the parser already accepted
+    as parameters are touched, and only their literal is replaced — so an edit
+    cannot reach the modules, the hidden block, or anything past the first "{".
+    """
+    if not src:
+        return src, {}, {k: "no script loaded" for k in (overrides or {})}
+
+    specs = {p["name"]: p for p in parse_scad_parameters(src)}
+    applied: dict = {}
+    rejected: dict = {}
+    edits: dict[int, str] = {}
+
+    for name, raw in (overrides or {}).items():
+        spec = specs.get(name)
+        if spec is None:
+            rejected[name] = "not an editable parameter of this model"
+            continue
+        value, why = _coerce_scad_override(spec, raw)
+        if why:
+            rejected[name] = why
+            continue
+        applied[name] = value
+
+    for a in _scad_walk_head(src):
+        if a["name"] not in applied:
+            continue
+        value = applied[a["name"]]
+        if value == a["value"]:
+            del applied[a["name"]]        # unchanged — nothing to write
+            continue
+        literal = _scad_value_literal(value, a["type"], a["value"])
+        indent  = a["text"][:len(a["text"]) - len(a["text"].lstrip())]
+        # Rebuilt from the parsed pieces rather than patched by substitution:
+        # a regex replacing up to the first ";" would cut a string literal that
+        # contains one in half.
+        line = f"{indent}{a['name']} = {literal};"
+        if a["note"] is not None:
+            line += f" // {a['note']}"
+        edits[a["line"]] = line
+
+    if not edits:
+        return src, applied, rejected
+
+    lines = src.splitlines(keepends=True)
+    for idx, text in edits.items():
+        ending = "\n" if lines[idx].endswith("\n") else ""
+        lines[idx] = text + ending
+    return "".join(lines), applied, rejected
+
+
+@app.post("/api/model/scad")
+def api_model_scad(body: dict | None = None) -> JSONResponse:
+    """The current script with the caller's edits substituted in — rendered by
+    nobody.
+
+    The browser's wasm preview needs the exact text the server would render, and
+    doing the substitution here rather than in JS means there is one
+    implementation of it. Two would eventually disagree, and the failure mode is
+    a preview that does not match the part that gets printed.
+    """
+    body = body or {}
+    src, source = _current_scad()
+    if not src:
+        return JSONResponse({"ok": False, "error": "no model script loaded"},
+                            status_code=409)
+    try:
+        script, applied, rejected = apply_scad_overrides(src, body.get("overrides") or {})
+    except Exception as e:
+        log.exception("SCAD override substitution failed")
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                            status_code=500)
+    return JSONResponse({"ok": True, "source": source, "script": script,
+                         "applied": applied, "rejected": rejected})
+
+
+def _stl_dimensions(stl_path: Path) -> dict | None:
+    """Bounding box of a rendered STL in mm, or None if it cannot be read."""
+    try:
+        import trimesh
+        mesh = trimesh.load(str(stl_path), force="mesh")
+        lo, hi = mesh.bounds
+        return {"x": round(float(hi[0] - lo[0]), 3),
+                "y": round(float(hi[1] - lo[1]), 3),
+                "z": round(float(hi[2] - lo[2]), 3)}
+    except Exception as e:
+        log.info("[Params] STL dimension read skipped: %s", e)
+        return None
+
+
+@app.post("/api/model/apply")
+def api_model_apply(body: dict | None = None) -> JSONResponse:
+    """Commit edited dimensions: rewrite the .scad, re-render, re-run the gate.
+
+    This is the authoritative path — the browser's wasm render is a preview of
+    it, never a substitute. Three things have to happen together or the build
+    stops agreeing with itself: the script on disk becomes the edited one, the
+    STL everything downstream reads is re-rendered from it, and the previous
+    gcode is destroyed. That last one matters most: model.gcode was sliced from
+    the pre-edit STL, and leaving it on disk next to an edited model is the
+    stale-gcode failure the print and USB paths already refuse to commit.
+    """
+    body = body or {}
+    with engineer_state["lock"]:
+        if engineer_state["status"] == "RUNNING":
+            return JSONResponse({"ok": False, "error": "A build is still running "
+                                 "— wait for it to finish before editing"},
+                                status_code=409)
+        specs = engineer_state.get("specs") or {}
+
+    src, _ = _current_scad()
+    if not src:
+        return JSONResponse({"ok": False, "error": "no model script loaded"},
+                            status_code=409)
+
+    try:
+        script, applied, rejected = apply_scad_overrides(src, body.get("overrides") or {})
+    except Exception as e:
+        log.exception("SCAD override substitution failed")
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                            status_code=500)
+
+    if not applied:
+        return JSONResponse({"ok": True, "changed": False, "applied": {},
+                             "rejected": rejected,
+                             "message": "nothing to apply"})
+
+    # Rendered to a scratch file first. A failed render must leave the previous
+    # model.stl untouched rather than half-overwritten, because the viewer, the
+    # slicer and the gate all read that one path.
+    stl_path = OUTPUT_DIR / "model.stl"
+    tmp_scad = OUTPUT_DIR / "engineer_edit.scad"
+    tmp_stl  = OUTPUT_DIR / "engineer_edit.stl"
+    try:
+        tmp_scad.write_text(script)
+        result = subprocess.run(
+            [OPENSCAD_PATH, "-o", str(tmp_stl), str(tmp_scad)],
+            capture_output=True, timeout=300, cwd=str(BASE_DIR),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.decode("utf-8", "replace")[-400:] or
+                               f"openscad exited {result.returncode}")
+        if not tmp_stl.exists() or tmp_stl.stat().st_size < 1000:
+            raise RuntimeError("STL too small — the edited geometry is not solid")
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
+                             "error": "OpenSCAD timed out re-rendering the edited "
+                                      "model — the original is unchanged"},
+                            status_code=504)
+    except Exception as e:
+        engineer_log(f"Edited render failed: {e}", "warning")
+        return JSONResponse({"ok": False, "applied": applied, "rejected": rejected,
+                             "error": f"Could not render the edited model: {e}"},
+                            status_code=422)
+
+    shutil.move(str(tmp_stl), str(stl_path))
+    (OUTPUT_DIR / "engineer_bracket.scad").write_text(script)
+
+    # The gate runs on the EDITED mesh. Running it once at build time and
+    # trusting that verdict afterwards would mean an edit could take a part
+    # non-manifold or under the wall minimum and still inherit a pass.
+    review = engineer_review_gate(stl_path, specs, "")
+
+    gcode_path = OUTPUT_DIR / "model.gcode"
+    stale_removed = False
+    try:
+        if gcode_path.exists():
+            gcode_path.unlink()
+            stale_removed = True
+    except OSError as e:
+        log.warning("Could not remove stale gcode: %s", e)
+
+    with engineer_state["lock"]:
+        engineer_state["scad_script"] = script
+        engineer_state["review"] = review
+        engineer_state["slice_ok"] = None      # this model has not been sliced
+
+    dims = _stl_dimensions(stl_path)
+    engineer_log(
+        "Dimensions edited: " + ", ".join(f"{k}={v}" for k, v in applied.items()) +
+        (f" — {dims['x']}x{dims['y']}x{dims['z']}mm" if dims else "") +
+        (" — previous gcode discarded" if stale_removed else ""),
+        "success" if review["verdict"] == "pass" else "warning")
+
+    return JSONResponse({"ok": True, "changed": True, "applied": applied,
+                         "rejected": rejected, "review": review,
+                         "dimensions": dims,
+                         "stl_bytes": stl_path.stat().st_size,
+                         "needs_reslice": True})
 
 
 def review_design(scad_script: str, specs: dict) -> None:
@@ -3648,6 +3994,7 @@ def run_engineer_pipeline(intent: str) -> None:
         engineer_state["current_step_name"] = ENGINEER_STEP_NAMES[0]
         engineer_state["logs"] = []
         engineer_state["scad_script"] = None
+        engineer_state["scad_original"] = None
         engineer_state["specs"] = None
         engineer_state["design_review"] = None
         # Cleared on entry, not just set on success: a build that crashes before
@@ -3682,6 +4029,7 @@ def run_engineer_pipeline(intent: str) -> None:
     scad_path.write_text(scad_script)
     with engineer_state["lock"]:
         engineer_state["scad_script"] = scad_script
+        engineer_state["scad_original"] = scad_script
     engineer_log(f"SCAD saved: {len(scad_script.splitlines())} lines", "success")
 
     engineer_set_step(2)
@@ -3870,6 +4218,7 @@ def engineer_reset() -> JSONResponse:
         engineer_state["current_step_name"] = ""
         engineer_state["logs"] = []
         engineer_state["scad_script"] = None
+        engineer_state["scad_original"] = None
         engineer_state["specs"] = None
         engineer_state["design_review"] = None
     return JSONResponse({"ok": True})
