@@ -2092,6 +2092,86 @@ def gcode_matches_model(gcode_path: Path, stl_path: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def orient_for_least_support(src: Path, dst: Path,
+                             overhang_deg: float = 45.0) -> bool:
+    """Rotate the mesh to the orientation that needs the least support and write
+    it to `dst`, seated flat on the bed. Returns True if a meaningfully better
+    orientation than as-is was written; False to slice the original.
+
+    Deliberately does NOT touch the source model.stl — the viewer keeps the part
+    in its proper display orientation, and the gcode stamp still keys off the
+    original — only the bytes handed to the slicer are reoriented. Best-effort:
+    any failure returns False so slicing proceeds with the original.
+    """
+    try:
+        import numpy as np
+        import trimesh
+        mesh = trimesh.load(str(src), force="mesh")
+        if mesh is None or mesh.is_empty or len(mesh.faces) == 0:
+            return False
+        # Organic Meshy meshes are huge and gain little from reorientation;
+        # cap the work so a 500k-face blob doesn't stall the slice.
+        if len(mesh.faces) > 120_000:
+            return False
+
+        # Candidate "down" directions: the largest convex-hull faces (natural
+        # resting faces) plus the six axis directions. Each becomes the new -Z.
+        cand = []
+        try:
+            hull = mesh.convex_hull
+            order = np.argsort(-hull.area_faces)[:20]
+            cand = [hull.face_normals[i] for i in order]
+        except Exception:
+            pass
+        cand += [[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]]
+        uniq = []
+        for n in np.array(cand, dtype=float):
+            nn = np.linalg.norm(n)
+            if nn == 0:
+                continue
+            n = n / nn
+            if not any(float(np.dot(n, u)) > 0.985 for u in uniq):
+                uniq.append(n)
+
+        down = np.array([0.0, 0.0, -1.0])
+        # A facet needs support if its normal points downward more steeply than
+        # `overhang_deg` below horizontal: dot(normal, down) > cos(90-overhang).
+        cos_thresh = float(np.cos(np.radians(90.0 - overhang_deg)))
+
+        def support_area(m) -> float:
+            dots = m.face_normals.dot(down)
+            return float(m.area_faces[dots > cos_thresh].sum())
+
+        base = mesh.copy()
+        as_is = support_area(base)
+
+        best_R, best = None, None
+        for n in uniq:
+            R = trimesh.geometry.align_vectors(n, down)
+            if R is None:
+                continue
+            m = mesh.copy()
+            m.apply_transform(R)
+            s = support_area(m)
+            if best is None or s < best:
+                best, best_R = s, R
+
+        # Only reorient if it cuts overhang area by a clear margin — a part the
+        # generator already seated flat should be left alone.
+        if best_R is None or best >= as_is * 0.8:
+            return False
+        oriented = mesh.copy()
+        oriented.apply_transform(best_R)
+        oriented.apply_translation(-oriented.bounds[0])  # seat on the plate (Z=0)
+        oriented.export(str(dst))
+        log.info("[Slice] auto-oriented for least support: overhang %.0f -> %.0f mm^2",
+                 as_is, best)
+        return True
+    except Exception as e:
+        log.warning("[Slice] auto-orient failed, using original: %s", e)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Slicing background task
 # ---------------------------------------------------------------------------
@@ -2119,6 +2199,20 @@ async def run_slicing() -> None:
             gcode_path.unlink()
         forget_gcode_source(gcode_path)
 
+        # ── Auto-orient for least support ──────────────────────────────────
+        # Hand the slicer a copy rotated to the orientation that needs the least
+        # support. The displayed model.stl and the gcode stamp stay on the
+        # original, so the viewer keeps the proper orientation and print/export
+        # still verify against the model on disk.
+        slice_stl = stl_path
+        try:
+            oriented = OUTPUT_DIR / "model_sliced.stl"
+            if await asyncio.to_thread(orient_for_least_support, stl_path, oriented):
+                slice_stl = oriented
+                await push_event("slice", "active", "Oriented for minimal support", 15)
+        except Exception as e:
+            log.warning("[Slice] auto-orient skipped: %s", e)
+
         sliced = False
 
         # ── Step 2a: Slice with OrcaSlicer (Neptune 4 Plus system presets) ──
@@ -2140,7 +2234,7 @@ async def run_slicing() -> None:
                 scale = 1.0
                 try:
                     info_proc = await asyncio.create_subprocess_exec(
-                        orca_path, "--info", str(stl_path),
+                        orca_path, "--info", str(slice_stl),
                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                     )
                     info_out, _ = await asyncio.wait_for(info_proc.communicate(), timeout=60)
@@ -2170,7 +2264,7 @@ async def run_slicing() -> None:
                     "--arrange", "1",
                     "--slice", "0",
                     "--outputdir", str(orca_out),
-                    str(stl_path),
+                    str(slice_stl),
                 ]
                 proc = await asyncio.create_subprocess_exec(
                     *orca_cmd,
@@ -2213,7 +2307,7 @@ async def run_slicing() -> None:
                 cura_path, "slice",
                 "-j", str(cura_profile),
                 "-e0",
-                "-l", str(stl_path),
+                "-l", str(slice_stl),
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
                 "-s", "infill_sparse_density=15",
@@ -4545,6 +4639,70 @@ def current_model_fit() -> dict:
 @app.get("/api/model/fit")
 def api_model_fit() -> JSONResponse:
     return JSONResponse({"ok": True, "fit": current_model_fit()})
+
+
+def _stl_extents_mm(stl_path: Path):
+    import trimesh
+    mesh = trimesh.load(str(stl_path), force="mesh")
+    if mesh is None or mesh.is_empty:
+        return None
+    e = [round(float(v), 1) for v in mesh.extents]  # x, y, z in mm
+    return {"dims_mm": e, "max_mm": round(float(max(mesh.extents)), 1)}
+
+
+@app.get("/api/model/size")
+def api_model_size() -> JSONResponse:
+    """Current printed size of the Speak-mode model (largest dimension in mm),
+    so the sizing control can show where it starts."""
+    stl = OUTPUT_DIR / "model.stl"
+    if not stl.exists():
+        raise HTTPException(404, "No model yet")
+    ext = _stl_extents_mm(stl)
+    if not ext:
+        raise HTTPException(422, "Could not read the model")
+    return JSONResponse({"ok": True, **ext})
+
+
+class ResizeRequest(BaseModel):
+    target_mm: float  # desired largest dimension
+
+
+@app.post("/api/model/resize")
+def api_model_resize(req: ResizeRequest) -> JSONResponse:
+    """Uniformly scale model.stl so its largest dimension equals target_mm. For
+    Speak-mode meshes, which have no parametric dimensions — the user just wants
+    it bigger or smaller. Invalidates the current gcode (a resize needs a fresh
+    slice), which the print/export stamp check already enforces."""
+    with engineer_state["lock"]:
+        if engineer_state["status"] == "RUNNING":
+            raise HTTPException(409, "A build is still running")
+    stl = OUTPUT_DIR / "model.stl"
+    if not stl.exists():
+        raise HTTPException(404, "No model to resize")
+    target = float(req.target_mm)
+    if not (5.0 <= target <= 300.0):
+        raise HTTPException(400, "Size must be between 5 and 300 mm")
+    try:
+        import trimesh
+        mesh = trimesh.load(str(stl), force="mesh")
+        cur_max = float(max(mesh.extents))
+        if cur_max <= 0:
+            raise HTTPException(422, "Model has no size")
+        mesh.apply_scale(target / cur_max)
+        mesh.export(str(stl))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning("[Resize] failed: %s", e)
+        raise HTTPException(500, "Could not resize the model")
+    # The old gcode was sliced from the pre-resize model — drop it.
+    gcode = OUTPUT_DIR / "model.gcode"
+    if gcode.exists():
+        gcode.unlink()
+    forget_gcode_source(gcode)
+    ext = _stl_extents_mm(stl)
+    log.info("[Resize] model.stl -> %.1f mm max", ext["max_mm"] if ext else -1)
+    return JSONResponse({"ok": True, **(ext or {})})
 
 
 # Serialises /api/model/apply. Every apply funnels through three fixed paths —

@@ -732,6 +732,36 @@
   .btn-clear:hover { color: var(--text-1); border-color: var(--accent); }
   .btn-clear[hidden] { display: none; }
 
+  .mic-caption-actions { display: flex; align-items: center; gap: 8px; }
+
+  /* On-screen keyboard — the kiosk is fullscreen with no physical keyboard. */
+  .osk {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999;
+    background: var(--surface-1, #10201a);
+    border-top: 1px solid var(--border, #2a3a32);
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -8px 30px rgba(0,0,0,0.45);
+    display: none; user-select: none; touch-action: manipulation;
+  }
+  .osk.open { display: block; }
+  .osk-row { display: flex; justify-content: center; gap: 6px; margin: 6px 0; }
+  .osk-key {
+    flex: 1 1 0; min-width: 0; max-width: 68px; height: 54px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-2, #1b2c24); color: var(--text-1, #eaf5ef);
+    border: 1px solid var(--border, #2a3a32); border-radius: 9px;
+    font-size: 19px; font-family: var(--font-ui, sans-serif); cursor: pointer;
+  }
+  .osk-key:active { background: var(--accent, #45d38a); color: #06110c; }
+  .osk-key.wide { max-width: 108px; flex-grow: 1.6; }
+  .osk-key.space { max-width: none; flex-grow: 8; }
+  .osk-key.accent { background: var(--accent, #45d38a); color: #06110c; border-color: var(--accent, #45d38a); }
+
+  .size-control { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-width: 240px; }
+  .size-label { font-family: var(--font-mono, monospace); font-size: 12px; color: var(--text-2, #b9cabf); }
+  .size-label span { color: var(--accent, #45d38a); font-weight: 600; }
+  #size-slider { width: 100%; accent-color: var(--accent, #45d38a); height: 28px; cursor: pointer; }
+
   .speak-actions {
     display: flex;
     align-items: center;
@@ -2456,7 +2486,10 @@
       </div>
       <div class="mic-caption-row">
         <div id="mic-label" class="mic-caption">Hold the mic to speak — or tap it to talk hands-free</div>
-        <button id="clear-btn" class="btn-clear" type="button" hidden onclick="clearPrompt()" title="Delete what's in the box and start over">Clear</button>
+        <div class="mic-caption-actions">
+          <button class="btn-clear" type="button" onclick="oskShow('prompt-input')" title="Show the on-screen keyboard" aria-label="On-screen keyboard">⌨ Keyboard</button>
+          <button id="clear-btn" class="btn-clear" type="button" hidden onclick="clearPrompt()" title="Delete what's in the box and start over">Clear</button>
+        </div>
       </div>
     </div>
     <div class="prompt-suggestions">
@@ -2595,6 +2628,14 @@
         <button class="mat-btn active" id="mat-solid" onclick="setMaterial('solid')" title="Shaded solid surfaces — how the print will look">Solid</button>
         <button class="mat-btn" id="mat-grid" onclick="setMaterial('grid')" title="Solid with highlighted edges to read the geometry">Edges</button>
         <button class="mat-btn" id="mat-wire" onclick="setMaterial('wire')" title="Wireframe mesh only — see the underlying triangles">Wire</button>
+      </div>
+      <!-- Sizing for Speak-mode meshes (which have no parametric dimensions).
+           Shown only when the model isn't parametric — see refreshParamPanel(). -->
+      <div class="size-control" id="size-control" style="display:none;">
+        <div class="size-label">Print size: <span id="size-value">—</span></div>
+        <input id="size-slider" type="range" min="10" max="250" step="1" value="60"
+               oninput="onSizeInput(this.value)" onchange="applySize(this.value)"
+               aria-label="Print size, largest dimension in millimetres">
       </div>
       <div class="view-hint">Drag to spin · pinch to zoom</div>
     </div>
@@ -2762,14 +2803,31 @@
       <p>It researches real dimensions, writes the CAD, and checks the part for strength.</p>
     </div>
     <div class="engineer-input-area">
-      <textarea
-        id="engineer-input"
-        class="engineer-textarea"
-        aria-label="Describe the functional part you need"
-        placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
-        rows="5"
-        oninput="onEngineerInput()"
-      ></textarea>
+      <div class="prompt-composer">
+        <textarea
+          id="engineer-input"
+          class="prompt-input engineer-textarea"
+          aria-label="Describe the functional part you need"
+          placeholder="e.g. a bracket that clamps a 2 inch PVC pipe to a wall with two M4 bolt holes for mounting"
+          rows="5"
+          oninput="onEngineerInput()"
+        ></textarea>
+        <button id="engineer-mic-btn" class="mic-inline" type="button" aria-label="Hold or tap to speak" title="Hold or tap to describe the part by voice">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+      </div>
+      <div class="mic-caption-row">
+        <div id="engineer-mic-label" class="mic-caption">Hold the mic to describe the part — or tap to talk hands-free</div>
+        <div class="mic-caption-actions">
+          <button class="btn-clear" type="button" onclick="oskShow('engineer-input')" title="Show the on-screen keyboard" aria-label="On-screen keyboard">⌨ Keyboard</button>
+          <button id="eng-clear-btn" class="btn-clear" type="button" hidden onclick="clearPrompt()" title="Clear the box and start over">Clear</button>
+        </div>
+      </div>
       <div class="engineer-examples">
         <span class="examples-label">Try:</span>
         <button class="example-pill" onclick="document.getElementById('engineer-input').value=this.textContent.trim();onEngineerInput()">pipe bracket for 2 inch PVC</button>
@@ -2899,6 +2957,7 @@
 let currentScreen = null;
 
 function showScreen(id) {
+  if (typeof oskHide === 'function') oskHide();   // never leave the keyboard up across a screen change
   if (currentScreen) {
     currentScreen.style.display = 'none';
   }
@@ -2959,6 +3018,8 @@ let micPermissionGranted = false;
 
 function goToSpeak() {
   handleRedo();
+  sttCtx = { input: 'prompt-input', mic: 'mic-btn', label: 'mic-label', clear: 'clear-btn',
+             hint: 'Hold the mic to speak — or tap it to talk hands-free', oninput: onPromptInput };
   showScreen('s-speak');
   resetIdle();
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -3063,59 +3124,68 @@ async function transcribeClip(blob) {
 
 // The prompt textarea is the single source of truth — voice writes into it,
 // and the user can type or edit it freely. Both paths feed handleConfirm().
-function promptInputEl() { return document.getElementById('prompt-input'); }
+// Both composers (Speak + Engineer) share one voice/clear pipeline. sttCtx aims
+// it at whichever one is on screen; goToSpeak()/goToEngineer() set it.
+let sttCtx = {
+  input: 'prompt-input', mic: 'mic-btn', label: 'mic-label', clear: 'clear-btn',
+  hint: 'Hold the mic to speak — or tap it to talk hands-free',
+  oninput: onPromptInput,
+};
+function promptInputEl() { return document.getElementById(sttCtx.input); }
 
 function onPromptInput() {
   const gen = document.getElementById('btn-generate');
-  const el = promptInputEl();
+  const el = document.getElementById('prompt-input');
   const hasText = !!(el && el.value.trim());
   if (gen) gen.disabled = !hasText;
   const clr = document.getElementById('clear-btn');
   if (clr) clr.hidden = !hasText;   // only offer "Clear" when there's something to clear
 }
 
-// Wipe the prompt box — for when the transcription came out wrong and the user
-// wants a clean slate rather than editing it. Also drops the voice transcript
-// state so the next hold-to-talk starts fresh.
+// Wipe the active compose box — for when the transcription came out wrong and
+// the user wants a clean slate. Also drops the voice transcript state.
 function clearPrompt() {
   if (isListening) stopListening();
   transcript = '';
   interimText = '';
   const el = promptInputEl();
   if (el) { el.value = ''; el.focus(); }
-  onPromptInput();
+  sttCtx.oninput();
   showSpeechMessage('Cleared — hold the mic and try again, or type it.');
 }
 
-// Engineer-mode mirror of onPromptInput — the two composers share one rule:
-// the primary action is disabled until there are words to build from.
+// Engineer-mode mirror of onPromptInput — same rule for both composers: the
+// primary action is disabled until there are words, and Clear appears with text.
 function onEngineerInput() {
   const btn = document.getElementById('btn-engineer');
   const el = document.getElementById('engineer-input');
-  if (btn) btn.disabled = !(el && el.value.trim());
+  const hasText = !!(el && el.value.trim());
+  if (btn) btn.disabled = !hasText;
+  const clr = document.getElementById('eng-clear-btn');
+  if (clr) clr.hidden = !hasText;
 }
 
 function useExample(btn) {
   const el = promptInputEl();
   if (el) { el.value = btn.textContent.trim(); el.focus(); }
-  onPromptInput();
+  sttCtx.oninput();
 }
 
 function renderTranscript() {
   const el = promptInputEl();
   if (el) el.value = transcript + interimText;
-  onPromptInput();
+  sttCtx.oninput();
 }
 
 function updateMicUI(listening) {
-  const btn = document.getElementById('mic-btn');
-  const label = document.getElementById('mic-label');
+  const btn = document.getElementById(sttCtx.mic);
+  const label = document.getElementById(sttCtx.label);
   if (btn) btn.classList.toggle('recording', listening);
-  if (label) label.textContent = listening ? 'Listening… release when done' : 'Hold the mic to speak — or tap it to talk hands-free';
+  if (label) label.textContent = listening ? 'Listening… release when done' : sttCtx.hint;
 }
 
 function showSpeechMessage(msg) {
-  const label = document.getElementById('mic-label');
+  const label = document.getElementById(sttCtx.label);
   if (label) label.textContent = msg;
 }
 
@@ -3211,26 +3281,94 @@ function micRelease() {
   stopListening();
 }
 
-const micBtn = document.getElementById('mic-btn');
-micBtn.addEventListener('mousedown', micPress);
-micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); micPress(); }, { passive: false });
-micBtn.addEventListener('mouseup', micRelease);
-micBtn.addEventListener('touchend', (e) => { e.preventDefault(); micRelease(); }, { passive: false });
-// Keyboard / switch access: Enter and Space fire 'click' on a button without
-// ever sending mousedown, so toggle directly on those synthetic clicks.
-micBtn.addEventListener('click', (e) => {
-  if (e.detail !== 0) return;  // pointer clicks already handled above
-  if (isListening) { micLatched = false; stopListening(); }
-  else { startListening(); micLatched = isListening; if (micLatched) showSpeechMessage('Listening… press again when done'); }
-});
-// Safety nets for HOLD mode only: releasing the pointer or losing focus
-// anywhere ends the session, so the mic can never get stuck in LISTENING if
-// release happens off-button. A latched session must survive these — its
-// whole point is that the finger has left the screen.
-micBtn.addEventListener('mouseleave', () => { if (isListening && !micLatched) stopListening(); });
-micBtn.addEventListener('touchcancel', () => { if (isListening && !micLatched) stopListening(); });
+// Wire a mic button. Both composers (Speak + Engineer) use identical handlers;
+// which input they write to is decided by sttCtx, set on screen entry.
+function bindMic(btn) {
+  if (!btn) return;
+  btn.addEventListener('mousedown', micPress);
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); micPress(); }, { passive: false });
+  btn.addEventListener('mouseup', micRelease);
+  btn.addEventListener('touchend', (e) => { e.preventDefault(); micRelease(); }, { passive: false });
+  // Keyboard / switch access: Enter and Space fire 'click' without a mousedown.
+  btn.addEventListener('click', (e) => {
+    if (e.detail !== 0) return;  // pointer clicks already handled above
+    if (isListening) { micLatched = false; stopListening(); }
+    else { startListening(); micLatched = isListening; if (micLatched) showSpeechMessage('Listening… press again when done'); }
+  });
+  // Safety nets for HOLD mode only (a latched session must survive these).
+  btn.addEventListener('mouseleave', () => { if (isListening && !micLatched) stopListening(); });
+  btn.addEventListener('touchcancel', () => { if (isListening && !micLatched) stopListening(); });
+}
+bindMic(document.getElementById('mic-btn'));
+bindMic(document.getElementById('engineer-mic-btn'));
 document.addEventListener('mouseup', () => { if (isListening && !micLatched) stopListening(); });
 window.addEventListener('blur', () => { micLatched = false; if (isListening) stopListening(); });
+
+/* ════════ ON-SCREEN KEYBOARD ════════
+   Fullscreen kiosk = no physical keyboard. Both composers offer a tap keyboard
+   that types into the field oskShow() was pointed at, firing 'input' so the
+   Generate/Start button and Clear toggle update exactly as real typing would. */
+let oskEl = null, oskTarget = null, oskShift = false;
+const OSK_ROWS = [
+  ['1','2','3','4','5','6','7','8','9','0'],
+  ['q','w','e','r','t','y','u','i','o','p'],
+  ['a','s','d','f','g','h','j','k','l'],
+  ['shift','z','x','c','v','b','n','m','backspace'],
+  [',','space','.','done'],
+];
+function oskRender() {
+  oskEl.innerHTML = '';
+  for (const row of OSK_ROWS) {
+    const r = document.createElement('div'); r.className = 'osk-row';
+    for (const k of row) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'osk-key';
+      if (k === 'space') { b.classList.add('space'); b.textContent = 'space'; }
+      else if (k === 'backspace') { b.classList.add('wide'); b.textContent = '⌫'; }
+      else if (k === 'shift') { b.classList.add('wide'); if (oskShift) b.classList.add('accent'); b.textContent = '⇧'; }
+      else if (k === 'done') { b.classList.add('wide', 'accent'); b.textContent = 'Done'; }
+      else b.textContent = oskShift ? k.toUpperCase() : k;
+      b.addEventListener('click', () => oskKey(k));
+      r.appendChild(b);
+    }
+    oskEl.appendChild(r);
+  }
+}
+function oskShow(inputId) {
+  if (!oskEl) {
+    oskEl = document.createElement('div');
+    oskEl.className = 'osk';
+    // Keep the target field focused (and its caret) when a key is pressed.
+    oskEl.addEventListener('mousedown', (e) => e.preventDefault());
+    document.body.appendChild(oskEl);
+    oskRender();
+  }
+  oskTarget = document.getElementById(inputId);
+  if (oskTarget) oskTarget.focus();
+  oskEl.classList.add('open');
+}
+function oskHide() { if (oskEl) oskEl.classList.remove('open'); }
+function oskInsert(txt) {
+  const el = oskTarget; if (!el) return;
+  const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? el.value.length;
+  el.value = el.value.slice(0, s) + txt + el.value.slice(e);
+  const pos = s + txt.length; el.setSelectionRange(pos, pos);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function oskKey(k) {
+  if (k === 'space') return oskInsert(' ');
+  if (k === 'done') return oskHide();
+  if (k === 'shift') { oskShift = !oskShift; oskRender(); return; }
+  if (k === 'backspace') {
+    const el = oskTarget; if (!el) return;
+    const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? el.value.length;
+    if (s === e && s > 0) { el.value = el.value.slice(0, s - 1) + el.value.slice(e); el.setSelectionRange(s - 1, s - 1); }
+    else { el.value = el.value.slice(0, s) + el.value.slice(e); el.setSelectionRange(s, s); }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  oskInsert(oskShift ? k.toUpperCase() : k);
+  if (oskShift) { oskShift = false; oskRender(); }   // one-shot shift
+}
 
 /* ════════ STEP HELPERS ════════ */
 function setStep(id, state, msg) {
@@ -4197,10 +4335,16 @@ async function printModelFromLibrary(id) {
 
 /* ════════ ENGINEER MODE ════════ */
 function goToEngineer() {
+  sttCtx = { input: 'engineer-input', mic: 'engineer-mic-btn', label: 'engineer-mic-label', clear: 'eng-clear-btn',
+             hint: 'Hold the mic to describe the part — or tap to talk hands-free', oninput: onEngineerInput };
+  transcript = ''; interimText = '';
   showScreen('s-engineer');
   const input = document.getElementById('engineer-input');
   if (input) { input.value = ''; input.focus(); }
   onEngineerInput();
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    ensureMicStream().then(() => { micPermissionGranted = true; }).catch(() => {});
+  }
 }
 
 async function handleEngineerConfirm() {
@@ -4487,31 +4631,31 @@ function loadModel(url) {
     url,
     (gltf) => {
       if (model3d) scene.remove(model3d);
-      model3d = gltf.scene;
-
-      const box = new THREE.Box3().setFromObject(model3d);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scaleFactor = 2.5 / maxDim;
-
-      model3d.scale.setScalar(scaleFactor);
-      model3d.position.set(
-        -center.x * scaleFactor,
-        -center.y * scaleFactor,
-        -center.z * scaleFactor
-      );
+      const obj = gltf.scene;
 
       // Meshy GLBs ship with POSITION only — no NORMAL attribute. Without
       // normals, lit materials render pure black, so generate smooth normals
       // from the geometry before setMaterial() applies the lit material.
-      model3d.traverse((node) => {
+      obj.traverse((node) => {
         if (node.isMesh && node.geometry && !node.geometry.attributes.normal) {
           node.geometry.computeVertexNormals();
         }
       });
 
-      scene.add(model3d);
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const scaleFactor = 2.5 / Math.max(size.x, size.y, size.z);
+
+      // Offset the model by -centre inside a pivot group, then scale/spin the
+      // pivot. The model's centre now sits on the pivot's origin, so it rotates
+      // about its true centre rather than orbiting an offset point.
+      obj.position.set(-center.x, -center.y, -center.z);
+      const pivot = new THREE.Group();
+      pivot.add(obj);
+      pivot.scale.setScalar(scaleFactor);
+      scene.add(pivot);
+      model3d = pivot;   // drag + auto-rotate operate on the centred pivot
       setMaterial('solid');
     },
     undefined,
@@ -4538,6 +4682,13 @@ function loadSTL(url) {
 function mountSTLGeometry(geometry) {
   if (model3d) scene.remove(model3d);
 
+  // STLs in this app come from OpenSCAD/CAD, which is Z-up; three.js is Y-up, so
+  // the part rendered lying on its back. Rotate Z-up -> Y-up so it stands
+  // upright. Then center() moves the geometry's own centre to its local origin,
+  // so the mesh rotates about its centre instead of orbiting an offset pivot
+  // (the "not rotating in the centre" bug). Normals last, from final positions.
+  geometry.rotateX(-Math.PI / 2);
+  geometry.center();
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshPhongMaterial({
@@ -4553,16 +4704,11 @@ function mountSTLGeometry(geometry) {
 
   const box = new THREE.Box3().setFromObject(model3d);
   const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
-  const scaleFactor = 2.5 / maxDim;
-
-  model3d.scale.setScalar(scaleFactor);
-  model3d.position.set(
-    -center.x * scaleFactor,
-    -center.y * scaleFactor,
-    -center.z * scaleFactor
-  );
+  model3d.scale.setScalar(2.5 / maxDim);
+  // Geometry is already centred at its local origin, so the object sits at the
+  // world origin and spins about its true centre.
+  model3d.position.set(0, 0, 0);
 
   scene.add(model3d);
   setMaterial(currentMaterial || 'solid');
@@ -4913,17 +5059,59 @@ async function refreshParamPanel() {
 
   if (!params.length) {
     // Nothing to edit — a Speak-mode mesh, or a part generated before the
-    // prompt emitted a customizer block. Show nothing rather than an empty
-    // panel that looks like a bug.
+    // prompt emitted a customizer block. No parametric editor, but Speak meshes
+    // still get the uniform Print-size control instead.
     if (btn) btn.style.display = 'none';
     closeParamPanel();
     const body = document.getElementById('param-body');
     if (body) body.innerHTML = '';
+    showSizeControl(true);
     return;
   }
   if (btn) btn.style.display = 'inline-flex';
+  showSizeControl(false);   // parametric parts size via the dimension editor
   setParamStatus('', '');
   buildParamForm();
+}
+
+/* ════════ PRINT SIZE (Speak-mode meshes) ════════
+   Meshy meshes have no parametric dimensions, so this uniform scale is how a
+   Speak-mode user makes the print bigger or smaller. The 3D viewer normalises
+   every model to the same on-screen size, so resizing changes the printed mm
+   and the bed-fit check — not the picture. */
+function onSizeInput(v) {
+  const out = document.getElementById('size-value');
+  if (out) out.textContent = Math.round(v) + ' mm';
+}
+async function showSizeControl(show) {
+  const box = document.getElementById('size-control');
+  if (!box) return;
+  if (!show) { box.style.display = 'none'; return; }
+  const slider = document.getElementById('size-slider');
+  try {
+    const r = await fetch('/api/model/size');
+    if (!r.ok) { box.style.display = 'none'; return; }
+    const d = await r.json();
+    const cur = Math.round(d.max_mm || 60);
+    slider.min = Math.min(10, cur);
+    slider.max = Math.max(250, cur);
+    slider.value = cur;
+    onSizeInput(cur);
+    box.style.display = 'flex';
+  } catch { box.style.display = 'none'; }
+}
+async function applySize(v) {
+  const target = Math.round(v);
+  try {
+    const r = await fetch('/api/model/resize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_mm: target }),
+    });
+    if (!r.ok) { console.warn('resize failed', await r.text().catch(() => '')); return; }
+    const d = await r.json();
+    onSizeInput(d.max_mm || target);
+    if (typeof refreshFitCheck === 'function') refreshFitCheck();  // did the new size still fit the bed?
+  } catch (e) { console.warn('resize error', e); }
 }
 
 function toggleParamPanel(force) {
