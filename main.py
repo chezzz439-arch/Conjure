@@ -3429,14 +3429,22 @@ def _scad_annotation(note: str, ptype: str) -> dict:
     return out
 
 
-def _scad_walk_head(src: str):
-    """Yield every customizer-eligible assignment in the head, in source order.
+def _scad_walk_head(src: str) -> list[dict]:
+    """Every customizer-eligible assignment in the head, in source order.
 
     One walk, two consumers: the parameter list the UI renders from, and the
     rewriter that puts edited values back. Splitting them would let the two
     disagree about what counts as a parameter, and a dimension you can edit but
     cannot save is worse than one you were never shown.
+
+    A name assigned more than once yields only its *last* assignment. OpenSCAD
+    binds one value per name for the whole file and the last one wins, so the
+    earlier assignments are dead code — they cannot change the model no matter
+    what is written to them. Showing them would put two rows on screen for one
+    dimension, drifting to different numbers as soon as either is edited, and
+    rewriting them would edit lines whose effect the user can never see.
     """
+    found: dict[str, dict] = {}
     group, hidden, desc = "Parameters", False, None
     for idx, line in enumerate(_scad_customizer_head(src).splitlines()):
         g = _SCAD_GROUP_RE.match(line)
@@ -3468,10 +3476,16 @@ def _scad_walk_head(src: str):
             desc = None
             continue
 
-        yield {"line": idx, "text": line, "name": name, "raw": rawval,
-               "note": note, "value": value, "type": ptype,
-               "group": group, "desc": desc}
+        # Re-inserted rather than overwritten in place: a dict keeps a key at
+        # its first position, and the row belongs where the assignment that
+        # actually binds is — its group header and its neighbours are there.
+        found.pop(name, None)
+        found[name] = {"line": idx, "text": line, "name": name, "raw": rawval,
+                       "note": note, "value": value, "type": ptype,
+                       "group": group, "desc": desc}
         desc = None
+
+    return list(found.values())
 
 
 def parse_scad_parameters(src: str) -> list[dict]:

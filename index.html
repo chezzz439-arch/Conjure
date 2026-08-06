@@ -4200,6 +4200,15 @@ function loadSTLBuffer(buffer) {
    a form from it. Speak-mode meshes have no such block, so this whole feature
    silently does not exist for them — no panel, no button, no error. */
 
+/* Known limitation, deliberately not fixed: `values` and `original` are plain
+   objects keyed by parameter name, so a parameter literally named __proto__
+   would set the prototype instead of a key and its edit would be dropped
+   silently. Every other JS-colliding name (constructor, toString, length,
+   hasOwnProperty) works, because only __proto__ has a setter on Object.
+   Fixing it means moving the core state container to a Map, which is a real
+   change to every read site for a name no dimension will ever have — the
+   server writes these from a design brief, and "__proto__" is not a length,
+   a width, or a wall thickness. */
 const paramState = {
   params:   [],    // as served, with the values currently on the server
   original: {},    // name -> value as first generated
