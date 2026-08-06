@@ -63,21 +63,21 @@ OpenSCAD **2021.01** · CuraEngine **Cura_SteamEngine 5.0.0** · OrcaSlicer **ab
   **not** hang: it timed out cleanly at the 6 s status pre-check → HTTP **502**
   "No answer from the printer… check it's powered on and on the same network".
   Wall time 6.0 s. Never reached the 120 s upload.
-- **48 — HTTP 200 with non-Moonraker garbage → BROKEN.** The app **believes it**.
-  `/api/printer` → `online:true, state:"unknown"` from `{"totally":"not
-  moonraker"}`. print-now uploaded to the garbage host and returned
-  `{"status":"ok","message":"Uploaded to the printer. Start it from Fluidd."}`.
-  No validation that the endpoint is actually Moonraker (e.g. expected result
-  shape / klippy fields). Impact: a wrong IP hosting any 200 service reads as a
-  working printer and reports a successful "print".
-- **49 — dispatch to a printer in error/shutdown state → BROKEN (bug B4 confirmed
-  on real hardware).** Drove the printer to `shutdown` via emergency_stop
-  ("Printer is shutdown"). The app's `/api/printer` still reported
-  `online:true, state:"standby"` — it reads only `print_stats.state` and never
-  checks `klippy_state`/`webhooks.state`. **print-now dispatched anyway** → HTTP
-  **200** "Uploaded to the printer. Start it from Fluidd." Nothing actually
-  prints. Recovery via `firmware_restart` → `ready` (verified). Impact: HIGH —
-  a faulted printer is reported healthy and the user is told the print was sent.
+- **48 — HTTP 200 with non-Moonraker garbage → was BROKEN, now FIXED (`d59a171`).**
+  Before: the app believed it — `/api/printer` → `online:true, state:"unknown"`
+  from `{"totally":"not moonraker"}`, and print-now "uploaded successfully" to
+  the garbage host. After: `moonraker_status()` requires the real Moonraker
+  `result.status` envelope; a bare 200 now returns `online:false` "isn't a
+  Moonraker printer" and print-now refuses (502). Re-verified against the stub.
+- **49 — dispatch to a printer in error/shutdown state → was BROKEN (bug B4),
+  now FIXED (`d59a171`).** Before: drove the printer to `shutdown`; the app
+  still reported `online:true, state:"standby"` (it read only
+  `print_stats.state`) and **print-now dispatched anyway** (HTTP 200 "Uploaded
+  to the printer") while nothing printed. After: `moonraker_status()` reads
+  `webhooks.state` and exposes `ready`/`klippy_state`; a shutdown printer now
+  reports `ready:false` with an honest message, print-now refuses (409), and the
+  nav shows "Printer not ready" and hides Print. Re-verified on real hardware
+  (emergency_stop → 409 refusal → firmware_restart → ready).
 - **50 — stale gcode guard (59b4710) → HELD on real hardware.** Broke the stamp
   (edited model.stl without re-slicing) → print-now **409**
   "This gcode was sliced from a different model — slice the current one before
@@ -128,13 +128,11 @@ OpenSCAD **2021.01** · CuraEngine **Cura_SteamEngine 5.0.0** · OrcaSlicer **ab
 
 ---
 
-## BROKEN, ranked by likelihood × severity
-1. **B4 (test 49) — dispatches to a faulted/shutdown printer and reports success.**
-   High severity (dishonest success on a real fault), realistic trigger (any
-   printer error state). Root cause: status ignores `klippy_state`.
-2. **Test 48 — believes any HTTP-200 server is the printer** and reports a
-   successful "upload". Lower trigger likelihood (needs wrong IP / rogue 200),
-   same dishonest-success failure mode.
+## BROKEN → both now FIXED (`d59a171`)
+1. **B4 (test 49) — dispatched to a faulted/shutdown printer and reported
+   success.** FIXED: print-now now refuses unless `klippy_state == ready`.
+2. **Test 48 — believed any HTTP-200 server was the printer.** FIXED: status
+   query now requires the Moonraker `result.status` envelope.
 
 ## DEGRADED (worth fixing, not dangerous)
 - 63/64 WebGL context leak (add `forceContextLoss()` in `disposeViewer`).
