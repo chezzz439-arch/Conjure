@@ -2658,8 +2658,28 @@ def api_serve_stl() -> FileResponse:
 # doesn't depend on someone carrying a USB stick across the room. Fluidd is the
 # web UI the user knows it by; Moonraker is the HTTP API it sits on.
 # ---------------------------------------------------------------------------
+PRINTER_URL_SETTING_KEY = "moonraker_url"   # runtime IP/URL set from the UI
+
+
+def get_runtime_moonraker_url() -> str:
+    """The Moonraker base URL the user connected to from the printer setup UI,
+    if any. Stored in the DB so it survives restarts and beats the .env value."""
+    try:
+        return (db_get_setting(PRINTER_URL_SETTING_KEY) or "").strip()
+    except Exception:
+        return ""
+
+
 def moonraker_base() -> str | None:
-    """The printer's API root, or None when no printer has been configured."""
+    """The printer's API root, or None when no printer has been configured.
+
+    Priority: the URL set from the UI (any printer, by IP) > MOONRAKER_URL in
+    .env > PRINTER_IP:port in .env. The UI wins so a user can point the kiosk at
+    a different printer without editing files.
+    """
+    runtime = get_runtime_moonraker_url()
+    if runtime:
+        return runtime
     if MOONRAKER_URL:
         return MOONRAKER_URL
     if PRINTER_IP:
@@ -4242,7 +4262,85 @@ def api_printer_get() -> JSONResponse:
     return JSONResponse({"ok": True, "printer": sel,
                          "summary": _printer_summary(sel) if sel else None,
                          "catalog_error": cat["error"],
-                         "catalog_size": len(cat["printers"])})
+                         "catalog_size": len(cat["printers"]),
+                         # Current network connection, for the IP field in setup.
+                         "moonraker_url": moonraker_base() or "",
+                         "moonraker_user_set": bool(get_runtime_moonraker_url())})
+
+
+@app.post("/api/printer/connect")
+def api_printer_connect(body: dict | None = None) -> JSONResponse:
+    """Point the kiosk at a printer by IP (or host / full URL), so it works with
+    any Klipper/Moonraker machine — not just a hard-coded one. Probes the common
+    Moonraker locations (:7125 direct, and :80 behind a Fluidd/Mainsail nginx),
+    saves the one that answers, and reports the printer's state. Send
+    {"clear": true} to forget it and fall back to the .env value."""
+    body = body or {}
+    if body.get("clear"):
+        db_set_setting(PRINTER_URL_SETTING_KEY, None)
+        return JSONResponse({"ok": True, "connected": False,
+                             "message": "Printer connection cleared"})
+    raw = (body.get("ip") or body.get("host") or body.get("url") or "").strip().rstrip("/")
+    if not raw:
+        raise HTTPException(400, "Enter the printer's IP address")
+    if "://" in raw:
+        candidates = [raw]
+    elif ":" in raw:               # host:port supplied
+        candidates = [f"http://{raw}"]
+    else:
+        candidates = [f"http://{raw}:7125", f"http://{raw}"]   # direct, then nginx :80
+    tried = []
+    for base in candidates:
+        tried.append(base)
+        try:
+            r = requests.get(f"{base}/server/info", timeout=4)
+            if r.ok:
+                res = r.json().get("result")
+                if isinstance(res, dict) and "klippy_state" in res:
+                    db_set_setting(PRINTER_URL_SETTING_KEY, base)
+                    log.info("[Printer] connected via %s (klippy %s)",
+                             base, res.get("klippy_state"))
+                    return JSONResponse({"ok": True, "connected": True, "base": base,
+                                         "status": moonraker_status()})
+        except Exception:
+            continue
+    raise HTTPException(502, f"No Moonraker printer answered at {raw} (tried "
+                             f"{', '.join(tried)}). Check the IP, and that the "
+                             "printer is on and on this network.")
+
+
+@app.get("/api/print-info")
+def api_print_info() -> JSONResponse:
+    """Summary of the prepared print for the review screen — part size, the
+    slice settings, the gcode file size, and which printer it will go to.
+    Deliberately does not invent an estimated time/filament: CuraEngine's CLI
+    output carries neither, and a made-up number is worse than none."""
+    stl = OUTPUT_DIR / "model.stl"
+    gcode = OUTPUT_DIR / "model.gcode"
+    dims = _stl_extents_mm(stl) if stl.exists() else None
+    gsize = gcode.stat().st_size if gcode.exists() else 0
+    name = None
+    try:
+        sel = get_selected_printer()
+        if sel:
+            name = sel.get("name")
+    except Exception:
+        pass
+    st = moonraker_status()
+    return JSONResponse({
+        "ok": True,
+        "dims_mm": (dims or {}).get("dims_mm"),
+        "max_mm": (dims or {}).get("max_mm"),
+        "gcode_mb": round(gsize / (1024 * 1024), 2) if gsize else 0,
+        "gcode_ready": gsize > 0,
+        "layer_height_mm": 0.2,
+        "infill_pct": 15,
+        "supports": True,
+        "slicer": "CuraEngine 5.0",
+        "printer_name": name,
+        "printer_online": st.get("online", False),
+        "printer_ready": st.get("ready", False),
+    })
 
 
 @app.post("/api/printer/profile")

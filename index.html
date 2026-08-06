@@ -762,6 +762,36 @@
   .size-label span { color: var(--accent, #45d38a); font-weight: 600; }
   #size-slider { width: 100%; accent-color: var(--accent, #45d38a); height: 28px; cursor: pointer; }
 
+  /* Print summary card on the slice-ready screen */
+  .print-info {
+    width: 100%; margin: 4px 0 14px; padding: 14px 16px;
+    background: var(--glass-2, rgba(255,255,255,0.04));
+    border: 1px solid var(--border, #2a3a32); border-radius: var(--radius-md, 12px);
+  }
+  .print-info-head {
+    font-family: var(--font-ui, sans-serif); font-size: 13px; font-weight: 600;
+    color: var(--text-2, #b9cabf); text-transform: uppercase; letter-spacing: .04em;
+    margin-bottom: 10px;
+  }
+  .print-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+  .pi-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .pi-cell span { font-size: 12px; color: var(--text-3, #7f948a); }
+  .pi-cell b { font-size: 15px; color: var(--text-1, #eaf5ef); font-weight: 600; }
+
+  /* IP-connect row in the printer picker */
+  .pr-connect { padding: 12px 0 6px; border-bottom: 1px solid var(--border, #2a3a32); margin-bottom: 8px; }
+  .pr-connect-label { display: block; font-size: 12px; color: var(--text-2, #b9cabf); margin-bottom: 6px; }
+  .pr-connect-row { display: flex; gap: 8px; }
+  .pr-ip {
+    flex: 1 1 auto; min-width: 0; padding: 10px 12px; font-size: 15px;
+    background: var(--surface-2, #1b2c24); color: var(--text-1, #eaf5ef);
+    border: 1px solid var(--border, #2a3a32); border-radius: 8px; outline: none;
+  }
+  .pr-ip:focus { border-color: var(--accent, #45d38a); }
+  .pr-connect-status { font-size: 12.5px; margin-top: 7px; min-height: 16px; color: var(--text-3, #7f948a); }
+  .pr-connect-status.ok { color: var(--accent, #45d38a); }
+  .pr-connect-status.err { color: #ff8a7a; }
+
   .speak-actions {
     display: flex;
     align-items: center;
@@ -2725,10 +2755,22 @@
         <span id="usb-ready-sub">Remove the drive and insert it into your printer</span>
       </div>
     </div>
+    <!-- What the user is about to print — size, slice settings, file. -->
+    <div id="print-info" class="print-info" style="display:none;">
+      <div class="print-info-head">Print summary</div>
+      <div class="print-info-grid">
+        <div class="pi-cell"><span>Size (W×D×H)</span><b id="pi-size">—</b></div>
+        <div class="pi-cell"><span>Layer height</span><b id="pi-layer">0.2 mm</b></div>
+        <div class="pi-cell"><span>Infill</span><b id="pi-infill">15%</b></div>
+        <div class="pi-cell"><span>Supports</span><b id="pi-supports">Auto</b></div>
+        <div class="pi-cell"><span>Print file</span><b id="pi-file">—</b></div>
+        <div class="pi-cell"><span>Sliced by</span><b id="pi-slicer">CuraEngine</b></div>
+      </div>
+    </div>
     <!-- Sending straight to the printer is the fast path, so it outranks the
          download; both stay visible because the printer can be off. -->
     <button id="btn-print-now" class="btn-primary" onclick="printNow()" style="display:none;width:100%;margin-bottom:10px;" title="Send this file to the printer over the network and start it">
-      🖨 Print on my Neptune 4 Plus
+      🖨 Send to printer
     </button>
     <div id="printer-state" class="usb-ready" style="display:none;margin-bottom:10px;">
       <div class="usb-ready-icon" id="printer-state-icon">•</div>
@@ -2927,6 +2969,17 @@
     <div class="param-head">
       <span class="param-title" id="pr-title">Your printer</span>
       <button class="param-close" onclick="closePrinterPicker()" aria-label="Close printer picker">&times;</button>
+    </div>
+
+    <div class="pr-connect">
+      <label class="pr-connect-label" for="pr-ip">Connect to your printer over Wi-Fi (Klipper / Moonraker — any brand)</label>
+      <div class="pr-connect-row">
+        <input class="pr-ip" id="pr-ip" type="text" inputmode="decimal" autocomplete="off"
+               placeholder="Printer IP — e.g. 192.168.1.50" aria-label="Printer IP address"
+               onfocus="oskShow('pr-ip')">
+        <button class="param-apply" id="pr-connect-btn" onclick="connectPrinter()">Connect</button>
+      </div>
+      <div class="pr-connect-status" id="pr-connect-status"></div>
     </div>
 
     <div class="pr-search-wrap">
@@ -3434,7 +3487,9 @@ function resetSliceSteps() {
     if (el) el.style.display = 'none';
   });
   const pn = document.getElementById('btn-print-now');
-  if (pn) { pn.disabled = false; pn.innerHTML = '🖨 Print on my Neptune 4 Plus'; }
+  if (pn) { pn.disabled = false; pn.innerHTML = '🖨 Send to printer'; }
+  const info = document.getElementById('print-info');
+  if (info) info.style.display = 'none';
   stopPrinterPolling();
   const cancel = document.getElementById('btn-cancel-slice');
   if (cancel) cancel.style.display = 'inline-flex';
@@ -3846,6 +3901,27 @@ async function handlePrint() {
     });
 }
 
+let printerName = 'your printer';   // filled from the connected/selected printer
+
+async function renderPrintInfo() {
+  const card = document.getElementById('print-info');
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  try {
+    const d = await (await fetch('/api/print-info')).json();
+    if (!d || !d.ok) { if (card) card.style.display = 'none'; return; }
+    set('pi-size', d.dims_mm ? d.dims_mm.map(x => Math.round(x)).join(' × ') + ' mm' : '—');
+    set('pi-layer', (d.layer_height_mm ?? 0.2) + ' mm');
+    set('pi-infill', (d.infill_pct ?? 15) + '%');
+    set('pi-supports', d.supports ? 'Auto — added where needed' : 'Off');
+    set('pi-file', d.gcode_mb ? d.gcode_mb + ' MB' : '—');
+    set('pi-slicer', d.slicer || 'CuraEngine');
+    if (card) card.style.display = 'block';
+    printerName = d.printer_name || 'your printer';
+    const pn = document.getElementById('btn-print-now');
+    if (pn) pn.innerHTML = '🖨 Print on ' + escapeHtml(printerName);
+  } catch { if (card) card.style.display = 'none'; }
+}
+
 function showUsbReady(usedUsb) {
   const usb = document.getElementById('usb-ready-msg');
   if (usb) usb.style.display = 'flex';
@@ -3854,7 +3930,8 @@ function showUsbReady(usedUsb) {
   if (title) title.textContent = usedUsb ? 'USB ready' : 'Print file ready';
   if (sub) sub.textContent = usedUsb
     ? 'Remove the drive and insert it into your printer'
-    : 'Download it below, then load it on your Neptune 4 Plus';
+    : 'Download it below, or send it to the printer';
+  renderPrintInfo();
   // Offered either way — with a USB the download is still the easier route if
   // the stick is going back into a laptop.
   const dl = document.getElementById('btn-download-gcode');
@@ -3865,6 +3942,34 @@ function showUsbReady(usedUsb) {
   const cancel = document.getElementById('btn-cancel-slice');
   if (cancel) cancel.style.display = 'none';
   refreshPrinter();
+}
+
+/* Connect to any Klipper/Moonraker printer by IP. The backend probes :7125 and
+   :80 (Fluidd/Mainsail nginx) and saves whichever answers. */
+async function connectPrinter() {
+  const ipEl = document.getElementById('pr-ip');
+  const status = document.getElementById('pr-connect-status');
+  const btn = document.getElementById('pr-connect-btn');
+  const ip = (ipEl && ipEl.value || '').trim();
+  const say = (msg, cls) => { if (status) { status.textContent = msg; status.className = 'pr-connect-status ' + (cls || ''); } };
+  if (!ip) { say('Enter the printer’s IP address.', 'err'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  try {
+    const r = await fetch('/api/printer/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ('Could not connect (error ' + r.status + ')'));
+    const st = d.status || {};
+    const stateWord = st.ready ? 'ready to print' : (st.klippy_state ? 'reachable (' + st.klippy_state + ')' : 'reachable');
+    say('✓ Connected — printer ' + stateWord + '  ·  ' + d.base, 'ok');
+    if (typeof refreshPrinter === 'function') refreshPrinter();
+  } catch (e) {
+    say('✗ ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+  }
 }
 
 /* ════════ PRINT OVER THE NETWORK (Moonraker / Fluidd) ════════ */
@@ -5181,6 +5286,17 @@ function openPrinterPicker() {
   if (box) box.value = '';
   setPrinterStatus('', '');
   loadPrinters('');
+  // Show the currently-connected printer IP (if any) in the connect field.
+  const cs = document.getElementById('pr-connect-status');
+  if (cs) { cs.textContent = ''; cs.className = 'pr-connect-status'; }
+  fetch('/api/printer/profile').then(r => r.json()).then(j => {
+    const ipEl = document.getElementById('pr-ip');
+    if (ipEl && j.moonraker_url) {
+      // strip scheme + default port for a clean host in the field
+      ipEl.value = j.moonraker_url.replace(/^https?:\/\//, '').replace(/:80$/, '');
+      if (cs && j.moonraker_user_set) { cs.textContent = 'Currently connected to ' + j.moonraker_url; cs.className = 'pr-connect-status ok'; }
+    }
+  }).catch(() => {});
   // Not on touch: focusing a text field pops the on-screen keyboard over the
   // list the user came here to browse.
   if (box && !matchMedia('(pointer: coarse)').matches) box.focus();
