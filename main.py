@@ -2339,6 +2339,23 @@ async def run_slicing() -> None:
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
                 "-s", "infill_sparse_density=15",
+                # Efficient-but-safe speeds for the Neptune 4 Plus — a Klipper
+                # machine with input shaping (Elegoo default 250 mm/s, up to
+                # 12000 mm/s^2). CuraEngine's own defaults printed outer walls at
+                # ~30 mm/s (a ~1h51m benchy); this is 2-4x faster. Outer walls stay
+                # slower than infill for surface quality, and the first layer is
+                # slow for bed adhesion.
+                "-s", "speed_print=200",
+                "-s", "speed_infill=200",
+                "-s", "speed_wall_0=120",     # outer wall — quality-critical
+                "-s", "speed_wall_x=200",     # inner walls
+                "-s", "speed_topbottom=130",
+                "-s", "speed_travel=350",
+                "-s", "speed_layer_0=30",      # slow first layer for adhesion
+                "-s", "skirt_brim_speed=30",
+                "-s", "acceleration_enabled=true",
+                "-s", "acceleration_print=5000",
+                "-s", "acceleration_travel=6000",
                 *_support_flags(),
             ]
             proc = None
@@ -4391,7 +4408,9 @@ def api_print_info() -> JSONResponse:
         "max_mm": (dims or {}).get("max_mm"),
         "gcode_mb": round(gsize / (1024 * 1024), 2) if gsize else 0,
         "gcode_ready": gsize > 0,
-        "est_time_s": _gcode_time_s(gcode) if gsize else None,
+        # No time estimate: CuraEngine's CLI writes a fixed placeholder ;TIME
+        # (same value with or without supports), so any number here would be a
+        # lie. The printer shows the real remaining time once it's running.
         "layer_height_mm": 0.2,
         "infill_pct": 15,
         "supports": slice_prefs.get("supports", "auto"),

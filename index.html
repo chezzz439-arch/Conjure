@@ -2820,7 +2820,6 @@
         <div class="pi-cell"><span>Layer height</span><b id="pi-layer">0.2 mm</b></div>
         <div class="pi-cell"><span>Infill</span><b id="pi-infill">15%</b></div>
         <div class="pi-cell"><span>Supports</span><b id="pi-supports">Auto</b></div>
-        <div class="pi-cell"><span>Est. print time</span><b id="pi-time">—</b></div>
         <div class="pi-cell"><span>Print file</span><b id="pi-file">—</b></div>
         <div class="pi-cell"><span>Sliced by</span><b id="pi-slicer">CuraEngine</b></div>
       </div>
@@ -3985,8 +3984,6 @@ async function renderPrintInfo() {
     set('pi-layer', (d.layer_height_mm ?? 0.2) + ' mm');
     set('pi-infill', (d.infill_pct ?? 15) + '%');
     set('pi-supports', ({ auto: 'Auto — where needed', on: 'On — everywhere', off: 'Off' })[d.supports] || 'Auto');
-    const t = d.est_time_s;
-    set('pi-time', t ? (t >= 3600 ? Math.floor(t / 3600) + 'h ' + Math.round((t % 3600) / 60) + 'm' : Math.max(1, Math.round(t / 60)) + ' min') : '—');
     set('pi-file', d.gcode_mb ? d.gcode_mb + ' MB' : '—');
     set('pi-slicer', d.slicer || 'CuraEngine');
     if (card) card.style.display = 'block';
