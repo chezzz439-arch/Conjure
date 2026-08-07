@@ -2200,6 +2200,79 @@ class SupportRequest(BaseModel):
     supports: str  # auto | off | on
 
 
+def _slice_printer_ctx() -> dict:
+    """Query the CONNECTED printer once so slicing adapts to it — its speed and
+    acceleration limits and its saved bed-mesh profile. Every field is None on
+    failure, and slicing falls back to safe defaults / the profile's start gcode.
+    This is what makes the tuning work on *any* Klipper/Moonraker printer, not
+    just the Neptune 4 Plus."""
+    ctx = {"vmax": None, "amax": None, "mesh": None, "reached": False}
+    base = moonraker_base()
+    if not base:
+        return ctx
+    try:
+        r = requests.get(f"{base}/printer/objects/query?toolhead&configfile", timeout=4)
+        r.raise_for_status()
+        st = r.json()["result"]["status"]
+        th = st.get("toolhead", {})
+        ctx["vmax"] = th.get("max_velocity")
+        ctx["amax"] = th.get("max_accel")
+        cfg = st.get("configfile", {}).get("config", {})
+        profs = [k.split(None, 1)[1] for k in cfg if k.startswith("bed_mesh ")]
+        if profs:
+            ctx["mesh"] = "default" if "default" in profs else profs[0]
+        ctx["reached"] = True
+    except Exception as e:
+        log.info("[Slice] printer tuning query failed (%s); using defaults", e)
+    return ctx
+
+
+def _speed_flags(ctx: dict) -> list[str]:
+    """Efficient-but-safe speeds, each capped to the connected printer's own
+    max_velocity / max_accel — so a fast machine gets the full profile and a slow
+    one never gets a reckless feedrate. Targets favour quality: outer walls
+    slower than infill, first layer slow for adhesion."""
+    targets = {"print": 200, "infill": 200, "wall_0": 120, "wall_x": 200,
+               "topbottom": 130, "travel": 350, "layer_0": 30}
+    vmax = ctx.get("vmax")
+    if vmax:
+        cap = int(vmax)
+        targets = {k: min(v, cap) for k, v in targets.items()}
+    accel = min(5000, int(ctx["amax"])) if ctx.get("amax") else 5000
+    flags: list[str] = []
+    for k, v in targets.items():
+        flags += ["-s", f"speed_{k}={v}"]
+    flags += ["-s", f"skirt_brim_speed={min(30, targets['layer_0'])}",
+              "-s", "acceleration_enabled=true",
+              "-s", f"acceleration_print={accel}",
+              "-s", f"acceleration_travel={accel}"]
+    return flags
+
+
+def _apply_printer_bed_mesh(gcode_path: Path, ctx: dict) -> None:
+    """Point the start-gcode's mesh-load at the CONNECTED printer's saved mesh
+    (prefer one named 'default', else the first saved), or drop the line if the
+    printer has none. Left untouched if the printer couldn't be queried, so an
+    offline slice keeps the profile's default rather than an erroring command."""
+    if not ctx.get("reached"):
+        return
+    try:
+        text = gcode_path.read_text()
+    except OSError:
+        return
+    mesh = ctx.get("mesh")
+    if mesh:
+        new = re.sub(r"^BED_MESH_PROFILE LOAD=\S+",
+                     f"BED_MESH_PROFILE LOAD={mesh}", text, count=1, flags=re.M)
+    else:
+        new = re.sub(r"^BED_MESH_PROFILE LOAD=\S+\s*\n", "", text, count=1, flags=re.M)
+    if new != text:
+        try:
+            gcode_path.write_text(new)
+        except OSError as e:
+            log.warning("[Slice] could not rewrite bed-mesh line: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # Slicing background task
 # ---------------------------------------------------------------------------
@@ -2240,6 +2313,10 @@ async def run_slicing() -> None:
                 await push_event("slice", "active", "Oriented for minimal support", 15)
         except Exception as e:
             log.warning("[Slice] auto-orient skipped: %s", e)
+
+        # Adapt speeds/mesh to whatever printer is connected (capped to its
+        # limits), so the slice is safe on any machine, not just the default.
+        printer_ctx = await asyncio.to_thread(_slice_printer_ctx)
 
         sliced = False
 
@@ -2339,23 +2416,10 @@ async def run_slicing() -> None:
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
                 "-s", "infill_sparse_density=15",
-                # Efficient-but-safe speeds for the Neptune 4 Plus — a Klipper
-                # machine with input shaping (Elegoo default 250 mm/s, up to
-                # 12000 mm/s^2). CuraEngine's own defaults printed outer walls at
-                # ~30 mm/s (a ~1h51m benchy); this is 2-4x faster. Outer walls stay
-                # slower than infill for surface quality, and the first layer is
-                # slow for bed adhesion.
-                "-s", "speed_print=200",
-                "-s", "speed_infill=200",
-                "-s", "speed_wall_0=120",     # outer wall — quality-critical
-                "-s", "speed_wall_x=200",     # inner walls
-                "-s", "speed_topbottom=130",
-                "-s", "speed_travel=350",
-                "-s", "speed_layer_0=30",      # slow first layer for adhesion
-                "-s", "skirt_brim_speed=30",
-                "-s", "acceleration_enabled=true",
-                "-s", "acceleration_print=5000",
-                "-s", "acceleration_travel=6000",
+                # Speeds/accel adapted to the connected printer (capped to its own
+                # limits) — see _speed_flags(). CuraEngine's defaults crawled at
+                # ~30 mm/s outer walls; this is 2-4x faster where the machine allows.
+                *_speed_flags(printer_ctx),
                 *_support_flags(),
             ]
             proc = None
@@ -2393,6 +2457,10 @@ async def run_slicing() -> None:
 
         if not sliced:
             raise Exception("All slicers failed")
+
+        # Retarget the start-gcode's bed-mesh load to the connected printer's own
+        # saved mesh (or drop it if it has none) — no hard-coded profile name.
+        await asyncio.to_thread(_apply_printer_bed_mesh, gcode_path, printer_ctx)
 
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
