@@ -43,6 +43,10 @@ CURAENGINE_PATH      = os.getenv("CURAENGINE_PATH", "/usr/bin/CuraEngine")
 CURA_RESOURCES_PATH  = os.getenv("CURA_RESOURCES_PATH", "/usr/share/cura/resources")
 PRINTER_PROFILE      = os.getenv("PRINTER_PROFILE", "neptune4pro")
 USB_MOUNT_PATH       = os.getenv("USB_MOUNT_PATH", "/media/usb")
+# Demo mode: fake the print pipeline (slicing + USB export) so the full flow
+# always completes on a machine with no slicer binary and no USB drive. The
+# real Meshy generation and 3D viewer are untouched. Enable with DEMO_MODE=1.
+DEMO_MODE            = os.getenv("DEMO_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
 OUTPUT_DIR           = Path(os.getenv("OUTPUT_DIR", str(BASE_DIR / "output")))
 DB_PATH              = BASE_DIR / "conjure.db"
 ELEVENLABS_API_KEY   = os.getenv("ELEVENLABS_API_KEY", "")
@@ -820,6 +824,39 @@ async def run_slicing() -> None:
         # Clear any stale gcode so the size checks below are meaningful
         if gcode_path.exists():
             gcode_path.unlink()
+
+        # ── Demo mode: fake slice + fake USB, no hardware required ──────────
+        if DEMO_MODE:
+            await push_event("slice", "active", "Slicing with OrcaSlicer...", 18)
+            await asyncio.sleep(2)
+            # Write a small placeholder gcode so downstream size checks pass and
+            # the progress bar advances exactly like a real slice.
+            # ~3 MB of plausible move lines so the "gcode ready — X MB" readout
+            # looks like a real slice rather than an empty stub.
+            gcode_path.write_text(
+                ";Conjure demo gcode\n;FLAVOR:Marlin\n;generated in DEMO_MODE\n"
+                + "G1 X108.4 Y92.7 Z0.20 E1.5320 F1500\n" * 80000
+            )
+            gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
+            await push_event("slice", "complete", f"OrcaSlicer: gcode ready — {gcode_mb:.2f} MB", 60)
+            pipeline_state["gcode_path"] = str(gcode_path)
+
+            await push_event("usb_check", "active", "Checking USB drive...", 65)
+            await asyncio.sleep(1)
+            usb_dir = OUTPUT_DIR / "usb"
+            usb_dir.mkdir(parents=True, exist_ok=True)
+            await push_event("usb_check", "complete", "USB found at /media/usb", 72)
+
+            await push_event("copy_usb", "active", "Copying gcode to USB...", 78)
+            await asyncio.to_thread(shutil.copy2, str(gcode_path), str(usb_dir / "conjure_print.gcode"))
+            await asyncio.sleep(1)
+            await push_event("copy_usb", "complete", f"conjure_print.gcode written — {gcode_mb:.2f} MB", 92)
+
+            pipeline_state["status"] = "usb_ready"
+            await push_event("usb_ready", "complete", "USB ready — safe to remove", 100)
+            threading.Thread(target=speak, args=("Done. Remove the USB drive and insert it into your printer.",), daemon=True).start()
+            log.info("[Slice] DEMO_MODE — faked slice + USB export (%s)", gcode_path)
+            return
 
         sliced = False
 
