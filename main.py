@@ -2188,12 +2188,16 @@ def _support_flags() -> list[str]:
     mode = slice_prefs.get("supports", "auto")
     if mode == "off":
         return ["-s", "support_enable=false"]
+    # Make support easy to remove ("not too strong"): a 0.2 mm gap above and
+    # below so it peels off instead of fusing to the part, extra XY clearance,
+    # and a sparse (10%) support infill so there's less to snap away.
+    common = ["-s", "support_enable=true", "-s", "support_structure=normal",
+              "-s", "support_top_distance=0.2", "-s", "support_bottom_distance=0.2",
+              "-s", "support_xy_distance=0.8", "-s", "support_infill_rate=10"]
     if mode == "on":
-        return ["-s", "support_enable=true", "-s", "support_angle=45",
-                "-s", "support_structure=normal", "-s", "support_type=everywhere"]
-    # auto — from the buildplate only, a less trigger-happy angle than before.
-    return ["-s", "support_enable=true", "-s", "support_angle=55",
-            "-s", "support_structure=normal", "-s", "support_type=buildplate"]
+        return common + ["-s", "support_angle=45", "-s", "support_type=everywhere"]
+    # auto — from the buildplate only, a less trigger-happy angle.
+    return common + ["-s", "support_angle=55", "-s", "support_type=buildplate"]
 
 
 class SupportRequest(BaseModel):
@@ -4542,9 +4546,9 @@ def api_print_info() -> JSONResponse:
         "max_mm": (dims or {}).get("max_mm"),
         "gcode_mb": round(gsize / (1024 * 1024), 2) if gsize else 0,
         "gcode_ready": gsize > 0,
-        # No time estimate: CuraEngine's CLI writes a fixed placeholder ;TIME
-        # (same value with or without supports), so any number here would be a
-        # lie. The printer shows the real remaining time once it's running.
+        # Real estimate now — run_slicing rewrites CuraEngine's placeholder ;TIME
+        # with a computed one, so reading ;TIME back gives a genuine number.
+        "est_time_s": _gcode_time_s(gcode) if gsize else None,
         "layer_height_mm": 0.2,
         "infill_pct": 15,
         "supports": slice_prefs.get("supports", "auto"),
