@@ -2206,7 +2206,7 @@ def _slice_printer_ctx() -> dict:
     failure, and slicing falls back to safe defaults / the profile's start gcode.
     This is what makes the tuning work on *any* Klipper/Moonraker printer, not
     just the Neptune 4 Plus."""
-    ctx = {"vmax": None, "amax": None, "mesh": None, "reached": False}
+    ctx = {"vmax": None, "amax": None, "mesh": None, "filament": None, "reached": False}
     base = moonraker_base()
     if not base:
         return ctx
@@ -2218,6 +2218,12 @@ def _slice_printer_ctx() -> dict:
         ctx["vmax"] = th.get("max_velocity")
         ctx["amax"] = th.get("max_accel")
         cfg = st.get("configfile", {}).get("config", {})
+        # Real filament diameter — CuraEngine's extruder defaults to 2.85 (old
+        # Ultimaker), which massively under-extrudes on a 1.75 mm machine.
+        try:
+            ctx["filament"] = float(cfg.get("extruder", {}).get("filament_diameter"))
+        except (TypeError, ValueError):
+            pass
         profs = [k.split(None, 1)[1] for k in cfg if k.startswith("bed_mesh ")]
         if profs:
             ctx["mesh"] = "default" if "default" in profs else profs[0]
@@ -2461,10 +2467,14 @@ async def run_slicing() -> None:
         if not sliced:
             if gcode_path.exists():
                 gcode_path.unlink()
+            filament = printer_ctx.get("filament") or 1.75
             cura_cmd = [
                 cura_path, "slice",
                 "-j", str(cura_profile),
                 "-e0",
+                # EXTRUDER settings must come right after -e0 (before -l), or the
+                # extruder keeps its 2.85 default and the whole print under-extrudes.
+                "-s", f"material_diameter={filament}",
                 "-l", str(slice_stl),
                 "-o", str(gcode_path),
                 "-s", "layer_height=0.2",
