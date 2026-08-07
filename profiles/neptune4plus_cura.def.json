@@ -59,7 +59,7 @@
       "default_value": 3000
     },
     "machine_start_gcode": {
-      "default_value": "M140 S60\nM104 S215\nG28\nG29\nM190 S60\nM109 S215\nG92 E0\nG1 Z5 F3000"
+      "default_value": "M140 S60\nM104 S215\nG28\nG29\nM190 S60\nM109 S215\nG92 E0\nG1 Z5 F3000\n; prime line across the front of the bed\nG92 E0\nG1 Z0.3 F1500\nG1 X15 Y4 F5000\nG1 X250 Y4 Z0.3 E20 F1200\nG1 X250 Y4.8 Z0.3 F5000\nG1 X20 Y4.8 Z0.3 E40 F1200\nG92 E0\nG1 Z3 F3000"
     },
     "machine_end_gcode": {
       "default_value": "M104 S0\nM140 S0\nG91\nG1 Z10 F3000\nG90\nG1 X0 Y220 F6000\nM84"
