@@ -2233,7 +2233,7 @@ def _speed_flags(ctx: dict) -> list[str]:
     one never gets a reckless feedrate. Targets favour quality: outer walls
     slower than infill, first layer slow for adhesion."""
     targets = {"print": 200, "infill": 200, "wall_0": 120, "wall_x": 200,
-               "topbottom": 130, "travel": 350, "layer_0": 30}
+               "topbottom": 130, "travel": 350, "layer_0": 20}   # slow 1st layer for adhesion
     vmax = ctx.get("vmax")
     if vmax:
         cap = int(vmax)
@@ -2242,10 +2242,16 @@ def _speed_flags(ctx: dict) -> list[str]:
     flags: list[str] = []
     for k, v in targets.items():
         flags += ["-s", f"speed_{k}={v}"]
-    flags += ["-s", f"skirt_brim_speed={min(30, targets['layer_0'])}",
+    # speed_layer_0 alone doesn't slow the first layer — the profile pins
+    # speed_print_layer_0 (the actual first-layer PRINT speed) at 30, so set it
+    # explicitly. Also slow the first-layer accel for adhesion.
+    flags += ["-s", f"speed_print_layer_0={targets['layer_0']}",
+              "-s", f"speed_travel_layer_0={min(100, int(targets['travel']))}",
+              "-s", f"skirt_brim_speed={min(20, targets['layer_0'])}",
               "-s", "acceleration_enabled=true",
               "-s", f"acceleration_print={accel}",
-              "-s", f"acceleration_travel={accel}"]
+              "-s", f"acceleration_travel={accel}",
+              "-s", f"acceleration_print_layer_0={min(1500, accel)}"]
     return flags
 
 
@@ -2271,6 +2277,53 @@ def _apply_printer_bed_mesh(gcode_path: Path, ctx: dict) -> None:
             gcode_path.write_text(new)
         except OSError as e:
             log.warning("[Slice] could not rewrite bed-mesh line: %s", e)
+
+
+def _rewrite_gcode_time(gcode_path: Path, max_accel: float = 3000.0) -> None:
+    """CuraEngine's CLI writes a fixed placeholder ;TIME (always 6666), which the
+    printer then displays. Replace it with a real estimate: a per-move
+    accel-limited (trapezoidal) time model summed over the toolpath, using the
+    printer's own max_accel. Organic Meshy meshes are all tiny segments, so the
+    accel model — not top speed — is what makes this realistic."""
+    try:
+        a = float(max_accel) or 3000.0
+        text = gcode_path.read_text()
+        x = y = z = 0.0
+        feed = 20.0                 # mm/s, current feedrate
+        secs = 0.0
+        for ln in text.splitlines():
+            code = ln[:3]
+            if code not in ("G0 ", "G1 "):
+                continue
+            s = ln.split(";", 1)[0]
+            nx, ny, nz, nfeed = x, y, z, feed
+            for tok in s.split()[1:]:
+                try:
+                    v = float(tok[1:])
+                except (ValueError, IndexError):
+                    continue
+                c = tok[0]
+                if c == "X": nx = v
+                elif c == "Y": ny = v
+                elif c == "Z": nz = v
+                elif c == "F": nfeed = v / 60.0
+            d = ((nx - x) ** 2 + (ny - y) ** 2 + (nz - z) ** 2) ** 0.5
+            if d > 0 and nfeed > 0:
+                d_acc = nfeed * nfeed / (2 * a)     # distance to reach top speed
+                if 2 * d_acc <= d:                  # trapezoid: accel, cruise, decel
+                    secs += 2 * (nfeed / a) + (d - 2 * d_acc) / nfeed
+                else:                               # triangle: never reaches top speed
+                    secs += 2 * (d / a) ** 0.5
+            x, y, z, feed = nx, ny, nz, nfeed
+        secs = int(secs * 0.82)     # lookahead/junction: real printers don't fully stop at each vertex
+        if re.search(r"^;TIME:\d+", text, flags=re.M):
+            text = re.sub(r"^;TIME:\d+", f";TIME:{secs}", text, count=1, flags=re.M)
+        else:
+            text = f";TIME:{secs}\n" + text
+        gcode_path.write_text(text)
+        log.info("[Slice] print-time estimate: %d s (%d min)", secs, secs // 60)
+    except Exception as e:
+        log.warning("[Slice] time estimate failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -2461,6 +2514,9 @@ async def run_slicing() -> None:
         # Retarget the start-gcode's bed-mesh load to the connected printer's own
         # saved mesh (or drop it if it has none) — no hard-coded profile name.
         await asyncio.to_thread(_apply_printer_bed_mesh, gcode_path, printer_ctx)
+        # Replace CuraEngine's placeholder ;TIME with a real estimate.
+        await asyncio.to_thread(_rewrite_gcode_time, gcode_path,
+                                printer_ctx.get("amax") or 3000.0)
 
         gcode_mb = gcode_path.stat().st_size / (1024 * 1024)
         pipeline_state["gcode_path"] = str(gcode_path)
