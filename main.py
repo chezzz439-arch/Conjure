@@ -19,11 +19,13 @@ import requests
 import aiofiles
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi import FastAPI, BackgroundTasks, HTTPException, UploadFile, File, Request, Response, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 from supabase import create_client, Client
+
+from cloud import AUTH_COOKIE, COOKIE_MAX_AGE, build_cloud_store
 
 # ---------------------------------------------------------------------------
 # Config
@@ -56,6 +58,15 @@ ELEVENLABS_VOICE_ID  = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY    = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_BUCKET      = os.getenv("SUPABASE_BUCKET", "conjure-models")
+INSFORGE_BUCKET      = os.getenv("INSFORGE_STORAGE_BUCKET_CONJURE", "conjure-models")
+
+cloud = build_cloud_store(
+    base_url=INSFORGE_BASE_URL,
+    api_key=INSFORGE_API_KEY,
+    bucket=INSFORGE_BUCKET,
+    db_path=DB_PATH,
+    output_dir=OUTPUT_DIR,
+)
 
 # ── Engineer-mode config (research + parametric CAD pipeline) ──────────────
 # CURAENGINE_PATH and CURA_RESOURCES_PATH are already defined above.
@@ -78,18 +89,65 @@ MOONRAKER_TIMEOUT    = float(os.getenv("MOONRAKER_TIMEOUT", "20"))
 # instead: the browser records the mic and POSTs the clip to /api/transcribe,
 # which runs it through whisper.cpp. whisper-server keeps the model resident so
 # each utterance is fast; whisper-cli is the cold fallback if the server is down.
+# On a Mac/dev box, Homebrew's whisper-cli / whisper-server on PATH are used when
+# WHISPER_DIR's build/bin layout is missing. ElevenLabs Scribe is a last resort
+# when ELEVENLABS_API_KEY has speech_to_text permission.
 WHISPER_DIR        = Path(os.getenv("WHISPER_DIR", "/home/watcher/whisper.cpp"))
 # base.en is the kiosk default: ~2-3x faster than small.en on this ARM CPU with
 # near-identical accuracy on short spoken prompts. Set WHISPER_MODEL to the
 # ggml-small.en.bin path if you want maximum accuracy at the cost of latency.
-WHISPER_MODEL      = os.getenv("WHISPER_MODEL", str(WHISPER_DIR / "models" / "ggml-base.en.bin"))
+_DEFAULT_WHISPER_MODEL = WHISPER_DIR / "models" / "ggml-base.en.bin"
+_REPO_WHISPER_MODEL    = BASE_DIR / "models" / "ggml-base.en.bin"
+WHISPER_MODEL      = os.getenv(
+    "WHISPER_MODEL",
+    str(_DEFAULT_WHISPER_MODEL if _DEFAULT_WHISPER_MODEL.exists() else _REPO_WHISPER_MODEL),
+)
 WHISPER_HOST       = os.getenv("WHISPER_HOST", "127.0.0.1")
 WHISPER_PORT       = int(os.getenv("WHISPER_PORT", "8181"))
 WHISPER_THREADS    = os.getenv("WHISPER_THREADS", str(os.cpu_count() or 4))
-FFMPEG_PATH        = os.getenv("FFMPEG_PATH", "/usr/bin/ffmpeg")
+
+
+def _resolve_bin(name: str, *candidates: str | Path) -> Path:
+    """Resolve a binary: existing env/path candidate → PATH → listed fallbacks."""
+    for c in candidates:
+        if not c:
+            continue
+        p = Path(c)
+        if p.is_file():
+            return p
+    found = shutil.which(name)
+    if found:
+        return Path(found)
+    return Path(candidates[0]) if candidates else Path(name)
+
+
+def _resolve_ffmpeg() -> str:
+    """Find ffmpeg: env override → PATH → common install locations."""
+    return str(_resolve_bin(
+        "ffmpeg",
+        os.getenv("FFMPEG_PATH", "").strip(),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ))
+
+
+FFMPEG_PATH        = _resolve_ffmpeg()
 _WHISPER_BIN_DIR   = WHISPER_DIR / "build" / "bin"
-WHISPER_SERVER_BIN = _WHISPER_BIN_DIR / "whisper-server"
-WHISPER_CLI_BIN    = _WHISPER_BIN_DIR / "whisper-cli"
+WHISPER_SERVER_BIN = _resolve_bin(
+    "whisper-server",
+    os.getenv("WHISPER_SERVER_BIN", "").strip(),
+    _WHISPER_BIN_DIR / "whisper-server",
+    "/opt/homebrew/bin/whisper-server",
+    "/usr/local/bin/whisper-server",
+)
+WHISPER_CLI_BIN    = _resolve_bin(
+    "whisper-cli",
+    os.getenv("WHISPER_CLI_BIN", "").strip(),
+    _WHISPER_BIN_DIR / "whisper-cli",
+    "/opt/homebrew/bin/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+)
 WHISPER_URL        = f"http://{WHISPER_HOST}:{WHISPER_PORT}/inference"
 
 _whisper_proc = None
@@ -108,12 +166,14 @@ def ensure_whisper_server() -> bool:
     True when the server answers. Best-effort: /api/transcribe falls back to
     whisper-cli if this never comes up, so a failure here is not fatal."""
     global _whisper_proc
-    if not WHISPER_SERVER_BIN.exists():
+    if not WHISPER_SERVER_BIN.is_file() or not Path(WHISPER_MODEL).is_file():
         return False
     with _whisper_lock:
         if _whisper_proc and _whisper_proc.poll() is None:
             return _whisper_server_healthy()
-        env = dict(os.environ, LD_LIBRARY_PATH=str(_WHISPER_BIN_DIR))
+        # Prefer the binary's own directory (kiosk build/bin); Homebrew puts
+        # dylibs on the normal loader path so this is harmless either way.
+        env = dict(os.environ, LD_LIBRARY_PATH=str(WHISPER_SERVER_BIN.parent))
         try:
             _whisper_proc = subprocess.Popen(
                 [str(WHISPER_SERVER_BIN), "-m", WHISPER_MODEL,
@@ -174,13 +234,50 @@ def _transcribe_via_server(wav_path: str) -> str | None:
 
 
 def _transcribe_via_cli(wav_path: str) -> str:
-    env = dict(os.environ, LD_LIBRARY_PATH=str(_WHISPER_BIN_DIR))
+    if not WHISPER_CLI_BIN.is_file():
+        raise FileNotFoundError(f"whisper-cli not found at {WHISPER_CLI_BIN}")
+    if not Path(WHISPER_MODEL).is_file():
+        raise FileNotFoundError(f"whisper model not found at {WHISPER_MODEL}")
+    env = dict(os.environ, LD_LIBRARY_PATH=str(WHISPER_CLI_BIN.parent))
     out = subprocess.run(
         [str(WHISPER_CLI_BIN), "-m", WHISPER_MODEL, "-f", wav_path,
          "-nt", "-np", "-l", "en", "-t", str(WHISPER_THREADS)],
         capture_output=True, text=True, env=env, timeout=120,
     )
     return out.stdout.strip()
+
+
+def _transcribe_via_elevenlabs(src_path: str, content_type: str | None = None) -> str | None:
+    """Cloud STT fallback (ElevenLabs Scribe) when whisper.cpp is not installed.
+    Accepts the browser's original clip (webm/ogg/mp4) — no ffmpeg required."""
+    if not ELEVENLABS_API_KEY:
+        return None
+    mime = (content_type or "application/octet-stream").split(";")[0].strip() or "application/octet-stream"
+    # Map browser MediaRecorder types to a filename extension Scribe recognises.
+    ext = {
+        "audio/webm": "webm",
+        "audio/ogg": "ogg",
+        "audio/mp4": "m4a",
+        "audio/mpeg": "mp3",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+    }.get(mime, "webm")
+    try:
+        with open(src_path, "rb") as f:
+            r = requests.post(
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                files={"file": (f"clip.{ext}", f, mime)},
+                data={"model_id": "scribe_v1", "language_code": "en"},
+                timeout=60,
+            )
+        if r.status_code != 200:
+            log.warning("transcribe: ElevenLabs STT HTTP %s: %s", r.status_code, r.text[:200])
+            return None
+        return (r.json().get("text") or "").strip()
+    except Exception as e:
+        log.warning("transcribe: ElevenLabs STT failed: %s", e)
+        return None
 
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1621,7 +1718,7 @@ def _list_usb_drives() -> list:
 # ---------------------------------------------------------------------------
 # InsForge storage upload — real bucket/object REST pattern
 # ---------------------------------------------------------------------------
-INSFORGE_BUCKET = os.getenv("INSFORGE_STORAGE_BUCKET_CONJURE", "conjure-models")
+# INSFORGE_BUCKET is defined with config above.
 
 
 def upload_to_insforge_storage(file_path: Path, bucket: str = INSFORGE_BUCKET):
@@ -1824,6 +1921,16 @@ async def run_generation(prompt: str, meshy_prompt_override: str | None = None) 
         # Persist final paths to SQLite
         db_update_model_paths(row_id, str(glb_model_path), str(stl_model_path))
 
+        # Per-user cloud library (signed-in Studio sync)
+        sync_model_to_cloud(
+            user_id=_get_pipeline_user(),
+            prompt=prompt,
+            source="meshy",
+            glb_path=glb_model_path,
+            stl_path=stl_model_path,
+            local_model_id=row_id,
+        )
+
         # ── Step 5: Upload STL to InsForge storage ────────────────────────
         await push_event("insforge", "active", "Uploading to cloud...", 78)
         stl_size_mb = stl_active_path.stat().st_size / (1024 * 1024)
@@ -1986,6 +2093,15 @@ async def run_library_download(prompt: str, source: str, model_id: str, name: st
             await push_event("download_glb", "complete", "Preview uses STL directly", 70)
 
         db_update_model_paths(row_id, str(glb_model_path) if glb_ok else None, str(stl_model_path))
+
+        sync_model_to_cloud(
+            user_id=_get_pipeline_user(),
+            prompt=prompt or name,
+            source=source,
+            glb_path=glb_model_path if glb_ok else None,
+            stl_path=stl_model_path,
+            local_model_id=row_id,
+        )
 
         # ── Upload to cloud (same as generated models) ────────────────────
         await push_event("insforge", "active", "Uploading to cloud...", 78)
@@ -2631,10 +2747,12 @@ async def startup_event() -> None:
     (OUTPUT_DIR / "models").mkdir(parents=True, exist_ok=True)
     log.info("Conjure Kiosk started — output dir: %s", OUTPUT_DIR)
     log.info("Supabase: %s", "configured" if SUPABASE_URL and SUPABASE_ANON_KEY else "not configured")
+    log.info("Cloud/InsForge: %s", "reachable" if cloud.insforge_available() else "local fallback")
     # Warm the local speech-to-text engine in the background so the model is
     # resident before the first voice prompt — without blocking startup on the
     # multi-second model load.
     threading.Thread(target=ensure_whisper_server, daemon=True).start()
+    threading.Thread(target=_device_agent_loop, daemon=True).start()
 
 
 @app.on_event("shutdown")
@@ -2642,12 +2760,142 @@ def shutdown_event() -> None:
     stop_whisper_server()
 
 
-# Front door: the marketing scroll landing page. Its CTAs hand off to the working
-# kiosk at /app?mode=speak|engineer. Also reachable at /landing.
+def _current_user(request: Request) -> dict | None:
+    return cloud.user_from_token(request.cookies.get(AUTH_COOKIE))
+
+
+def require_user(request: Request) -> dict:
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in required")
+    return user
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        AUTH_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=COOKIE_MAX_AGE,
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(AUTH_COOKIE, path="/")
+
+
+def sync_model_to_cloud(
+    *,
+    user_id: str | None,
+    prompt: str,
+    source: str,
+    glb_path: Path | str | None,
+    stl_path: Path | str | None,
+    local_model_id: int | str | None = None,
+) -> None:
+    """Best-effort per-user cloud library write. Never raises into the pipeline."""
+    if not user_id:
+        return
+    try:
+        cloud.save_user_model(
+            user_id,
+            prompt=prompt,
+            source=source,
+            glb_path=Path(glb_path) if glb_path else None,
+            stl_path=Path(stl_path) if stl_path else None,
+            local_model_id=str(local_model_id) if local_model_id is not None else None,
+        )
+    except Exception as e:
+        log.warning("cloud model sync failed: %s", e)
+
+
+# Contextvar-like holder: pipelines run in background threads and can't see the
+# Request. Capture the signed-in user id at API entry for later sync.
+_pipeline_user_id: dict[str, str | None] = {"uid": None}
+_pipeline_user_lock = threading.Lock()
+
+
+def _set_pipeline_user(uid: str | None) -> None:
+    with _pipeline_user_lock:
+        _pipeline_user_id["uid"] = uid
+
+
+def _get_pipeline_user() -> str | None:
+    with _pipeline_user_lock:
+        return _pipeline_user_id.get("uid")
+
+
+def _device_agent_loop() -> None:
+    """Heartbeat + inbox poll so a paired kiosk receives Studio push jobs."""
+    while True:
+        try:
+            state = cloud.load_local_device()
+            if state and state.get("id") and state.get("secret"):
+                try:
+                    cloud.heartbeat(state["id"], state["secret"], base_url="")
+                except Exception as e:
+                    log.debug("device heartbeat: %s", e)
+                try:
+                    for item in cloud.poll_inbox(state["id"], state["secret"]):
+                        _apply_inbox_item(state, item)
+                except Exception as e:
+                    log.debug("device inbox poll: %s", e)
+        except Exception as e:
+            log.debug("device agent: %s", e)
+        time.sleep(8)
+
+
+def _apply_inbox_item(state: dict, item: dict) -> None:
+    """Download a studio-pushed cloud model into the active OUTPUT_DIR slot."""
+    try:
+        claimed = cloud.claim_inbox_item(state["id"], state["secret"], item["id"])
+        model = (claimed or {}).get("model") or item
+        glb_url = model.get("glb_url")
+        stl_url = model.get("stl_url")
+        if glb_url and str(glb_url).startswith("/"):
+            src = OUTPUT_DIR / "cloud" / Path(glb_url).parts[-2] / Path(glb_url).name
+            if src.exists():
+                shutil.copy2(src, OUTPUT_DIR / "model.glb")
+        elif glb_url and str(glb_url).startswith("http"):
+            r = requests.get(glb_url, timeout=60)
+            if r.status_code == 200:
+                (OUTPUT_DIR / "model.glb").write_bytes(r.content)
+        if stl_url and str(stl_url).startswith("/"):
+            src = OUTPUT_DIR / "cloud" / Path(stl_url).parts[-2] / Path(stl_url).name
+            if src.exists():
+                shutil.copy2(src, OUTPUT_DIR / "model.stl")
+        elif stl_url and str(stl_url).startswith("http"):
+            r = requests.get(stl_url, timeout=60)
+            if r.status_code == 200:
+                (OUTPUT_DIR / "model.stl").write_bytes(r.content)
+        pipeline_state["status"] = "ready"
+        pipeline_state["prompt"] = model.get("prompt") or "Cloud model"
+        log.info("Device inbox delivered model %s", model.get("id"))
+    except Exception as e:
+        log.warning("inbox apply failed: %s", e)
+
+
+# Front door: Conjure Studio dashboard (device connect + cloud library).
+# Unauthenticated visitors are sent to /signin by the page itself.
+# Marketing scroll lives at /welcome. The voice→model kiosk stays at /app.
 @app.get("/", response_class=HTMLResponse)
+@app.get("/studio", response_class=HTMLResponse)
+def get_studio() -> HTMLResponse:
+    return HTMLResponse(content=(BASE_DIR / "studio.html").read_text())
+
+
+@app.get("/welcome", response_class=HTMLResponse)
 @app.get("/landing", response_class=HTMLResponse)
 def get_landing() -> HTMLResponse:
     return HTMLResponse(content=(BASE_DIR / "landing.html").read_text())
+
+
+@app.get("/signin", response_class=HTMLResponse)
+@app.get("/signup", response_class=HTMLResponse)
+def get_auth() -> HTMLResponse:
+    return HTMLResponse(content=(BASE_DIR / "auth.html").read_text())
 
 
 # The working kiosk app (describe -> generate -> view -> slice -> print).
@@ -2656,36 +2904,210 @@ def get_app() -> HTMLResponse:
     return HTMLResponse(content=(BASE_DIR / "index.html").read_text())
 
 
+class AuthBody(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+
+@app.post("/api/auth/signup")
+def api_auth_signup(body: AuthBody) -> JSONResponse:
+    try:
+        result = cloud.sign_up(body.email, body.password, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resp = JSONResponse({"user": result["user"], "backend": result.get("backend")})
+    _set_session_cookie(resp, result["session"])
+    return resp
+
+
+@app.post("/api/auth/signin")
+def api_auth_signin(body: AuthBody) -> JSONResponse:
+    try:
+        result = cloud.sign_in(body.email, body.password)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+    resp = JSONResponse({"user": result["user"], "backend": result.get("backend")})
+    _set_session_cookie(resp, result["session"])
+    return resp
+
+
+@app.post("/api/auth/signout")
+def api_auth_signout() -> JSONResponse:
+    resp = JSONResponse({"ok": True})
+    _clear_session_cookie(resp)
+    return resp
+
+
+@app.get("/api/me")
+def api_me(request: Request) -> JSONResponse:
+    user = _current_user(request)
+    return JSONResponse({"user": user})
+
+
+@app.get("/api/cloud/models")
+def api_cloud_models(user: dict = Depends(require_user)) -> JSONResponse:
+    return JSONResponse({"models": cloud.list_user_models(user["id"])})
+
+
+@app.post("/api/cloud/models/{model_id}/pull")
+def api_cloud_pull(model_id: str, user: dict = Depends(require_user)) -> JSONResponse:
+    model = cloud.get_user_model(user["id"], model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    pulled = []
+    for kind, key in (("glb", "glb_url"), ("stl", "stl_url")):
+        url = model.get(key)
+        if not url:
+            continue
+        dest = OUTPUT_DIR / f"model.{kind}"
+        try:
+            if str(url).startswith("/api/cloud/files/"):
+                # /api/cloud/files/{user_id}/{filename}
+                parts = Path(url).parts
+                src = OUTPUT_DIR / "cloud" / parts[-2] / parts[-1]
+                if src.exists():
+                    shutil.copy2(src, dest)
+                    pulled.append(kind)
+            elif str(url).startswith("http"):
+                r = requests.get(url, timeout=60)
+                if r.status_code == 200:
+                    dest.write_bytes(r.content)
+                    pulled.append(kind)
+        except Exception as e:
+            log.warning("cloud pull %s failed: %s", kind, e)
+    if not pulled:
+        raise HTTPException(502, "Could not download model files")
+    pipeline_state["status"] = "ready"
+    pipeline_state["prompt"] = model.get("prompt") or ""
+    pipeline_state["glb_path"] = str(OUTPUT_DIR / "model.glb") if (OUTPUT_DIR / "model.glb").exists() else None
+    pipeline_state["stl_path"] = str(OUTPUT_DIR / "model.stl") if (OUTPUT_DIR / "model.stl").exists() else None
+    return JSONResponse({"ok": True, "pulled": pulled, "prompt": model.get("prompt")})
+
+
+@app.get("/api/cloud/files/{user_id}/{filename}")
+def api_cloud_file(user_id: str, filename: str, request: Request) -> FileResponse:
+    # Signed-in owner OR this kiosk itself (no auth) can read local cloud cache —
+    # files live under the shared output tree of the device that generated them.
+    user = _current_user(request)
+    if user and user["id"] != user_id:
+        raise HTTPException(403, "Forbidden")
+    path = (OUTPUT_DIR / "cloud" / user_id / Path(filename).name).resolve()
+    root = (OUTPUT_DIR / "cloud").resolve()
+    if not str(path).startswith(str(root)) or not path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(path)
+
+
+class DeviceRegisterBody(BaseModel):
+    name: str = "Conjure Kiosk"
+    base_url: str = ""
+
+
+@app.post("/api/devices/register")
+def api_device_register(body: DeviceRegisterBody, request: Request) -> JSONResponse:
+    # Pairing codes can be generated on the kiosk without being signed in —
+    # claim happens from a signed-in Studio session.
+    base = body.base_url or str(request.base_url).rstrip("/")
+    data = cloud.register_device(name=body.name or "Conjure Kiosk", base_url=base)
+    return JSONResponse(data)
+
+
+class DeviceClaimBody(BaseModel):
+    pairing_code: str
+    name: str | None = None
+
+
+@app.post("/api/devices/claim")
+def api_device_claim(body: DeviceClaimBody, user: dict = Depends(require_user)) -> JSONResponse:
+    try:
+        device = cloud.claim_device(user["id"], body.pairing_code, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return JSONResponse({"device": device})
+
+
+@app.get("/api/devices")
+def api_devices(user: dict = Depends(require_user)) -> JSONResponse:
+    return JSONResponse({"devices": cloud.list_devices(user["id"])})
+
+
+class DevicePushBody(BaseModel):
+    model_id: str
+
+
+@app.post("/api/devices/{device_id}/push")
+def api_device_push(
+    device_id: str, body: DevicePushBody, user: dict = Depends(require_user)
+) -> JSONResponse:
+    try:
+        item = cloud.push_model_to_device(user["id"], device_id, body.model_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return JSONResponse({"inbox": item})
+
+
+class DeviceHeartbeatBody(BaseModel):
+    device_id: str
+    device_secret: str
+    base_url: str = ""
+
+
+@app.post("/api/devices/heartbeat")
+def api_device_heartbeat(body: DeviceHeartbeatBody) -> JSONResponse:
+    try:
+        return JSONResponse(cloud.heartbeat(body.device_id, body.device_secret, body.base_url))
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+
+
 @app.post("/api/transcribe")
 def api_transcribe(audio: UploadFile = File(...)) -> JSONResponse:
-    """On-device speech-to-text for the voice prompt. The kiosk browser records
-    the mic (snap Chromium's cloud Web Speech API is unavailable — no Google API
-    key) and POSTs the clip here. We normalise it to 16 kHz mono WAV and run it
-    through whisper.cpp, preferring the resident whisper-server and falling back
-    to whisper-cli. Returns {"text": ...}."""
+    """Speech-to-text for the voice prompt. The kiosk browser records the mic
+    (snap Chromium's cloud Web Speech API is unavailable — no Google API key)
+    and POSTs the clip here. Prefer on-device whisper.cpp (server, then cli);
+    on a Mac/dev box without whisper, fall back to ElevenLabs Scribe.
+    Returns {"text": ...}."""
     data = audio.file.read()
     if not data:
         raise HTTPException(400, "Empty audio upload")
+    content_type = audio.content_type
+    whisper_available = (
+        Path(WHISPER_MODEL).is_file()
+        and (WHISPER_SERVER_BIN.is_file() or WHISPER_CLI_BIN.is_file())
+    )
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, "clip")
         wav = os.path.join(td, "clip.wav")
         with open(src, "wb") as f:
             f.write(data)
-        try:
-            _ffmpeg_to_wav(src, wav)
-        except Exception as e:
-            log.warning("transcribe: ffmpeg decode failed: %s", e)
-            raise HTTPException(422, "Could not decode audio")
         text = None
-        if ensure_whisper_server():
-            text = _transcribe_via_server(wav)
-        if text is None:
-            log.info("transcribe: whisper-server unavailable, using whisper-cli")
+
+        # Path 1: local whisper.cpp (needs ffmpeg → 16 kHz mono WAV).
+        if whisper_available:
             try:
-                text = _transcribe_via_cli(wav)
+                _ffmpeg_to_wav(src, wav)
             except Exception as e:
-                log.warning("transcribe: whisper-cli failed: %s", e)
-                raise HTTPException(500, "Transcription failed")
+                log.warning("transcribe: ffmpeg decode failed (%s): %s", FFMPEG_PATH, e)
+            else:
+                if ensure_whisper_server():
+                    text = _transcribe_via_server(wav)
+                if text is None and WHISPER_CLI_BIN.exists():
+                    log.info("transcribe: whisper-server unavailable, using whisper-cli")
+                    try:
+                        text = _transcribe_via_cli(wav)
+                    except Exception as e:
+                        log.warning("transcribe: whisper-cli failed: %s", e)
+
+        # Path 2: ElevenLabs Scribe — works from the raw browser clip, no
+        # whisper.cpp / ffmpeg install required (Mac + cloud-dev friendly).
+        if text is None:
+            log.info("transcribe: using ElevenLabs Scribe fallback")
+            text = _transcribe_via_elevenlabs(src, content_type)
+
+        if text is None:
+            raise HTTPException(500, "Transcription failed")
     # whisper emits bracketed non-speech markers ([BLANK_AUDIO], [MUSIC]) and
     # timestamp-driven newlines; collapse them into a single clean line.
     text = re.sub(r"\[[^\]]*\]", " ", text or "")
@@ -2699,9 +3121,13 @@ class GenerateRequest(BaseModel):
 
 
 @app.post("/api/generate")
-async def api_generate(req: GenerateRequest, background_tasks: BackgroundTasks) -> JSONResponse:
+async def api_generate(
+    req: GenerateRequest, background_tasks: BackgroundTasks, request: Request
+) -> JSONResponse:
     if not req.prompt.strip():
         raise HTTPException(400, "Prompt cannot be empty")
+    user = _current_user(request)
+    _set_pipeline_user(user["id"] if user else None)
     pipeline_state.update({
         "status":         "generating",
         "prompt":         req.prompt.strip(),
@@ -2766,9 +3192,13 @@ class LibraryModelRequest(BaseModel):
 
 
 @app.post("/api/use-library-model")
-async def api_use_library_model(req: LibraryModelRequest, background_tasks: BackgroundTasks) -> JSONResponse:
+async def api_use_library_model(
+    req: LibraryModelRequest, background_tasks: BackgroundTasks, request: Request
+) -> JSONResponse:
     if req.source not in ("printables", "thingiverse"):
         raise HTTPException(400, f"Unknown source: {req.source}")
+    user = _current_user(request)
+    _set_pipeline_user(user["id"] if user else None)
     pipeline_state.update({
         "status":         "generating",
         "prompt":         req.prompt.strip() or req.name,
@@ -5411,6 +5841,14 @@ def run_engineer_pipeline(intent: str) -> None:
             engineer_log(f"STL->GLB conversion failed: {ge} — STL only", "warning")
         db_update_model_paths(model_id, saved_glb, saved_stl)
         engineer_log(f"DB: model record saved (id {model_id}{'' if saved_glb else ', STL only'})", "success")
+        sync_model_to_cloud(
+            user_id=_get_pipeline_user(),
+            prompt=intent,
+            source="engineer",
+            glb_path=saved_glb or None,
+            stl_path=saved_stl,
+            local_model_id=model_id,
+        )
     except Exception as e:
         engineer_log(f"DB save failed: {e}", "warning")
         model_id = None
@@ -5477,10 +5915,12 @@ def run_engineer_pipeline(intent: str) -> None:
 
 
 @app.post("/api/engineer/trigger")
-async def engineer_trigger(body: dict) -> JSONResponse:
+async def engineer_trigger(body: dict, request: Request) -> JSONResponse:
     intent = body.get("intent", "").strip()
     if not intent:
         return JSONResponse({"ok": False, "error": "intent is required"}, status_code=400)
+    user = _current_user(request)
+    _set_pipeline_user(user["id"] if user else None)
     with engineer_state["lock"]:
         if engineer_state["status"] == "RUNNING":
             return JSONResponse({"error": "Engineer pipeline already running"}, status_code=409)

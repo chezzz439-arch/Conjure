@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conjure Studio</title>
+<style>
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+  :root{
+    --bg:#0f1713; --bg-deep:#0b110e; --border:#2a3a32; --surface:#142019;
+    --text-1:#f2f5ef; --text-2:#b7c4ba; --text-3:#8ba094; --text-faint:#5c6f65;
+    --accent:#45d38a; --accent-hi:#55dd97; --accent-ink:#06170e;
+    --danger:#e07878;
+    --font-ui:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --side:300px;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    min-height:100vh; background:
+      radial-gradient(90% 60% at 20% 0%, rgba(69,211,138,0.07), transparent 55%),
+      var(--bg);
+    color:var(--text-1); font-family:var(--font-ui);
+    display:flex; flex-direction:column;
+  }
+  header{
+    height:56px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 22px; border-bottom:1px solid var(--border);
+    background:rgba(11,17,14,0.9); backdrop-filter:blur(12px);
+    position:sticky; top:0; z-index:10;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; text-decoration:none; color:inherit; font-weight:700; letter-spacing:-0.03em; }
+  .brand svg{ width:20px; height:20px; }
+  .hdr-right{ display:flex; align-items:center; gap:12px; }
+  .user-chip{ font-size:13px; color:var(--text-2); }
+  .btn, button.btn{
+    border:0; border-radius:4px; padding:8px 14px; font:inherit; font-size:13px; font-weight:600;
+    cursor:pointer; background:var(--accent); color:var(--accent-ink); text-decoration:none;
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .btn:hover{ background:var(--accent-hi); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .btn-ghost{
+    background:transparent; color:var(--text-2); border:1px solid var(--border);
+  }
+  .btn-ghost:hover{ color:var(--text-1); border-color:var(--text-3); background:transparent; }
+  .layout{ display:flex; flex:1; min-height:0; }
+  aside{
+    width:var(--side); border-right:1px solid var(--border);
+    background:rgba(11,17,14,0.72); padding:22px 16px; display:flex; flex-direction:column; gap:8px;
+  }
+  aside h2{
+    font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--text-faint); margin:4px 4px 10px;
+  }
+  .dev-item{
+    width:100%; text-align:left; background:transparent; border:1px solid transparent;
+    color:var(--text-1); border-radius:6px; padding:12px; cursor:pointer; font:inherit;
+  }
+  .dev-item:hover{ background:var(--surface); }
+  .dev-item.active{ border-color:var(--accent); background:rgba(69,211,138,0.08); }
+  .dev-name{ font-size:14px; font-weight:600; }
+  .dev-meta{ font-size:12px; color:var(--text-3); margin-top:4px; display:flex; align-items:center; gap:6px; }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--text-faint); flex-shrink:0; }
+  .dot.on{ background:var(--accent); box-shadow:0 0 0 3px rgba(69,211,138,0.18); }
+  .pair-box{
+    margin-top:auto; border:1px dashed var(--border); border-radius:8px; padding:14px;
+  }
+  .pair-box label{ display:block; font-size:12px; color:var(--text-3); margin-bottom:8px; line-height:1.4; }
+  .pair-box input{
+    width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text-1);
+    border-radius:4px; padding:12px; font:inherit; letter-spacing:0.28em; text-align:center; font-size:20px; font-weight:600;
+  }
+  .pair-box input:focus{ outline:none; border-color:var(--accent); }
+  .pair-box .btn{ width:100%; margin-top:10px; }
+  .msg{ font-size:12px; color:var(--text-3); margin-top:8px; min-height:1.2em; }
+  .msg.err{ color:var(--danger); }
+  .msg.ok{ color:var(--accent); }
+  main{ flex:1; padding:32px clamp(18px,3vw,40px); overflow:auto; }
+  .hero{ margin-bottom:32px; max-width:52ch; }
+  .hero h1{ font-size:clamp(28px,4vw,36px); font-weight:700; letter-spacing:-0.035em; }
+  .hero p{ color:var(--text-2); font-size:15px; line-height:1.55; margin-top:10px; }
+  .connected{
+    border:1px solid var(--border); border-radius:10px; background:var(--surface);
+    padding:18px 20px; margin-bottom:32px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .connected h2{ font-size:16px; font-weight:600; }
+  .connected p{ font-size:13px; color:var(--text-3); margin-top:4px; }
+  .section-title{
+    font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--text-faint); margin-bottom:14px;
+  }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
+  .card{
+    border:1px solid var(--border); border-radius:8px; background:rgba(20,32,25,0.9);
+    padding:16px; display:flex; flex-direction:column; gap:10px; min-height:140px;
+  }
+  .card h3{ font-size:14px; font-weight:600; line-height:1.35; }
+  .card .meta{ font-size:12px; color:var(--text-3); }
+  .card .actions{ margin-top:auto; }
+  .card .actions .btn{ width:100%; padding:9px 10px; font-size:12px; }
+  .empty{ color:var(--text-3); font-size:14px; padding:8px 0 24px; line-height:1.5; }
+  @media (max-width:820px){
+    .layout{ flex-direction:column; }
+    aside{ width:100%; border-right:0; border-bottom:1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" stroke="#45d38a" stroke-width="1.6"/>
+      <path d="M12 12l9-5M12 12v10M12 12L3 7" stroke="#45d38a" stroke-width="1.6"/>
+    </svg>
+    Conjure Studio
+  </a>
+  <div class="hdr-right">
+    <span class="user-chip" id="user-chip">…</span>
+    <button class="btn btn-ghost" id="signout" type="button">Sign out</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Your devices</h2>
+    <div id="device-list"></div>
+    <div class="pair-box">
+      <label for="pair-code">Connect a Conjure device — enter the 6-digit code shown on the Orange Pi kiosk.</label>
+      <input id="pair-code" maxlength="6" inputmode="numeric" placeholder="000000" autocomplete="one-time-code">
+      <button class="btn" id="pair-btn" type="button">Connect</button>
+      <p class="msg" id="pair-msg"></p>
+    </div>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <h1>Connect. Send. Print.</h1>
+      <p>This is your Conjure control surface — pair kiosks and push models to them. Making still happens on the device.</p>
+    </div>
+
+    <div class="connected" id="active-panel">
+      <div>
+        <h2 id="active-name">No device selected</h2>
+        <p id="active-meta">Pair a kiosk with the code on its screen, then select it in the sidebar.</p>
+      </div>
+      <span class="dev-meta" id="active-status"><span class="dot" id="active-dot"></span><span id="active-status-text">Offline</span></span>
+    </div>
+
+    <div class="section-title">Cloud library</div>
+    <p class="empty" id="library-empty">Models made on a signed-in kiosk show up here. Select a device, then send one over.</p>
+    <div class="grid" id="library"></div>
+  </main>
+</div>
+
+<script>
+  let me = null;
+  let devices = [];
+  let models = [];
+  let activeDeviceId = localStorage.getItem('conjure_active_device') || '';
+
+  async function api(path, opts={}) {
+    const res = await fetch(path, {
+      credentials: 'same-origin',
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || ('HTTP ' + res.status));
+    return data;
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
+  function activeDevice() {
+    return devices.find(d => d.id === activeDeviceId) || null;
+  }
+
+  function renderActive() {
+    const d = activeDevice();
+    const name = document.getElementById('active-name');
+    const meta = document.getElementById('active-meta');
+    const dot = document.getElementById('active-dot');
+    const statusText = document.getElementById('active-status-text');
+    if (!d) {
+      name.textContent = 'No device selected';
+      meta.textContent = 'Pair a kiosk with the code on its screen, then select it in the sidebar.';
+      dot.className = 'dot';
+      statusText.textContent = '—';
+      return;
+    }
+    name.textContent = d.name || 'Conjure';
+    meta.textContent = d.base_url
+      ? ('Connected · ' + d.base_url)
+      : (d.status === 'online' ? 'Online and ready for pushes' : 'Last seen offline — wake the kiosk');
+    dot.className = 'dot ' + (d.status === 'online' ? 'on' : '');
+    statusText.textContent = d.status === 'online' ? 'Online' : 'Offline';
+  }
+
+  function renderDevices() {
+    const el = document.getElementById('device-list');
+    if (!devices.length) {
+      el.innerHTML = '<p class="empty" style="padding:4px">No devices yet.</p>';
+      renderActive();
+      return;
+    }
+    el.innerHTML = devices.map(d => `
+      <button type="button" class="dev-item ${d.id === activeDeviceId ? 'active' : ''}" data-id="${d.id}">
+        <div class="dev-name">${escapeHtml(d.name || 'Conjure')}</div>
+        <div class="dev-meta"><span class="dot ${d.status === 'online' ? 'on' : ''}"></span>${escapeHtml(d.status || 'offline')}</div>
+      </button>`).join('');
+    el.querySelectorAll('.dev-item').forEach(btn => {
+      btn.onclick = () => {
+        activeDeviceId = btn.dataset.id;
+        localStorage.setItem('conjure_active_device', activeDeviceId);
+        renderDevices();
+        renderLibrary();
+      };
+    });
+    renderActive();
+  }
+
+  function renderLibrary() {
+    const grid = document.getElementById('library');
+    const empty = document.getElementById('library-empty');
+    const canSend = !!activeDevice();
+    if (!models.length) {
+      grid.innerHTML = '';
+      empty.hidden = false;
+      empty.textContent = 'Models made on a signed-in kiosk show up here. Select a device, then send one over.';
+      return;
+    }
+    empty.hidden = true;
+    grid.innerHTML = models.map(m => `
+      <article class="card">
+        <h3>${escapeHtml(m.prompt || 'Untitled model')}</h3>
+        <div class="meta">${escapeHtml(m.source || '')} · ${escapeHtml(fmtWhen(m.created_at))}</div>
+        <div class="actions">
+          <button class="btn" data-push="${m.id}" type="button" ${canSend ? '' : 'disabled'}>
+            ${canSend ? 'Send to device' : 'Select a device'}
+          </button>
+        </div>
+      </article>`).join('');
+    grid.querySelectorAll('[data-push]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!activeDeviceId) return;
+        btn.disabled = true;
+        try {
+          await api('/api/devices/' + activeDeviceId + '/push', {
+            method: 'POST',
+            body: JSON.stringify({ model_id: btn.dataset.push }),
+          });
+          btn.textContent = 'Sent';
+          setTimeout(() => { btn.textContent = 'Send to device'; btn.disabled = false; }, 1600);
+        } catch (e) {
+          alert(e.message);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function refresh() {
+    const [d, m] = await Promise.all([api('/api/devices'), api('/api/cloud/models')]);
+    devices = d.devices || [];
+    models = m.models || [];
+    if (activeDeviceId && !devices.find(x => x.id === activeDeviceId)) activeDeviceId = '';
+    if (!activeDeviceId && devices[0]) {
+      activeDeviceId = devices[0].id;
+      localStorage.setItem('conjure_active_device', activeDeviceId);
+    }
+    renderDevices();
+    renderLibrary();
+  }
+
+  document.getElementById('signout').onclick = async () => {
+    await api('/api/auth/signout', { method: 'POST', body: '{}' });
+    location.assign('/signin');
+  };
+
+  document.getElementById('pair-btn').onclick = async () => {
+    const msg = document.getElementById('pair-msg');
+    msg.className = 'msg';
+    msg.textContent = '';
+    try {
+      const code = document.getElementById('pair-code').value.trim();
+      const data = await api('/api/devices/claim', {
+        method: 'POST',
+        body: JSON.stringify({ pairing_code: code }),
+      });
+      msg.className = 'msg ok';
+      msg.textContent = 'Connected to ' + (data.device?.name || 'device');
+      document.getElementById('pair-code').value = '';
+      activeDeviceId = data.device?.id || activeDeviceId;
+      if (activeDeviceId) localStorage.setItem('conjure_active_device', activeDeviceId);
+      await refresh();
+    } catch (e) {
+      msg.className = 'msg err';
+      msg.textContent = e.message;
+    }
+  };
+
+  (async () => {
+    try {
+      me = await api('/api/me');
+      if (!me.user) throw new Error('auth');
+      document.getElementById('user-chip').textContent = me.user.email || me.user.name || 'Signed in';
+      const pair = new URLSearchParams(location.search).get('pair');
+      if (pair) document.getElementById('pair-code').value = pair;
+      await refresh();
+      setInterval(() => refresh().catch(() => {}), 15000);
+    } catch {
+      location.assign('/signin?next=/');
+    }
+  })();
+</script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 .venv/
 output/
 logs/
+models/*.bin
 conjure.db
 __pycache__/
 *.pyc

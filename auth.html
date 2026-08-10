@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conjure — Sign in</title>
+<style>
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+  @font-face{ font-family:'Inter'; font-style:normal; font-weight:800; font-display:swap; src:url('/fonts/inter-800.woff2') format('woff2'); }
+  :root{
+    --bg:#0f1713; --bg-deep:#0b110e; --border:#2a3a32;
+    --text-1:#f2f5ef; --text-2:#b7c4ba; --text-3:#8ba094;
+    --accent:#45d38a; --accent-hi:#55dd97; --accent-ink:#06170e;
+    --font-ui:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius-md:4px; --danger:#e07878;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    min-height:100vh; background:
+      radial-gradient(100% 80% at 50% 0%, rgba(69,211,138,0.08), transparent 50%),
+      linear-gradient(180deg, var(--bg-deep), var(--bg));
+    color:var(--text-1); font-family:var(--font-ui);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:32px 20px;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; margin-bottom:36px; text-decoration:none; color:inherit; }
+  .brand svg{ width:26px; height:26px; }
+  .brand span{ font-weight:700; font-size:22px; letter-spacing:-0.03em; }
+  .panel{
+    width:min(420px,100%);
+    border:1px solid var(--border);
+    background:rgba(11,17,14,0.72);
+    backdrop-filter:blur(12px);
+    border-radius:8px; padding:36px 32px 28px;
+  }
+  h1{ font-size:28px; font-weight:700; letter-spacing:-0.03em; margin-bottom:8px; }
+  .sub{ color:var(--text-2); font-size:14px; line-height:1.5; margin-bottom:28px; }
+  label{ display:block; font-size:12px; font-weight:500; color:var(--text-3); margin:0 0 6px; }
+  input{
+    width:100%; background:var(--bg-deep); border:1px solid var(--border);
+    color:var(--text-1); border-radius:var(--radius-md); padding:12px 14px;
+    font:inherit; font-size:15px; margin-bottom:16px; outline:none;
+  }
+  input:focus{ border-color:var(--accent); }
+  .btn{
+    width:100%; border:0; border-radius:var(--radius-md); padding:13px 16px;
+    font:inherit; font-weight:600; font-size:14px; cursor:pointer;
+    background:var(--accent); color:var(--accent-ink);
+    transition:background .15s ease, transform .15s ease;
+  }
+  .btn:hover{ background:var(--accent-hi); }
+  .btn:disabled{ opacity:.55; cursor:wait; }
+  .btn-ghost{
+    width:100%; margin-top:10px; background:transparent; color:var(--text-2);
+    border:1px solid var(--border);
+  }
+  .btn-ghost:hover{ color:var(--text-1); border-color:var(--text-3); background:transparent; }
+  .err{ color:var(--danger); font-size:13px; min-height:1.2em; margin:-4px 0 12px; }
+  .switch{ text-align:center; margin-top:22px; font-size:13px; color:var(--text-2); }
+  .switch a{ color:var(--accent-hi); text-decoration:none; font-weight:500; }
+  .switch a:hover{ text-decoration:underline; }
+  .guest{ margin-top:18px; text-align:center; font-size:13px; }
+  .guest a{ color:var(--text-3); text-decoration:none; }
+  .guest a:hover{ color:var(--text-2); }
+</style>
+</head>
+<body>
+  <a class="brand" href="/">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2L3 7v10l9 5 9-5V7l-9-5z" stroke="#45d38a" stroke-width="1.6"/>
+      <path d="M12 12l9-5M12 12v10M12 12L3 7" stroke="#45d38a" stroke-width="1.6"/>
+    </svg>
+    <span>Conjure</span>
+  </a>
+
+  <div class="panel">
+    <h1 id="title">Sign in</h1>
+    <p class="sub" id="subtitle">Connect to your Conjure devices and open your model library from anywhere.</p>
+    <form id="form" autocomplete="on">
+      <div id="name-wrap" hidden>
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" autocomplete="name" placeholder="Optional">
+      </div>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required minlength="6" autocomplete="current-password" placeholder="••••••••">
+      <p class="err" id="err"></p>
+      <button class="btn" id="submit" type="submit">Sign in</button>
+      <button class="btn btn-ghost" id="toggle" type="button">Create an account</button>
+    </form>
+    <div class="guest"><a href="/welcome">What is Conjure?</a></div>
+  </div>
+
+<script>
+  let mode = new URLSearchParams(location.search).get('mode') === 'signup' ? 'signup' : 'signin';
+  const title = document.getElementById('title');
+  const subtitle = document.getElementById('subtitle');
+  const nameWrap = document.getElementById('name-wrap');
+  const toggle = document.getElementById('toggle');
+  const submit = document.getElementById('submit');
+  const err = document.getElementById('err');
+  const pw = document.getElementById('password');
+
+  function render() {
+    const signup = mode === 'signup';
+    title.textContent = signup ? 'Create account' : 'Sign in';
+    subtitle.textContent = signup
+      ? 'One account for every Conjure kiosk you pair — models follow you.'
+      : 'Connect to your Conjure devices and open your model library from anywhere.';
+    nameWrap.hidden = !signup;
+    submit.textContent = signup ? 'Create account' : 'Sign in';
+    toggle.textContent = signup ? 'Already have an account? Sign in' : 'Create an account';
+    pw.autocomplete = signup ? 'new-password' : 'current-password';
+    history.replaceState(null, '', signup ? '/signup' : '/signin');
+  }
+  toggle.onclick = () => { mode = mode === 'signup' ? 'signin' : 'signup'; err.textContent = ''; render(); };
+  render();
+
+  document.getElementById('form').onsubmit = async (e) => {
+    e.preventDefault();
+    err.textContent = '';
+    submit.disabled = true;
+    const body = {
+      email: document.getElementById('email').value.trim(),
+      password: document.getElementById('password').value,
+      name: document.getElementById('name').value.trim(),
+    };
+    try {
+      const res = await fetch(mode === 'signup' ? '/api/auth/signup' : '/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.error || 'Request failed');
+      const next = new URLSearchParams(location.search).get('next') || '/';
+      location.assign(next);
+    } catch (ex) {
+      err.textContent = ex.message || 'Something went wrong';
+      submit.disabled = false;
+    }
+  };
+</script>
+</body>
+</html>

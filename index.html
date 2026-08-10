@@ -272,6 +272,7 @@
 
   #nav-home-btn,
   #nav-library-btn,
+  #nav-studio-btn,
   #nav-printer-btn {
     display: flex;
     align-items: center;
@@ -288,6 +289,7 @@
 
   #nav-home-btn:hover,
   #nav-library-btn:hover,
+  #nav-studio-btn:hover,
   #nav-printer-btn:hover {
     background: var(--surface);
     color: var(--text-1);
@@ -296,6 +298,7 @@
 
   #nav-home-btn:active,
   #nav-library-btn:active,
+  #nav-studio-btn:active,
   #nav-printer-btn:active { background: var(--surface-2); }
 
   /* The selected printer's name rides in the nav button. It gets a ceiling so a
@@ -432,6 +435,58 @@
     grid-template-columns: 1.45fr 1fr;
     gap: 18px;
     width: 100%;
+  }
+
+  .device-pair-strip {
+    width: 100%;
+    margin-top: 18px;
+    padding: 16px 18px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(11, 17, 14, 0.45);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .device-pair-copy {
+    flex: 1 1 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .device-pair-copy strong {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .device-pair-copy span {
+    font-size: 13px;
+    color: var(--text-3);
+    line-height: 1.4;
+  }
+  .device-pair-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    min-height: var(--tap);
+  }
+  .device-pair-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-hi);
+  }
+  .device-pair-code {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    color: var(--accent-hi);
+    font-variant-numeric: tabular-nums;
   }
 
   .mode-panel {
@@ -2456,6 +2511,13 @@
       </svg>
       Library
     </button>
+    <a id="nav-studio-btn" href="/" title="Conjure Studio — connect devices" style="text-decoration:none">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="8" cy="8" r="6"/>
+        <path d="M8 4v4l2.5 1.5"/>
+      </svg>
+      Studio
+    </a>
     <!-- In the nav rather than in a first-run wizard: people change printers,
          and the current one has to be visible and changeable from wherever
          they happen to be. -->
@@ -2504,6 +2566,15 @@
           <span class="panel-go">Open</span>
         </span>
       </button>
+    </div>
+
+    <div class="device-pair-strip" id="device-pair-strip">
+      <div class="device-pair-copy">
+        <strong>Connect this kiosk to Studio</strong>
+        <span>Show a code on this screen, then enter it in Conjure Studio on your phone or laptop.</span>
+      </div>
+      <button type="button" class="device-pair-btn" id="device-pair-btn" onclick="showDevicePairCode()">Show pairing code</button>
+      <div class="device-pair-code" id="device-pair-code" hidden></div>
     </div>
 
     <div class="flow-rail" aria-label="How it works">
@@ -4648,19 +4719,43 @@ function goHome() {
   resetIdle();
 }
 
-// The top-left Conjure wordmark and the top-nav Home button both leave the app
-// and return to the public landing page (served at "/"). Tear down any live
-// viewer / audio stream and reset the server pipeline first so we never leave a
-// job running or a WebGL context leaked; the fetch uses keepalive so the reset
-// still lands after navigation begins. Every teardown step is guarded so a throw
-// can't block the hand-off to the landing.
+// Home on the kiosk returns to the idle orientation screen — it does NOT
+// navigate to Conjure Studio (/). Studio is the separate connect dashboard.
 function goToLanding() {
-  console.log('[nav] goToLanding');
+  console.log('[nav] goToLanding → idle');
   try { closeEvents(); }   catch (e) { console.error('goToLanding: closeEvents failed', e); }
   try { stopListening(); } catch (e) { console.error('goToLanding: stopListening failed', e); }
   try { disposeViewer(); } catch (e) { console.error('goToLanding: disposeViewer failed', e); }
   try { fetch('/api/reset', { method: 'POST', keepalive: true }); } catch (e) {}
-  window.location.assign('/');
+  showScreen('s-idle');
+  if (typeof resetIdle === 'function') resetIdle();
+}
+
+async function showDevicePairCode() {
+  const btn = document.getElementById('device-pair-btn');
+  const codeEl = document.getElementById('device-pair-code');
+  if (!btn || !codeEl) return;
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  try {
+    const res = await fetch('/api/devices/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Conjure Kiosk' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || 'Could not create code');
+    codeEl.hidden = false;
+    codeEl.textContent = data.pairing_code || '————';
+    btn.textContent = 'Refresh code';
+  } catch (e) {
+    codeEl.hidden = false;
+    codeEl.textContent = 'Error';
+    btn.textContent = 'Try again';
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // Set the viewer's prompt pill, hiding it entirely when empty so it never
